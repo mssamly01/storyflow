@@ -40,9 +40,37 @@ export interface BeatAnalysis {
   timeOfDay?: string;
 }
 
+export interface StoryBeat extends BeatAnalysis {
+  beatId: number;
+  summary?: string;
+  characters?: string[];
+  location?: string;
+  action?: string;
+  visualFocus?: string;
+}
+
+export interface CoverageCheck {
+  allSourceTextCovered: boolean;
+  missingText: string;
+  duplicatedText: string;
+  notes: string;
+}
+
+export interface BeatAnalysisResult {
+  beats: StoryBeat[];
+  coverageCheck?: CoverageCheck;
+}
+
+export interface CharacterLocationLibraryResult {
+  characters: CharacterProfile[];
+  locations: LocationProfile[];
+}
+
 export interface CharacterProfile {
+  characterId?: string;
   name: string;
   role?: string;
+  aliases?: string[];
   gender?: string;
   age?: string;
   height?: string;
@@ -52,19 +80,26 @@ export interface CharacterProfile {
   eyes?: string;
   signatureFeatures?: string[];
   outfit?: string;
+  personalityVisualCues?: string;
   continuityNotes?: string;
-  imagePrompt?: string;
+  firstAppearanceBeatId?: number | null;
+  appearsInBeatIds?: number[];
 }
 
 export interface LocationProfile {
+  locationId?: string;
   name: string;
+  aliases?: string[];
   description?: string;
   details?: string;
   keyObjects?: string[];
+  lighting?: string;
+  atmosphere?: string;
   lightingDefault?: string;
   atmosphereDefault?: string;
   continuityNotes?: string;
-  imagePrompt?: string;
+  firstAppearanceBeatId?: number | null;
+  appearsInBeatIds?: number[];
 }
 
 export interface StoryboardPanel {

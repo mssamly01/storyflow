@@ -453,9 +453,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const stylePrompt = getSelectedStylePrompt();
     switch(stage) {
       case ProductionStage.ANALYSIS:
+        return gemini.getBeatAnalysisPrompt(inputData.script, stylePrompt);
       case ProductionStage.CHARACTER_LOCATION:
         const existingLibrary = getMasterLibrary();
-        return gemini.getPhase1AnalysisPrompt(inputData.script, stylePrompt, existingLibrary);
+        try {
+          const beats = production.analysis ? JSON.parse(production.analysis) : [];
+          return gemini.getCharacterLocationLibraryPrompt(inputData.script, beats, stylePrompt, existingLibrary);
+        } catch {
+          return gemini.getCharacterLocationLibraryPrompt(inputData.script, [], stylePrompt, existingLibrary);
+        }
       case ProductionStage.STORYBOARD: 
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);

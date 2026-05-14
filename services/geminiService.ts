@@ -1,6 +1,11 @@
 
 import { GoogleGenAI, Part } from "@google/genai";
 import { getConfig } from "./configService";
+import type {
+  BeatAnalysisResult,
+  CharacterLocationLibraryResult,
+  StoryBeat
+} from "../types";
 
 // Helper to get AI instance with current config
 const getAI = () => {
@@ -19,134 +24,206 @@ const getModel = () => {
 
 // --- PROMPT GENERATORS ---
 
-export const getPhase1AnalysisPrompt = (script: string, style: string, existingLibrary?: string) => `
-Bạn là chuyên gia biên tập sách và thiết kế nhân vật. Hãy thực hiện phân tích TOÀN DIỆN tiểu thuyết dưới đây.
+const extractJsonObject = (rawText: string): string => {
+  const trimmed = rawText.trim();
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
 
-${existingLibrary ? `
-DƯỚI ĐÂY LÀ THƯ VIỆN NHÂN VẬT & BỐI CẢNH ĐÃ CÓ TỪ CÁC CHƯƠNG TRƯỚC (MASTER LIBRARY):
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    throw new Error("Gemini response does not contain a valid JSON object.");
+  }
+
+  return trimmed.slice(firstBrace, lastBrace + 1);
+};
+
+const parseGeminiJson = <T,>(rawText?: string): T => {
+  if (!rawText) {
+    throw new Error("No response received from Gemini.");
+  }
+
+  return JSON.parse(extractJsonObject(rawText)) as T;
+};
+
+export const getBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
+You are a professional story analyst for a vertical comic / visual storyboard generation app.
+
+Your ONLY task:
+Split the source story text into visual story beats.
+
+Do NOT create character profiles.
+Do NOT create location profiles.
+Do NOT create image prompts.
+Do NOT rewrite the source story.
+
+Selected art style context:
+${artStyleDescription || "No specific style selected."}
+
+Return ONLY valid JSON with this schema:
+
+{
+  "beats": [
+    {
+      "beatId": 1,
+      "originalText": "...",
+      "summary": "...",
+      "characters": ["..."],
+      "location": "...",
+      "action": "...",
+      "interaction": "...",
+      "posture": "...",
+      "props": ["..."],
+      "visualFocus": "...",
+      "atmosphere": "...",
+      "timeOfDay": "..."
+    }
+  ],
+  "coverageCheck": {
+    "allSourceTextCovered": true,
+    "missingText": "",
+    "duplicatedText": "",
+    "notes": ""
+  }
+}
+
+CRITICAL ORIGINAL TEXT RULES:
+- originalText must preserve the source text exactly.
+- Do not rewrite, translate, summarize, correct, or polish originalText.
+- Every part of the source text must appear in exactly one beat.
+- Do not duplicate the same source text in multiple beats.
+- Do not add text that does not exist in the source.
+- Beat order must follow source order.
+
+BEAT CUTTING RULES:
+- A beat is one visual moment that can be illustrated as one storyboard panel.
+- Recommended length: 40-80 words per beat.
+- Visual integrity is more important than word count.
+- Never cut in the middle of a sentence.
+
+SPLIT WHEN:
+- Location changes.
+- Time changes.
+- Main visual action changes.
+- Character posture changes significantly.
+- Main interaction target changes.
+- Emotional intensity or atmosphere changes clearly.
+- Dialogue becomes long or moves to a new action/emotional point.
+
+DO NOT SPLIT WHEN:
+- Short narration supports the same action/dialogue.
+- Short internal thought belongs to the same visual moment.
+- A short question-answer exchange shares the same location and emotional focus.
+- A colon-introduced dialogue belongs directly to the preceding action.
+
+FIELD RULES:
+- summary: short explanation of the beat, not copied from originalText.
+- characters: visible or visually important characters.
+- location: most specific known place, or "Unknown".
+- action: main action.
+- interaction: who reacts/speaks/looks/touches/threatens/helps whom.
+- posture: concrete body positions.
+- props: objects required for continuity.
+- visualFocus: what the image should focus on.
+- atmosphere: emotional mood.
+- timeOfDay: Early Morning, Morning, Mid-day, Afternoon, Golden Hour, Evening, Late Night, or Unknown.
+
+SOURCE TEXT:
+${text}
+`;
+
+export const getCharacterLocationLibraryPrompt = (
+  originalText: string,
+  beats: StoryBeat[],
+  artStyleDescription = "",
+  existingLibrary?: string
+) => `
+You are a character and location continuity designer for a vertical comic / visual storyboard generation app.
+
+Your ONLY task:
+Create a reusable Character Library and Location Library from the original text and the approved beat list.
+
+Do NOT split beats again.
+Do NOT rewrite originalText.
+Do NOT create final image prompts.
+Do NOT create storyboard panels.
+
+Selected art style context:
+${artStyleDescription || "No specific style selected."}
+
+${existingLibrary ? `EXISTING LIBRARY / PREVIOUS CHAPTER CONTEXT:
 ${existingLibrary}
 
-QUY TẮC SỬ DỤNG THƯ VIỆN (MASTER LIBRARY RULES - CRITICAL):
-0. **TÍNH LIÊN TỤC CỦA CỐT TRUYỆN (TIMELINE & OUTFIT CONTINUITY):**
-   - Hãy kiểm tra \`lastChapterContext\` để biết chương trước kết thúc như thế nào (Thời điểm, Bối cảnh, Trang phục).
-   - Nếu chương mới là sự **tiếp nối trực tiếp** về mặt thời gian:
-     - **BẮT BUỘC** giữ nguyên trang phục của nhân vật từ cuối chương trước. 
-     - **ĐỐI CHIẾU OUTFIT (CRITICAL):** Bạn nhận được mô tả trang phục thô trong \`lastChapterContext\`. Hãy đối chiếu mô tả này với danh sách \`outfit\` trong Profile của nhân vật đó.
-     - **HÀNH ĐỘNG:** Chọn đúng Outfit (Ví dụ: Outfit 1, Outfit 2) trong chương mới mà có mô tả khớp với mô tả thô từ chương trước. Tuyệt đối không tạo Outfit mới nếu nó đã tồn tại trong Profile.
-     - Chỉ được thay đổi trang phục nếu trong văn bản chương mới có mô tả rõ hành động thay đồ hoặc có một khoảng thời gian trôi qua đủ lớn.
-1. **KẾ THỪA & CẬP NHẬT (CHARACTERS):** 
-   - Nếu nhân vật đã tồn tại trong Master Library:
-     - **Giữ nguyên** các thông tin nhận dạng cốt lõi (Giới tính, Tuổi, Chiều cao, Khuôn mặt, Tóc, Mắt).
-     - **Cập nhật/Bổ sung**: Nếu chương mới có thông tin chi tiết hơn hoặc có thay đổi (ví dụ: vết sẹo mới, trang bị mới), hãy cập nhật vào profile.
-     - **Trang phục (Outfit - GIỚI HẠN & LUÂN PHIÊN):** 
-       - **QUY TẮC TỐI ĐA (MAX 2 OUTFITS PER CONTEXT):** Mỗi bối cảnh sinh hoạt (Ví dụ: "Ở nhà", "Đi làm", "Dự tiệc", "Đi chơi") chỉ được phép có tối đa **02 bộ trang phục** khác nhau (Outfit A và Outfit B).
-       - **LUÂN PHIÊN THEO NGÀY (A-B ROTATION):** Nếu câu chuyện diễn ra qua nhiều ngày trong cùng một bối cảnh:
-         - Ngày 1: Sử dụng Outfit A.
-         - Ngày 2: Sử dụng Outfit B.
-         - Ngày 3: Quay lại Outfit A.
-         - Tiếp tục luân phiên A-B-A-B...
-       - **LƯU Ý:** TUYỆT ĐỐI KHÔNG tạo outfit thứ 3 cho cùng một bối cảnh trừ khi văn bản tiểu thuyết có mô tả cực kỳ cụ thể về một bộ đồ mới hoàn toàn.
-       - Nếu trang phục mới **GIỐNG HỆT** một trang phục đã có trong bối cảnh đó: **KHÔNG** tạo thêm entry mới. Hãy sử dụng lại.
-       - **Cập nhật Profile**: Khi thêm outfit, hãy ghi chú rõ bối cảnh (Ví dụ: "Outfit 1 (Work): [Mô tả]", "Outfit 2 (Home): [Mô tả]").
-     - **Profile sạch, không prompt dựng sẵn:** KHÔNG tạo bất kỳ trường prompt dựng sẵn nào cho nhân vật. Chỉ cập nhật các trường profile nguyên tử như face, hair, eyes, outfit, continuityNotes. App sẽ tự build prompt tham chiếu từ profile này.
-2. **KẾ THỪA & CẬP NHẬT (LOCATIONS):**
-   - Nếu địa điểm đã tồn tại:
-     - **Giữ nguyên** \`name\` và \`description\`. KHÔNG tạo hoặc kế thừa bất kỳ trường prompt dựng sẵn nào; app sẽ tự build prompt địa điểm khi cần.
-     - **Cập nhật**: Nếu bối cảnh có sự thay đổi (ví dụ: bị phá hủy, được trang trí lại), hãy cập nhật mô tả hoặc tạo profile mới với hậu tố trạng thái (ví dụ: "Tên Địa Điểm (Phá hủy)").
-3. **THỰC THỂ MỚI:** Nếu xuất hiện nhân vật hoặc địa điểm mới hoàn toàn, hãy tạo profile mới theo quy tắc bên dưới.
-` : ''}
+Use this context to preserve established identity, outfit, location layout, and continuity. Update only when the current chapter provides new evidence.
+` : ""}
 
-PHONG CÁCH HÌNH ẢNH (VISUAL STYLE):
-${style}
+Return ONLY valid JSON with this schema:
 
-YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
+{
+  "characters": [
+    {
+      "characterId": "char_001",
+      "name": "...",
+      "aliases": ["..."],
+      "gender": "...",
+      "age": "...",
+      "height": "...",
+      "bodyType": "...",
+      "face": "...",
+      "hair": "...",
+      "eyes": "...",
+      "outfit": "...",
+      "personalityVisualCues": "...",
+      "continuityNotes": "...",
+      "firstAppearanceBeatId": 1,
+      "appearsInBeatIds": [1, 2]
+    }
+  ],
+  "locations": [
+    {
+      "locationId": "loc_001",
+      "name": "...",
+      "aliases": ["..."],
+      "description": "...",
+      "keyObjects": ["..."],
+      "lighting": "...",
+      "atmosphere": "...",
+      "continuityNotes": "...",
+      "firstAppearanceBeatId": 1,
+      "appearsInBeatIds": [1, 2]
+    }
+  ]
+}
 
-1. **analysis (Phân tích nhịp truyện):** 
-   - Trả về một mảng các đối tượng: [{ "beatId": 1, "originalText": "...", "actionAnalysis": "...", "charactersInvolved": ["..."], "locationName": "...", "interaction": "...", "posture": "...", "props": ["..."], "atmosphere": "...", "timeOfDay": "..." }]
-   - **ANTI-DUPLICATION:** \`actionAnalysis\` chỉ mô tả chuyện gì xảy ra. KHÔNG lặp lại posture/timeOfDay/atmosphere nếu các thông tin đó đã nằm trong field riêng. KHÔNG mô tả camera, framing, composition ở phase này.
-   - Chia TOÀN BỘ văn bản thành các nhịp truyện (beats) liên tục, KHÔNG BỎ SÓT bất kỳ nội dung nào.
-   - **QUY TẮC CẮT CẢNH (SCENE-CUTTING RULES - CRITICAL):**
-     - **Giới hạn độ dài:** Lý tưởng 40-50 từ/Beat. Giữ trọn vẹn câu văn, KHÔNG bao giờ cắt ngang câu.
-     - **TÁCH CẢNH NGAY LẬP TỨC KHI:**
-       - **Thay đổi nhân vật:** Khi có một nhân vật mới bắt đầu thực hiện hành động, lời thoại hoặc suy nghĩ.
-       - **Dẫn chuyện xen ngang (Narration Interruption):** Bất kỳ đoạn dẫn chuyện nào (mô tả khách quan, bối cảnh, thời gian trôi qua) xuất hiện giữa các hành động/lời thoại của cùng một nhân vật đều PHẢI TÁCH thành khối riêng. Không gộp hành động trước và sau lời dẫn chuyện đó vào cùng một Beat.
-       - **Thay đổi bối cảnh/địa điểm:** Nếu có hành động di chuyển từ A sang B, phải TÁCH RIÊNG hành động di chuyển và hành động tại đích đến.
-       - **Thay đổi đối tượng tương tác:** Nếu cùng một nhân vật thực hiện các hành động liên tiếp nhưng hướng tới các đối tượng khác nhau (Ví dụ: Nói với A xong quay sang cười với B) -> PHẢI TÁCH thành các Beat riêng biệt.
-       - **Thay đổi cảm xúc/Biểu cảm/Hành động TRONG lời thoại dài:** Nếu một nhân vật đang nói nhưng có sự thay đổi trạng thái (Ví dụ: Đang nói bình thường bỗng cười lớn, hoặc đang ngồi bỗng đứng dậy) -> PHẢI TÁCH thành Beat mới ngay tại điểm thay đổi đó.
-       - **Lời thoại quá dài:** Nếu lời thoại của một nhân vật dài hơn 3 câu hoặc chứa nhiều thông tin quan trọng khác nhau -> PHẢI TÁCH thành các khối nhỏ để đảm bảo mỗi khung hình chỉ tập trung vào một ý chính/biểu cảm chính.
-     - **GỘP CẢNH KHI:**
-       - Các nhân vật đang tương tác trực tiếp trong cùng một không gian (Two-shot, Over-the-shoulder) và không bị ngăn cách bởi lời dẫn chuyện.
-       - Lời thoại ngắn và hành động đi kèm đơn giản của cùng một người.
-       - **DẤU HAI CHẤM GIỚI THIỆU (COLON INTRODUCTION - CRITICAL):** Nếu một hành động/lời dẫn kết thúc bằng dấu hai chấm (:) để giới thiệu lời thoại ngay sau đó -> BẮT BUỘC gộp hành động đó và lời thoại vào cùng một Beat. KHÔNG bao giờ tách chúng ra.
-       - **HỘI THOẠI QUA LẠI (MESSAGING/CALLS - CRITICAL):** 
-         - Khi có các đoạn nhắn tin hoặc gọi điện thoại qua lại giữa các nhân vật:
-           - **GỘP:** Một bộ "Câu hỏi + Câu trả lời" của hai nhân vật lại thành 01 Beat.
-           - **GỘP NHIỀU HƠN:** Nếu nội dung ngắn, có thể gộp 02 bộ "Câu hỏi + Câu trả lời" (tức 4 lượt thoại) vào cùng 01 Beat.
-           - Mục đích: Giảm số lượng khung hình dư thừa cho các cảnh hội thoại tĩnh.
-   - **NỘI DUNG PHÂN TÍCH (CRITICAL):**
-      - **Phân tích bối cảnh & hành động chi tiết:** 
-         - **Tính tương tác (Interaction):** BẮT BUỘC xác định rõ hành động/câu thoại đang hướng tới nhân vật nào. Tuyệt đối không viết chung chung. (Ví dụ: Thay vì "Giả vờ quan tâm", phải viết "Trương Kiến Quốc giả vờ quan tâm đối với Vương Việt").
-         - **Định danh nhân vật (Character Naming):** Luôn sử dụng TÊN CỤ THỂ của nhân vật trong mỗi mô tả hành động. Tuyệt đối không dùng các từ như "tiếp tục hành động đó", "vẫn làm vậy". (Ví dụ: Thay vì "Tiếp tục mắng nhiếc", phải viết "Trương Kiến Quốc tiếp tục mắng nhiếc Vương Việt").
-         - **Hành động đám đông (Crowd Actions):** Nếu có đám đông hoặc nhân vật phụ ở bối cảnh, phải mô tả CỤ THỂ họ đang làm gì, nhìn vào đâu hoặc phản ứng thế nào với sự kiện chính. Tuyệt đối không mô tả chung chung như "bối cảnh công khai". (Ví dụ: Thay vì "Bối cảnh công khai", phải viết "Các nhân viên bên ngoài đang rướn cổ nhìn qua khe cửa vào văn phòng nơi Trương Kiến Quốc và Vương Việt đang tranh cãi").
-      - **XÁC ĐỊNH TƯ THẾ (POSTURE - CRITICAL):** Xác định rõ tư thế (đứng, ngồi, nằm, quỳ, chạy, nhảy) và trạng thái hành động của từng nhân vật trong Beat này. Thông tin này cực kỳ quan trọng để duy trì tính nhất quán ở các bước sau.
-      - **XÁC ĐỊNH THỜI ĐIỂM (TIME OF DAY):** Xác định chính xác thời gian diễn ra (Ví dụ: Early Morning, Mid-day, Golden Hour, Late Night). Thời điểm này PHẢI đồng nhất cho các Beat thuộc cùng một phân đoạn.
-      - Xác định Cảm xúc/Không khí (Atmosphere) chủ đạo.
+CHARACTER RULES:
+- One profile per unique character.
+- Merge aliases/pronouns/titles that refer to the same person.
+- If unnamed, create stable names like "Unknown Man 1".
+- Use beatId references to fill firstAppearanceBeatId and appearsInBeatIds.
+- Infer missing visual details conservatively.
+- outfit describes current/default visual outfit.
+- continuityNotes lists stable traits that should not change.
+- Do not include any image prompt field.
 
-2. **characterLocationAnalysis (Hồ sơ Nhân vật & Bối cảnh):**
-   - Trả về đối tượng: { "characters": [...], "locations": [...] }
-   - **QUY TẮC CHỌN NHÂN VẬT (CHARACTER SELECTION - CRITICAL):**
-    - **BAO GỒM:** 
-      - Nhân vật chính.
-      - Các nhân vật phụ có xuất hiện thực tế (có hành động hoặc lời thoại).
-      - **QUY TẮC ĐỒNG BỘ (CONSISTENCY RULE):** Nếu một nhân vật xuất hiện (hoặc được nhắc đến và cần minh họa hình ảnh) ở **nhiều Beat (từ 2 lần trở lên)** -> BẮT BUỘC tạo hồ sơ để đảm bảo tính đồng bộ hình ảnh giữa các panel.
-    - **LOẠI BỎ:** Chỉ KHÔNG tạo hồ sơ cho nhân vật chỉ được nhắc tên thoáng qua trong lời kể/lời thoại mà **hoàn toàn không** xuất hiện trong bất kỳ khung hình nào (Ví dụ: "Mẹ tôi thường nói..." nhưng người mẹ không bao giờ xuất hiện).
-   - **CẤU TRÚC JSON NHÂN VẬT:** Mỗi nhân vật trong mảng \`characters\` phải có ĐÚNG các trường sau:
-     - \`name\`: Tên nhân vật.
-     - \`gender\`: Giới tính (Tiếng Anh).
-     - \`age\`: Tuổi cụ thể (Ví dụ: "18").
-     - \`height\`: Chiều cao cụ thể (Ví dụ: "172cm").
-     - \`face\`: Mô tả chi tiết cấu trúc khuôn mặt (Tiếng Anh).
-     - \`hair\`: Kiểu tóc và màu sắc (Tiếng Anh).
-     - \`eyes\`: Đặc điểm đôi mắt (Tiếng Anh).
-     - \`outfit\`: Trang phục (Theo quy tắc bên dưới).
-   - **CẤU TRÚC JSON ĐỊA ĐIỂM:** Mỗi địa điểm trong mảng \`locations\` phải có:
-     - \`name\`: Tên địa điểm.
-     - \`description\`: Mô tả chi tiết (Tiếng Anh).
-   
-   **QUY TẮC CHI TIẾT NHÂN VẬT (CHARACTERS):**
-   - **Thư viện:** Kiểm tra kỹ Master Library (nếu có thông tin từ trước). Nếu nhân vật đã tồn tại, COPY LẠI Profile cũ.
-   - **Mới:** Nếu nhân vật mới, hãy tạo Profile cực kỳ chi tiết bằng **TIẾNG ANH**.
-   - **QUY TẮC CHI TIẾT (STRICT ENGLISH):**
-     - **Face:** KHÔNG dùng từ cảm tính (handsome, beautiful). Phải mô tả cấu trúc vật lý (Jawline, cheekbones, nose shape, chin shape). **TUYỆT ĐỐI KHÔNG** mô tả các trạng thái nhất thời, cảm xúc hoặc dấu hiệu mệt mỏi (Ví dụ: KHÔNG dùng "tired", "angry", "sweaty", "crying", "dark circles", "stern look", "exhausted", "frowning"). Hồ sơ phải mô tả diện mạo ở trạng thái trung tính, bền vững suốt cả câu chuyện.
-     - **Tuổi/Chiều cao:** Phải là SỐ CỤ THỂ (Ví dụ: "18", "172cm"). KHÔNG dùng khoảng ("18-20").
-     - **Gender, Hair, Eyes:** Mô tả bằng TIẾNG ANH (Ví dụ: "Oval face", "Short black hair", "Deep blue eyes").
-     - **Trang phục (Outfit):** Phải mô tả CỤ THỂ bằng TIẾNG ANH về màu sắc, layer, loại vải. KHÔNG dùng từ chung chung (như "casual clothes").
-     - **QUY TẮC OUTFIT (CRITICAL):** 
-       - Nếu chỉ có MỘT trang phục: Mô tả trực tiếp (Ví dụ: "Short-sleeved white shirt, blue jeans"). 
-       - Nếu có NHIỀU trang phục: Phân chia cụ thể trong cùng một chuỗi (Ví dụ: "Outfit 1: [Mô tả], Outfit 2: [Mô tả]").
-     - **QUY TẮC IMAGE PROMPT (CRITICAL):** 
-     - Image Prompt phải được tổng hợp từ Profile bằng TIẾNG ANH.
-     - **BẮT BUỘC:** Phải bắt đầu prompt bằng tên phong cách hình ảnh: "${style}".
-     - **CHỈ DÙNG TRANG PHỤC TRONG CHƯƠNG NÀY (CURRENT CHAPTER OUTFITS):** Bạn PHẢI đưa TOÀN BỘ các bộ trang phục nhân vật mặc trong chương này vào prompt, liệt kê theo thứ tự (Ví dụ: "Outfit 1: [Mô tả], Outfit 2: [Mô tả]"). 
-       - **TUYỆT ĐỐI KHÔNG** liệt kê các trang phục cũ từ Master Library nếu chúng không xuất hiện trong chương hiện tại.
-     - **KHÔNG** bao gồm các cảm xúc hay biểu cảm phân tích được từ văn bản.
-     - **BIỂU CẢM MẶC ĐỊNH:** Luôn sử dụng "Neutral and calm expression" để đảm bảo tính nhất quán cho thiết kế nhân vật.
-     - Cấu trúc: "${style}, [Name], [Gender], [Age], [Height], [Face details], [Hair], [Eyes], [ALL OUTFITS FROM CURRENT CHAPTER ONLY]. Front view, full body, standing pose with upright posture, arms relaxed at sides. Neutral and calm expression. Character design, clean white background. NO text, NO labels, clean artwork only."
-     - **QUY TẮC VISUAL DISTINCTIVENESS:** Mỗi nhân vật phải có màu sắc chủ đạo khác nhau hoặc đặc điểm nhận dạng riêng biệt (Silhouette) để không bị nhầm lẫn khi tạo ảnh.
+LOCATION RULES:
+- One profile per unique location.
+- Merge aliases that refer to the same place.
+- If vague, create stable names like "Unknown Interior 1".
+- description focuses on reusable environment details.
+- keyObjects lists objects/furniture/props that need continuity.
+- continuityNotes lists stable environment traits.
+- Do not include any image prompt field.
 
-   **ĐỊA ĐIỂM (LOCATIONS) - TRÍCH XUẤT TRIỆT ĐỂ (EXHAUSTIVE):**
-   - **KIỂM TRA THƯ VIỆN:** Luôn kiểm tra Master Library trước. Nếu địa điểm đã tồn tại và không thay đổi trạng thái, PHẢI COPY LẠI Profile cũ.
-   - **PHẢI TRÍCH XUẤT TẤT CẢ:** Đối chiếu với từng Beat trong phần \`analysis\` ở trên. Bất kỳ địa điểm nào được nhắc đến hoặc ngụ ý trong các Beat đều PHẢI có một Profile riêng trong mảng \`locations\`. 
-   - **Không bỏ sót:** Bao gồm cả những bối cảnh nhỏ nhất hoặc thoáng qua (hành lang, góc tối, bậc thềm, cổng trường, bên trong xe, v.v.).
-   - **KIỂM TRA TRẠNG THÁI (STATE CHECK):**
-     - Nếu địa điểm ĐÃ CÓ nhưng trạng thái thị giác thay đổi đáng kể trong chương này (Ví dụ: "Messy Room" -> "Cleaned Room", "Intact Building" -> "Ruined Building"), hãy tạo một **PROFILE MỚI** với tên kèm hậu tố trạng thái (Ví dụ: "Tên Địa Điểm (Trạng thái)").
-     - Ví dụ: \`My Bedroom (Cleaned)\`, \`CitySquare (Ruined)\`.
-     - **Description:** Mô tả trạng thái hiện tại chi tiết bằng TIẾNG ANH (Kiến trúc, Vật liệu, Ánh sáng, Không khí).
-     - **Derived prompt:** Không trả về prompt dựng sẵn cho địa điểm. App sẽ tự tạo establishing prompt từ profile địa điểm.
+APPROVED BEATS:
+${JSON.stringify(beats, null, 2)}
 
-TIỂU THUYẾT:
-${script}
+ORIGINAL SOURCE TEXT:
+${originalText}
 `;
+
+export const getPhase1AnalysisPrompt = (script: string, style: string, _existingLibrary?: string) => getBeatAnalysisPrompt(script, style);
 
 export const getStoryboardPrompt = (analysis: string, charLocAnalysis: string) => `
 Bạn là chuyên gia họa sĩ minh họa và đạo diễn hình ảnh. Dựa trên kết quả phân tích nội dung và hồ sơ nhân vật/bối cảnh, hãy phác thảo storyboard chi tiết.
@@ -358,93 +435,168 @@ QA (Chỉ gồm các bản sửa lỗi): ${qaReport}
 
 // --- API SERVICES ---
 
-export const analyzePhase1Analysis = async (script: string, style: string, existingLibrary?: string) => {
+export const analyzeBeats = async (text: string, artStyleDescription?: string): Promise<BeatAnalysisResult> => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getPhase1AnalysisPrompt(script, style, existingLibrary),
+    contents: getBeatAnalysisPrompt(text, artStyleDescription),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
         type: "object",
         properties: {
-          analysis: {
+          beats: {
             type: "array",
             items: {
               type: "object",
               properties: {
                 beatId: { type: "integer" },
                 originalText: { type: "string" },
-                actionAnalysis: { type: "string" },
-                charactersInvolved: {
+                summary: { type: "string" },
+                characters: {
                   type: "array",
                   items: { type: "string" }
                 },
-                locationName: { type: "string" },
+                location: { type: "string" },
+                action: { type: "string" },
                 interaction: { type: "string" },
                 posture: { type: "string" },
                 props: {
                   type: "array",
                   items: { type: "string" }
                 },
+                visualFocus: { type: "string" },
                 atmosphere: { type: "string" },
                 timeOfDay: { type: "string" }
               },
-              required: ["originalText", "actionAnalysis", "posture", "atmosphere", "timeOfDay"]
+              required: ["beatId", "originalText", "summary", "characters", "location", "action", "interaction", "posture", "props", "visualFocus", "atmosphere", "timeOfDay"]
             }
           },
-          characterLocationAnalysis: {
+          coverageCheck: {
             type: "object",
             properties: {
-              characters: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    name: { type: "string" },
-                    age: { type: "string" },
-                    height: { type: "string" },
-                    gender: { type: "string" },
-                    face: { type: "string" },
-                    hair: { type: "string" },
-                    eyes: { type: "string" },
-                    bodyType: { type: "string" },
-                    signatureFeatures: {
-                      type: "array",
-                      items: { type: "string" }
-                    },
-                    outfit: { type: "string" },
-                    continuityNotes: { type: "string" }
-                  },
-                  required: ["name", "age", "height", "gender", "face", "hair", "eyes", "outfit"]
-                }
-              },
-              locations: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    name: { type: "string" },
-                    description: { type: "string" },
-                    keyObjects: {
-                      type: "array",
-                      items: { type: "string" }
-                    },
-                    lightingDefault: { type: "string" },
-                    atmosphereDefault: { type: "string" },
-                    continuityNotes: { type: "string" }
-                  },
-                  required: ["name", "description"]
-                }
-              }
+              allSourceTextCovered: { type: "boolean" },
+              missingText: { type: "string" },
+              duplicatedText: { type: "string" },
+              notes: { type: "string" }
             }
           }
         },
-        required: ["analysis", "characterLocationAnalysis"]
+        required: ["beats"]
       } as any
     }
   });
-  return response.text;
+
+  return parseGeminiJson<BeatAnalysisResult>(response.text);
+};
+
+export const generateCharacterLocationLibrary = async (
+  originalText: string,
+  beats: StoryBeat[],
+  artStyleDescription?: string,
+  existingLibrary?: string
+): Promise<CharacterLocationLibraryResult> => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: getModel(),
+    contents: getCharacterLocationLibraryPrompt(originalText, beats, artStyleDescription, existingLibrary),
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: {
+          characters: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                characterId: { type: "string" },
+                name: { type: "string" },
+                aliases: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                gender: { type: "string" },
+                age: { type: "string" },
+                height: { type: "string" },
+                bodyType: { type: "string" },
+                face: { type: "string" },
+                hair: { type: "string" },
+                eyes: { type: "string" },
+                outfit: { type: "string" },
+                personalityVisualCues: { type: "string" },
+                continuityNotes: { type: "string" },
+                firstAppearanceBeatId: { type: "integer" },
+                appearsInBeatIds: {
+                  type: "array",
+                  items: { type: "integer" }
+                }
+              },
+              required: ["characterId", "name", "aliases", "gender", "age", "height", "bodyType", "face", "hair", "eyes", "outfit", "continuityNotes", "appearsInBeatIds"]
+            }
+          },
+          locations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                locationId: { type: "string" },
+                name: { type: "string" },
+                aliases: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                description: { type: "string" },
+                keyObjects: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                lighting: { type: "string" },
+                atmosphere: { type: "string" },
+                continuityNotes: { type: "string" },
+                firstAppearanceBeatId: { type: "integer" },
+                appearsInBeatIds: {
+                  type: "array",
+                  items: { type: "integer" }
+                }
+              },
+              required: ["locationId", "name", "aliases", "description", "keyObjects", "lighting", "atmosphere", "continuityNotes", "appearsInBeatIds"]
+            }
+          }
+        },
+        required: ["characters", "locations"]
+      } as any
+    }
+  });
+
+  return parseGeminiJson<CharacterLocationLibraryResult>(response.text);
+};
+
+export const analyzeStoryPhase1 = async (script: string, style: string, existingLibrary?: string) => {
+  const beatResult = await analyzeBeats(script, style);
+  const analysis = beatResult.beats.map((beat) => ({
+    ...beat,
+    actionAnalysis: beat.actionAnalysis || beat.action || beat.summary,
+    charactersInvolved: beat.charactersInvolved || beat.characters,
+    locationName: beat.locationName || beat.location
+  }));
+  const characterLocationAnalysis = await generateCharacterLocationLibrary(
+    script,
+    analysis,
+    style,
+    existingLibrary
+  );
+
+  return {
+    analysis,
+    coverageCheck: beatResult.coverageCheck,
+    characterLocationAnalysis
+  };
+};
+
+export const analyzePhase1Analysis = async (script: string, style: string, existingLibrary?: string) => {
+  const result = await analyzeStoryPhase1(script, style, existingLibrary);
+  return JSON.stringify(result);
 };
 
 export const createStoryboard = async (analysis: string, charLocAnalysis: string) => {
