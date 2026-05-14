@@ -6,6 +6,8 @@ import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptS
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
 import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
 import {
+  buildFinalResult,
+  getFinalResultMissingInputs,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
   normalizeEngineerPrompts,
@@ -50,6 +52,7 @@ import {
   Send,
   Eye,
   CheckCircle2,
+  FileJson,
   Palette,
   Table,
   Code2,
@@ -588,7 +591,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt, production.analysis || '');
       case ProductionStage.QA: return gemini.getQAPrompt(production.prompts || '', production.characterLocationAnalysis || '', stylePrompt, production.storyboard || '', production.analysis || '');
       case ProductionStage.FINAL:
-        return 'Final Result is built locally with finalResultBuilderService. No Gemini call is used in the main Final flow.';
+        return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
@@ -607,6 +610,42 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
     return null;
   }, [stage, production.finalResult]);
+
+  const finalBuildData = useMemo(() => {
+    const analysisData = parseJsonSafe<unknown>(production.analysis, {});
+    const storyboardData = parseJsonSafe<unknown>(production.storyboard, {});
+    const promptData = parseJsonSafe<unknown>(production.prompts, {});
+    const qaData = parseJsonSafe<unknown>(production.qaReport, {});
+    const libraryData = normalizeCharacterLocationLibrary(
+      parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
+    );
+
+    return {
+      beats: project.beats?.length ? project.beats : normalizeBeats(analysisData),
+      panels: project.storyboardPanels?.length ? project.storyboardPanels : normalizeStoryboardPanels(storyboardData),
+      engineerPrompts: project.engineerPrompts?.length ? project.engineerPrompts : normalizeEngineerPrompts(promptData),
+      qaResults: project.qaResults?.length ? project.qaResults : normalizeQAResults(qaData),
+      characters: project.characters?.length ? project.characters : libraryData.characters,
+      locations: project.locations?.length ? project.locations : libraryData.locations
+    };
+  }, [
+    project.beats,
+    project.storyboardPanels,
+    project.engineerPrompts,
+    project.qaResults,
+    project.characters,
+    project.locations,
+    production.analysis,
+    production.storyboard,
+    production.prompts,
+    production.qaReport,
+    production.characterLocationAnalysis
+  ]);
+
+  const finalBuildCheck = useMemo(
+    () => getFinalResultMissingInputs(finalBuildData),
+    [finalBuildData]
+  );
 
   const handleManualSave = () => {
     if (!manualInputValue.trim()) return;
@@ -1149,6 +1188,46 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
+  const handleBuildFinalResult = () => {
+    const check = getFinalResultMissingInputs(finalBuildData);
+    if (!check.canBuild) {
+      setError(`Chưa đủ dữ liệu để build Final Result. Thiếu: ${check.missingInputs.join(', ')}`);
+      return;
+    }
+
+    const finalResult = buildFinalResult(finalBuildData);
+    const finalResultJson = JSON.stringify(finalResult, null, 2);
+
+    setProduction(prev => ({
+      ...prev,
+      finalResult: finalResultJson
+    }));
+    setProject(prev => replaceFinalResult(prev, finalResult));
+    setError(null);
+    setViewMode('json');
+    setToast({ message: "Đã build Final Result bằng local code!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const handleCopyFinalResult = () => {
+    copyToClipboard(production.finalResult);
+  };
+
+  const handleExportFinalResultJson = () => {
+    if (!production.finalResult) return;
+    const blob = new Blob([production.finalResult], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}_final-result.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setToast({ message: "Đã xuất Final Result JSON!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
   const copyToClipboard = (text?: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
@@ -1271,6 +1350,132 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       </div>
     </div>
   );
+
+  const renderFinalBuilderView = () => {
+    const checklist = [
+      { label: 'Beat Analysis', ok: finalBuildData.beats.length > 0, count: finalBuildData.beats.length, required: true },
+      { label: 'Storyboard Panels', ok: finalBuildData.panels.length > 0, count: finalBuildData.panels.length, required: true },
+      { label: 'Prompt Engineering', ok: finalBuildData.engineerPrompts.length > 0, count: finalBuildData.engineerPrompts.length, required: true },
+      { label: 'Character Library', ok: finalBuildData.characters.length > 0, count: finalBuildData.characters.length, required: false },
+      { label: 'Location Library', ok: finalBuildData.locations.length > 0, count: finalBuildData.locations.length, required: false },
+      { label: 'QA Results', ok: finalBuildData.qaResults.length > 0, count: finalBuildData.qaResults.length, required: false }
+    ];
+
+    return (
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="rounded-3xl border border-indigo-100 bg-indigo-50 p-6 shadow-sm">
+          <div className="flex items-start gap-4">
+            <div className="rounded-2xl bg-indigo-600 p-3 text-white shadow-lg shadow-indigo-100">
+              <FileJson className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-900">Final Result được build local</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-indigo-900">
+                Bước này không gọi Gemini và không cần dán kết quả AI. App sẽ tổng hợp dữ liệu hiện có từ Beat Analysis, Character/Location Library, Storyboard, Prompt Engineering và QA thành JSON cuối cùng.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-1 space-y-6">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-3 mb-5">
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Input Checklist</h3>
+                  <p className="mt-1 text-xs text-slate-500">Các dữ liệu đang có trong project.</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${finalBuildCheck.canBuild ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                  {finalBuildCheck.canBuild ? 'Ready' : 'Missing'}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {checklist.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle2 className={`w-4 h-4 ${item.ok ? 'text-emerald-500' : item.required ? 'text-rose-500' : 'text-amber-500'}`} />
+                      <div>
+                        <p className="text-xs font-black text-slate-700">{item.label}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.required ? 'Required' : 'Optional'}</p>
+                      </div>
+                    </div>
+                    <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-black text-slate-500 border border-slate-100">{item.count}</span>
+                  </div>
+                ))}
+              </div>
+
+              {!finalBuildCheck.canBuild && (
+                <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 p-4 text-xs font-bold text-rose-700">
+                  Thiếu: {finalBuildCheck.missingInputs.join(', ')}
+                </div>
+              )}
+
+              {finalBuildCheck.warnings.length > 0 && (
+                <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs text-amber-800">
+                  <p className="font-black uppercase tracking-widest mb-2">Cảnh báo</p>
+                  <div className="space-y-1">
+                    {finalBuildCheck.warnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
+              <button
+                onClick={handleBuildFinalResult}
+                disabled={!finalBuildCheck.canBuild}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl bg-indigo-600 px-5 py-4 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+              >
+                <Sparkles className="w-4 h-4" /> Build Final Result
+              </button>
+              <button
+                onClick={handleCopyFinalResult}
+                disabled={!production.finalResult}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-indigo-500 hover:text-indigo-600 disabled:opacity-50"
+              >
+                <Copy className="w-4 h-4" /> Copy Final JSON
+              </button>
+              <button
+                onClick={handleExportFinalResultJson}
+                disabled={!production.finalResult}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-blue-500 hover:text-blue-600 disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" /> Export JSON
+              </button>
+              <button
+                onClick={saveProject}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600"
+              >
+                <Save className="w-4 h-4" /> Save Project
+              </button>
+            </div>
+          </div>
+
+          <div className="xl:col-span-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Final Result Preview</h3>
+                <p className="mt-1 text-xs text-slate-500">Readonly JSON output từ local builder.</p>
+              </div>
+              {production.finalResult && (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
+                  Built
+                </span>
+              )}
+            </div>
+            <textarea
+              value={production.finalResult || 'Chưa có Final Result. Bấm "Build Final Result" để tạo JSON cuối cùng.'}
+              readOnly
+              className="h-[620px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-950 p-5 font-mono text-xs leading-relaxed text-slate-100 outline-none"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderFinalView = () => {
     if (!finalJsonData || !Array.isArray(finalJsonData) || finalJsonData.length === 0) {
@@ -2568,13 +2773,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       : stage === ProductionStage.QA ? production.qaReport
                       : production.finalResult;
 
+    if (stage === ProductionStage.FINAL) return renderFinalBuilderView();
+
     if (isManualMode || (isGlobalManualMode && !currentResult)) return renderManualView();
 
     return (
       <div className="max-w-7xl mx-auto">
         {!currentResult && !isLoading && !isGlobalManualMode ? (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>
-        ) : stage === ProductionStage.FINAL ? renderFinalView() : (
+        ) : (
           <div className="bg-slate-50/30 rounded-3xl">
             {isLoading ? (
               <div className="flex flex-col items-center justify-center min-h-[400px] text-indigo-600 gap-4"><Loader2 className="w-12 h-12 animate-spin" /><p className="font-bold animate-pulse">AI đang làm việc...</p></div>
@@ -2592,7 +2799,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       : stage === ProductionStage.QA ? production.qaReport
                       : production.finalResult;
 
-  const isShowingManual = isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT);
+  const isShowingManual = stage !== ProductionStage.FINAL && (isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT));
   const btn = isLoading ? { label: "Đang xử lý...", icon: <Loader2 className="w-5 h-5 animate-spin" />, color: "bg-indigo-600" } 
              : isShowingManual ? { label: "Xác nhận dữ liệu", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
              : stage === ProductionStage.INPUT ? { label: "Bắt đầu phân tích", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
@@ -2672,7 +2879,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 >
                   <Save className="w-4 h-4" /> LƯU DỰ ÁN
                 </button>
-                {stage !== ProductionStage.INPUT && (
+                {stage !== ProductionStage.INPUT && stage !== ProductionStage.FINAL && (
                   <button 
                     onClick={() => setIsManualMode(!isManualMode)} 
                     className={`flex items-center gap-3 px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 shadow-sm ${isShowingManual ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:shadow-md"}`}
@@ -2686,7 +2893,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           {error && <div className="mb-8 p-6 bg-red-50 text-red-600 rounded-3xl border border-red-100 text-sm font-bold flex items-center gap-4 shadow-sm animate-shake"><div className="bg-red-100 p-2 rounded-xl">⚠️</div>{error}</div>}
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">{renderContent()}</div>
         </div>
-        {!isShowingManual && (stage === ProductionStage.INPUT || !hasData(stage)) && (
+        {!isShowingManual && stage !== ProductionStage.FINAL && (stage === ProductionStage.INPUT || !hasData(stage)) && (
           <div className="fixed bottom-12 right-12 z-30">
             <button onClick={handleProcess} disabled={isLoading || (stage === ProductionStage.INPUT && (!inputData.script.trim() || !inputData.title.trim() || !inputData.chapter.trim())) || (stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL))} className={`group flex items-center gap-4 px-10 py-6 rounded-3xl font-black text-white shadow-2xl transition-all active:scale-95 disabled:opacity-50 ${btn.color} hover:brightness-110 hover:-translate-y-1 shadow-indigo-500/40`}>{btn.icon} <span className="uppercase tracking-[0.2em] text-sm">{btn.label}</span><ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></button>
           </div>

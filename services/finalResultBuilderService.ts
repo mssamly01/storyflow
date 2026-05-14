@@ -13,6 +13,12 @@ import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboar
 
 type UnknownRecord = Record<string, any>;
 
+export interface FinalResultBuildCheck {
+  canBuild: boolean;
+  missingInputs: string[];
+  warnings: string[];
+}
+
 export function parseJsonSafe<T>(value: unknown, fallback: T): T {
   if (!value) return fallback;
   if (typeof value !== "string") return value as T;
@@ -246,5 +252,30 @@ export function buildFinalResult(params: {
       generatedAt: new Date().toISOString(),
       source: "code-builder"
     }
+  };
+}
+
+export function getFinalResultMissingInputs(params: {
+  beats: StoryBeat[];
+  panels: StoryboardPanel[];
+  engineerPrompts: EngineerPrompt[];
+  qaResults: QAResult[];
+  characters: CharacterProfile[];
+  locations: LocationProfile[];
+}): FinalResultBuildCheck {
+  const missingInputs: string[] = [];
+  const warnings: string[] = [];
+
+  if (!params.beats?.length) missingInputs.push("Beat Analysis");
+  if (!params.panels?.length) missingInputs.push("Storyboard Panels");
+  if (!params.engineerPrompts?.length) missingInputs.push("Prompt Engineering");
+  if (!params.characters?.length) warnings.push("Character Library is empty.");
+  if (!params.locations?.length) warnings.push("Location Library is empty.");
+  if (!params.qaResults?.length) warnings.push("QA results are empty. Final Result can still be built, but QA status will be unchecked.");
+
+  return {
+    canBuild: missingInputs.length === 0,
+    missingInputs,
+    warnings
   };
 }
