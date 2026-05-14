@@ -1,9 +1,13 @@
 
 import { GoogleGenAI, Part } from "@google/genai";
 import { getConfig } from "./configService";
+import { mapLocationIdsToBeats } from "./locationContinuityService";
+import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import type {
   BeatAnalysisResult,
   CharacterLocationLibraryResult,
+  CharacterProfile,
+  LocationProfile,
   StoryBeat
 } from "../types";
 
@@ -46,6 +50,15 @@ const parseGeminiJson = <T,>(rawText?: string): T => {
   }
 
   return JSON.parse(extractJsonObject(rawText)) as T;
+};
+
+const parseJsonFallback = <T,>(rawText: string | undefined, fallback: T): T => {
+  if (!rawText) return fallback;
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    return fallback;
+  }
 };
 
 export const getBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
@@ -167,6 +180,7 @@ Return ONLY valid JSON with this schema:
       "characterId": "char_001",
       "name": "...",
       "aliases": ["..."],
+      "role": "...",
       "gender": "...",
       "age": "...",
       "height": "...",
@@ -175,7 +189,12 @@ Return ONLY valid JSON with this schema:
       "hair": "...",
       "eyes": "...",
       "outfit": "...",
+      "accessories": ["..."],
+      "props": ["..."],
+      "colorPalette": ["..."],
       "personalityVisualCues": "...",
+      "expressionSet": ["neutral", "happy", "curious", "worried", "angry", "surprised", "sad", "determined"],
+      "gestureSet": ["relaxed hand", "pointing gesture", "gripping object", "thinking gesture"],
       "continuityNotes": "...",
       "firstAppearanceBeatId": 1,
       "appearsInBeatIds": [1, 2]
@@ -187,10 +206,13 @@ Return ONLY valid JSON with this schema:
       "name": "...",
       "aliases": ["..."],
       "description": "...",
+      "layout": "...",
       "keyObjects": ["..."],
       "lighting": "...",
       "atmosphere": "...",
+      "colorPalette": ["..."],
       "continuityNotes": "...",
+      "baseState": "...",
       "firstAppearanceBeatId": 1,
       "appearsInBeatIds": [1, 2]
     }
@@ -204,6 +226,12 @@ CHARACTER RULES:
 - Use beatId references to fill firstAppearanceBeatId and appearsInBeatIds.
 - Infer missing visual details conservatively.
 - outfit describes current/default visual outfit.
+- accessories lists items worn or carried on the body that must remain visually consistent.
+- props lists recurring objects associated with the character.
+- colorPalette is a compact list of key colors from hair, eyes, skin tone, outfit, accessories, and recurring props.
+- expressionSet includes expressions suitable for this character based on personality and story tone.
+- gestureSet includes common hand gestures or body gestures this character may need in visual panels.
+- These extra fields are used later by the app to build a Character Reference Sheet Prompt.
 - continuityNotes lists stable traits that should not change.
 - Do not include any image prompt field.
 
@@ -211,9 +239,14 @@ LOCATION RULES:
 - One profile per unique location.
 - Merge aliases that refer to the same place.
 - If vague, create stable names like "Unknown Interior 1".
-- description focuses on reusable environment details.
-- keyObjects lists objects/furniture/props that need continuity.
-- continuityNotes lists stable environment traits.
+- description defines the overall reusable environment.
+- layout describes the spatial arrangement of major elements, furniture, doors, windows, and architectural features.
+- keyObjects lists furniture, props, and architectural features that must stay consistent.
+- lighting describes reusable lighting conditions.
+- colorPalette is a compact reusable palette for the environment.
+- continuityNotes explicitly describes what must remain consistent across beats.
+- baseState describes the default environmental state before beat-specific changes.
+- Use appearsInBeatIds based on the approved beat list.
 - Do not include any image prompt field.
 
 APPROVED BEATS:
@@ -225,13 +258,12 @@ ${originalText}
 
 export const getPhase1AnalysisPrompt = (script: string, style: string, _existingLibrary?: string) => getBeatAnalysisPrompt(script, style);
 
-export const getStoryboardPrompt = (analysis: string, charLocAnalysis: string) => `
+const getLegacyStoryboardPrompt = (analysis: string, charLocAnalysis: string) => `
 Bạn là chuyên gia họa sĩ minh họa và đạo diễn hình ảnh. Dựa trên kết quả phân tích nội dung và hồ sơ nhân vật/bối cảnh, hãy phác thảo storyboard chi tiết.
 
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
-- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "beatId": 1, "originalText": "...", "shotType": "...", "cameraAngle": "...", "framing": "...", "composition": "...", "lighting": "...", "visibleCharacters": ["..."], "locationName": "...", "actionInFrame": "...", "continuityNotes": "...", "timeOfDay": "..." }]
+- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "beatId": 1, "originalText": "...", "shotType": "...", "cameraAngle": "...", "framing": "...", "composition": "...", "lighting": "...", "visibleCharacters": ["..."], "locationName": "...", "actionInFrame": "...", "continuityNotes": "..." }]
 - Tạo danh sách các khung hình tương ứng với từng Beat trong bản phân tích.
-- Giá trị "timeOfDay" phải được lấy chính xác từ phần "PHÂN TÍCH NHỊP TRUYỆN" bên dưới.
 - **ANTI-DUPLICATION:** Không lặp lại full profile nhân vật/địa điểm. Không viết final image prompt. \`actionInFrame\` chỉ mô tả hành động nhìn thấy trong panel; camera/framing/composition/lighting nằm ở field riêng.
 
 PHÂN TÍCH NHỊP TRUYỆN:
@@ -253,7 +285,112 @@ QUY TẮC MÔ TẢ (DESCRIPTION RULES - CRITICAL):
 3. **BỐI CẢNH:** Luôn nhắc lại các chi tiết bối cảnh quan trọng để duy trì không gian.
 `;
 
-export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string) => `
+export const getStoryboardPrompt = (
+  analysis: string,
+  charLocAnalysis: string,
+  artStyleDescription = ""
+) => {
+  const beats = parseJsonFallback<StoryBeat[]>(analysis, []);
+  const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
+    characters: [],
+    locations: []
+  });
+
+  return `You are a professional storyboard director for a vertical comic / visual illustration app.
+
+Your ONLY task:
+Create visual direction for each approved beat.
+
+You must NOT re-analyze story content.
+You must NOT rewrite originalText.
+You must NOT change location.
+You must NOT change visible characters.
+You must NOT change props, action, posture, interaction, atmosphere, or visualFocus.
+
+Use the approved beat data as the source of truth.
+Character profiles and location profiles are also source of truth.
+Use them only to guide blocking and composition.
+Do not create new character identities or new locations.
+
+Your output should contain ONLY visual/camera fields.
+Return ONLY valid JSON. No markdown. No commentary.
+
+Required JSON schema:
+{
+  "panels": [
+    {
+      "panelId": "panel_001",
+      "panelNumber": 1,
+      "beatId": 1,
+      "shotType": "...",
+      "cameraAngle": "...",
+      "cameraDistance": "...",
+      "lensFeel": "...",
+      "composition": "...",
+      "foreground": "...",
+      "midground": "...",
+      "background": "...",
+      "characterBlocking": [
+        {
+          "characterId": "char_001",
+          "characterName": "...",
+          "framePosition": "...",
+          "bodyPosition": "...",
+          "facingDirection": "...",
+          "expression": "...",
+          "poseRefinement": "...",
+          "interactionWith": "char_002"
+        }
+      ],
+      "lightingDirection": "...",
+      "depthAndPerspective": "...",
+      "visualEmphasis": "...",
+      "cameraNotes": "..."
+    }
+  ]
+}
+
+DO NOT OUTPUT these fields:
+- originalText
+- location
+- locationId
+- locationState
+- visibleCharacters
+- props
+- action
+- posture
+- atmosphere
+- visualFocus
+
+These fields already exist in the approved beat data and must be reused by the app.
+
+VISUAL DIRECTION RULES:
+- shotType: close-up, medium shot, wide shot, over-the-shoulder, POV, etc.
+- cameraAngle: eye-level, low angle, high angle, tilted angle, etc.
+- cameraDistance: close, medium, wide, extreme close-up, etc.
+- lensFeel: natural, cinematic compression, slight wide-angle, intimate portrait feel, etc.
+- composition: where the important subjects are placed in the frame.
+- foreground/midground/background: describe visual layers only.
+- characterBlocking: place approved characters in the frame.
+- expression and poseRefinement can refine the approved beat posture, but must not contradict it.
+- lightingDirection can refine how existing location lighting is presented, but must not rewrite source story facts.
+- cameraNotes should mention continuity concerns only when helpful.
+
+SOURCE BEATS:
+${JSON.stringify(beats, null, 2)}
+
+CHARACTER LIBRARY:
+${JSON.stringify(library.characters || [], null, 2)}
+
+LOCATION LIBRARY:
+${JSON.stringify(library.locations || [], null, 2)}
+
+ART STYLE:
+${artStyleDescription || "No specific style selected."}
+`;
+};
+
+export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string, _analysis = "") => `
 Bạn là chuyên gia Prompt Engineering cấp cao. Hãy chuyển đổi Storyboard thành các prompt AI Image Generation (16:9) tuân thủ các quy tắc "NHẤT QUÁN CỰC ĐOAN".
 
 DỮ LIỆU:
@@ -265,7 +402,6 @@ ${style}
 QUY TẮC CẤU TRÚC PROMPT (PHẢI TUÂN THỦ THỨ TỰ):
 1. **STYLE FIRST (BẮT BUỘC):** Luôn bắt đầu prompt bằng tên phong cách kèm mô tả chi tiết của nó: "${style}".
 2. **LOCATION (BẮT BUỘC - CRITICAL FOR CONSISTENCY):** Tiếp theo là: "Location: [Tên địa điểm] ([Mô tả chi tiết địa điểm từ profile]), [Mô tả vật liệu/ánh sáng từ storyboard/profile]."
-   - **THỜI ĐIỂM (TIMEOFDAY):** Phải sử dụng thông tin \`timeOfDay\` từ STORYBOARD để mô tả ánh sáng tự nhiên một cách chính xác.
    - **LÝ DO:** TUYỆT ĐỐI KHÔNG được chỉ nhắc tên địa điểm đơn độc. Nếu chỉ ghi tên, AI sẽ tự tạo ra bối cảnh ngẫu nhiên (hallucination), dẫn đến việc địa điểm không đồng nhất giữa các PANEL.
    - **YÊU CẦU:** Phải sao chép đầy đủ mô tả từ Profile và Storyboard vào mỗi prompt.
    - **VÍ DỤ ĐÚNG:** "Location: Finance Department Office (A spacious modern office with glass walls, rows of white desks, and blue ergonomic chairs), night time with moonlight through windows mixed with flickering overhead fluorescent lights."
@@ -321,7 +457,6 @@ YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
 Trả về một mảng các đối tượng, mỗi đối tượng tương ứng với một panel:
 {
   "panelNumber": number,
-  "timeOfDay": "string",
   "visualPrompt": "string (định dạng Style-First + Location-First)"
 }
 
@@ -370,8 +505,7 @@ KIỂM TRA CÁC LỖI SAU (ĐẶC BIỆT CHÚ TRỌNG TÍNH NHẤT QUÁN):
    - Nếu panel trước nhân vật đang ở một tư thế (nằm, ngồi, quỳ) và văn bản không có hành động thay đổi tư thế (đứng dậy, đi lại) -> PHẢI đảm bảo panel sau vẫn mô tả nhân vật ở tư thế đó, ngay cả trong các cảnh cận cảnh (Close-up).
    - Ví dụ: Nếu nhân vật đang nằm, cảnh cận cảnh điện thoại phải mô tả "phone held by a character lying down".
 9. Kiểm tra văn bản/lời thoại: Prompt có chứa từ khóa về "speech bubbles", "text", "dialogue" không? (Phải loại bỏ).
-10. **KIỂM TRA THỜI ĐIỂM (TIMEOFDAY CHECK):** Đảm bảo thông tin timeOfDay không bị mất hoặc thay đổi sai lệch so với phân tích ban đầu.
-11. **KIỂM TRA TỪ CẤM & NHẠY CẢM (CONTENT SAFETY - CRITICAL):**
+10. **KIỂM TRA TỪ CẤM & NHẠY CẢM (CONTENT SAFETY - CRITICAL):**
    - Kiểm tra các từ ngữ có thể bị các công cụ tạo ảnh (như Midjourney, DALL-E) chặn do vi phạm chính sách (bạo lực, máu me, nhạy cảm, bộ phận cơ thể, từ lóng...).
    - **HÀNH ĐỘNG:** Thay thế các từ này bằng các từ ngữ nghệ thuật, ẩn dụ hoặc mô tả gián tiếp nhưng vẫn giữ nguyên ý nghĩa của khung hình.
    - **VÍ DỤ:** 
@@ -379,7 +513,7 @@ KIỂM TRA CÁC LỖI SAU (ĐẶC BIỆT CHÚ TRỌNG TÍNH NHẤT QUÁN):
      - Thay "killing/murder" bằng "defeated/neutralized".
      - Thay các từ nhạy cảm về cơ thể bằng các mô tả về trang phục hoặc ánh sáng che khuất.
      - Thay "gun/weapon" (nếu bị chặn) bằng "metallic tool" hoặc mô tả hình dáng cụ thể.
-12. Vị trí nhân vật có bị thay đổi vô lý giữa các screen không?
+11. Vị trí nhân vật có bị thay đổi vô lý giữa các screen không?
 
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
 CHỈ trả về các panel có lỗi cần sửa hoặc có thay đổi. Các panel đạt yêu cầu (Pass) thì KHÔNG cần đưa vào danh sách kết quả này.
@@ -413,7 +547,6 @@ YÊU CẦU CẤU TRÚC JSON ĐẦU RA:
       "panelNumber": Số thứ tự khung hình,
       "shotName": "Tiêu đề ngắn gọn cho khung hình",
       "originalText": "Câu văn hoặc đoạn văn gốc được minh họa",
-      "timeOfDay": "Thời điểm diễn ra (Lấy chính xác từ STORYBOARD)",
       "cameraAngle": "Góc máy",
       "framing": "Bố cục khung hình",
       "subject": "Chủ thể chính",
@@ -516,6 +649,7 @@ export const generateCharacterLocationLibrary = async (
                   type: "array",
                   items: { type: "string" }
                 },
+                role: { type: "string" },
                 gender: { type: "string" },
                 age: { type: "string" },
                 height: { type: "string" },
@@ -524,7 +658,27 @@ export const generateCharacterLocationLibrary = async (
                 hair: { type: "string" },
                 eyes: { type: "string" },
                 outfit: { type: "string" },
+                accessories: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                props: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                colorPalette: {
+                  type: "array",
+                  items: { type: "string" }
+                },
                 personalityVisualCues: { type: "string" },
+                expressionSet: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                gestureSet: {
+                  type: "array",
+                  items: { type: "string" }
+                },
                 continuityNotes: { type: "string" },
                 firstAppearanceBeatId: { type: "integer" },
                 appearsInBeatIds: {
@@ -532,7 +686,7 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "integer" }
                 }
               },
-              required: ["characterId", "name", "aliases", "gender", "age", "height", "bodyType", "face", "hair", "eyes", "outfit", "continuityNotes", "appearsInBeatIds"]
+              required: ["characterId", "name", "aliases", "role", "gender", "age", "height", "bodyType", "face", "hair", "eyes", "outfit", "accessories", "props", "colorPalette", "personalityVisualCues", "expressionSet", "gestureSet", "continuityNotes", "appearsInBeatIds"]
             }
           },
           locations: {
@@ -547,20 +701,26 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "string" }
                 },
                 description: { type: "string" },
+                layout: { type: "string" },
                 keyObjects: {
                   type: "array",
                   items: { type: "string" }
                 },
                 lighting: { type: "string" },
                 atmosphere: { type: "string" },
+                colorPalette: {
+                  type: "array",
+                  items: { type: "string" }
+                },
                 continuityNotes: { type: "string" },
+                baseState: { type: "string" },
                 firstAppearanceBeatId: { type: "integer" },
                 appearsInBeatIds: {
                   type: "array",
                   items: { type: "integer" }
                 }
               },
-              required: ["locationId", "name", "aliases", "description", "keyObjects", "lighting", "atmosphere", "continuityNotes", "appearsInBeatIds"]
+              required: ["locationId", "name", "aliases", "description", "layout", "keyObjects", "lighting", "atmosphere", "colorPalette", "continuityNotes", "baseState", "appearsInBeatIds"]
             }
           }
         },
@@ -574,7 +734,7 @@ export const generateCharacterLocationLibrary = async (
 
 export const analyzeStoryPhase1 = async (script: string, style: string, existingLibrary?: string) => {
   const beatResult = await analyzeBeats(script, style);
-  const analysis = beatResult.beats.map((beat) => ({
+  const normalizedAnalysis = beatResult.beats.map((beat) => ({
     ...beat,
     actionAnalysis: beat.actionAnalysis || beat.action || beat.summary,
     charactersInvolved: beat.charactersInvolved || beat.characters,
@@ -582,10 +742,11 @@ export const analyzeStoryPhase1 = async (script: string, style: string, existing
   }));
   const characterLocationAnalysis = await generateCharacterLocationLibrary(
     script,
-    analysis,
+    normalizedAnalysis,
     style,
     existingLibrary
   );
+  const analysis = mapLocationIdsToBeats(normalizedAnalysis, characterLocationAnalysis.locations);
 
   return {
     analysis,
@@ -599,48 +760,71 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
   return JSON.stringify(result);
 };
 
-export const createStoryboard = async (analysis: string, charLocAnalysis: string) => {
+export const createStoryboard = async (analysis: string, charLocAnalysis: string, style = "") => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getStoryboardPrompt(analysis, charLocAnalysis),
+    contents: getStoryboardPrompt(analysis, charLocAnalysis, style),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            panelNumber: { type: "integer" },
-            beatId: { type: "integer" },
-            originalText: { type: "string" },
-            shotType: { type: "string" },
-            cameraAngle: { type: "string" },
-            framing: { type: "string" },
-            composition: { type: "string" },
-            lighting: { type: "string" },
-            visibleCharacters: {
-              type: "array",
-              items: { type: "string" }
-            },
-            locationName: { type: "string" },
-            actionInFrame: { type: "string" },
-            continuityNotes: { type: "string" },
-            timeOfDay: { type: "string" }
-          },
-          required: ["panelNumber", "originalText", "actionInFrame", "timeOfDay"]
-        }
+        type: "object",
+        properties: {
+          panels: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                panelId: { type: "string" },
+                panelNumber: { type: "integer" },
+                beatId: { type: "integer" },
+                shotType: { type: "string" },
+                cameraAngle: { type: "string" },
+                cameraDistance: { type: "string" },
+                lensFeel: { type: "string" },
+                composition: { type: "string" },
+                foreground: { type: "string" },
+                midground: { type: "string" },
+                background: { type: "string" },
+                characterBlocking: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      characterId: { type: "string" },
+                      characterName: { type: "string" },
+                      framePosition: { type: "string" },
+                      bodyPosition: { type: "string" },
+                      facingDirection: { type: "string" },
+                      expression: { type: "string" },
+                      poseRefinement: { type: "string" },
+                      interactionWith: { type: "string" }
+                    }
+                  }
+                },
+                lightingDirection: { type: "string" },
+                depthAndPerspective: { type: "string" },
+                visualEmphasis: { type: "string" },
+                cameraNotes: { type: "string" }
+              },
+              required: ["panelId", "panelNumber", "beatId", "shotType", "cameraAngle", "composition"]
+            }
+          }
+        },
+        required: ["panels"]
       } as any
     }
   });
-  return response.text;
+  const parsed = parseGeminiJson<{ panels?: unknown[] } | unknown[]>(response.text);
+  const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(parsed));
+  return JSON.stringify({ panels }, null, 2);
 };
 
-export const engineerPrompts = async (storyboard: string, charLocAnalysis: string, style: string) => {
+export const engineerPrompts = async (storyboard: string, charLocAnalysis: string, style: string, analysis = "") => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getEngineerPromptsPrompt(storyboard, charLocAnalysis, style),
+    contents: getEngineerPromptsPrompt(storyboard, charLocAnalysis, style, analysis),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -649,10 +833,9 @@ export const engineerPrompts = async (storyboard: string, charLocAnalysis: strin
           type: "object",
           properties: {
             panelNumber: { type: "integer" },
-            visualPrompt: { type: "string" },
-            timeOfDay: { type: "string" }
+            visualPrompt: { type: "string" }
           },
-          required: ["panelNumber", "visualPrompt", "timeOfDay"]
+          required: ["panelNumber", "visualPrompt"]
         }
       } as any
     }
@@ -674,10 +857,9 @@ export const runQA = async (data: string, charLocAnalysis: string, style: string
           properties: {
             panelNumber: { type: "integer" },
             visualPrompt: { type: "string" },
-            timeOfDay: { type: "string" },
             qaNotes: { type: "string" }
           },
-          required: ["panelNumber", "visualPrompt", "qaNotes", "timeOfDay"]
+          required: ["panelNumber", "visualPrompt", "qaNotes"]
         }
       } as any
     }
@@ -707,7 +889,6 @@ export const generateFinalResult = async (storyboard: string, prompts: string, q
                 panelNumber: { type: "integer" },
                 shotName: { type: "string" },
                 originalText: { type: "string" },
-                timeOfDay: { type: "string" },
                 cameraAngle: { type: "string" },
                 framing: { type: "string" },
                 subject: { type: "string" },
@@ -717,7 +898,7 @@ export const generateFinalResult = async (storyboard: string, prompts: string, q
                 visualPrompt: { type: "string" },
                 negative_prompt: { type: "string" }
               },
-              required: ["panelNumber", "shotName", "originalText", "visualPrompt", "timeOfDay"]
+              required: ["panelNumber", "shotName", "originalText", "visualPrompt"]
             }
           }
         },
@@ -727,3 +908,4 @@ export const generateFinalResult = async (storyboard: string, prompts: string, q
   });
   return response.text;
 };
+

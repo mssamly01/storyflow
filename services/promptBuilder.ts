@@ -2,8 +2,11 @@ import type {
   BeatAnalysis,
   CharacterProfile,
   LocationProfile,
+  StoryBeat,
   StoryboardPanel
 } from '../types';
+import { buildLocationContinuityBlock } from './locationContinuityService';
+import { getPanelSourceFields } from './storyboardDataService';
 
 const compact = (parts: Array<string | undefined | null | false>) =>
   parts.filter(Boolean).join(', ');
@@ -11,6 +14,15 @@ const compact = (parts: Array<string | undefined | null | false>) =>
 export function buildCharacterReferencePrompt(character: CharacterProfile): string {
   const signatureFeatures = Array.isArray(character.signatureFeatures)
     ? character.signatureFeatures.join(', ')
+    : '';
+  const accessories = Array.isArray(character.accessories)
+    ? character.accessories.join(', ')
+    : '';
+  const props = Array.isArray(character.props)
+    ? character.props.join(', ')
+    : '';
+  const colorPalette = Array.isArray(character.colorPalette)
+    ? character.colorPalette.join(', ')
     : '';
 
   return compact([
@@ -25,6 +37,9 @@ export function buildCharacterReferencePrompt(character: CharacterProfile): stri
     character.eyes ? `eyes: ${character.eyes}` : '',
     signatureFeatures ? `signature features: ${signatureFeatures}` : '',
     character.outfit ? `current outfit: ${character.outfit}` : '',
+    accessories ? `accessories: ${accessories}` : '',
+    props ? `recurring props: ${props}` : '',
+    colorPalette ? `color palette: ${colorPalette}` : '',
     character.continuityNotes ? `continuity: ${character.continuityNotes}` : ''
   ]);
 }
@@ -33,13 +48,19 @@ export function buildLocationReferencePrompt(location: LocationProfile, style: s
   const keyObjects = Array.isArray(location.keyObjects)
     ? location.keyObjects.join(', ')
     : '';
+  const colorPalette = Array.isArray(location.colorPalette)
+    ? location.colorPalette.join(', ')
+    : '';
 
   return compact([
     style,
     `establishing shot of ${location.name}`,
     location.description || location.details,
+    location.layout ? `spatial layout: ${location.layout}` : '',
     keyObjects ? `key objects: ${keyObjects}` : '',
-    location.lightingDefault ? `default lighting: ${location.lightingDefault}` : '',
+    location.lighting || location.lightingDefault ? `default lighting: ${location.lighting || location.lightingDefault}` : '',
+    colorPalette ? `color palette: ${colorPalette}` : '',
+    location.baseState ? `base state: ${location.baseState}` : '',
     location.atmosphereDefault ? `default atmosphere: ${location.atmosphereDefault}` : '',
     location.continuityNotes ? `continuity: ${location.continuityNotes}` : '',
     'no text, no labels, no speech bubbles, no watermark'
@@ -52,34 +73,54 @@ export function buildFinalVisualPrompt(params: {
   panel: StoryboardPanel;
   characters: CharacterProfile[];
   location?: LocationProfile;
+  locations?: LocationProfile[];
+  beats?: StoryBeat[];
 }): string {
-  const { style, beat, panel, characters, location } = params;
-  const visibleNames = Array.isArray(panel.visibleCharacters) ? panel.visibleCharacters : [];
+  const { style, beat, panel, characters, location, locations, beats } = params;
+  const source = getPanelSourceFields(panel, beats || [beat as StoryBeat]);
+  const visibleNames = source.visibleCharacters;
   const visibleCharacterPrompts = visibleNames
     .map((name) => characters.find((character) => character.name === name))
     .filter((character): character is CharacterProfile => Boolean(character))
     .map(buildCharacterReferencePrompt);
   const locationObjects = Array.isArray(location?.keyObjects) ? location?.keyObjects.join(', ') : '';
-  const props = Array.isArray(beat.props) ? beat.props.join(', ') : '';
+  const props = Array.isArray(source.props) ? source.props.join(', ') : '';
+  const continuityLocations = locations || (location ? [location] : []);
+  const locationContinuityBlock = buildLocationContinuityBlock({
+    ...beat,
+    beatId: beat.beatId || panel.beatId || panel.panelNumber,
+    location: source.location,
+    locationName: source.location,
+    locationId: source.locationId,
+    locationState: source.locationState
+  }, continuityLocations);
 
   return compact([
     style,
     `single vertical comic panel, panel ${panel.panelNumber}`,
     location ? `location: ${location.name}, ${location.description || location.details || ''}` : '',
     locationObjects ? `location key objects: ${locationObjects}` : '',
-    beat.timeOfDay ? `time of day: ${beat.timeOfDay}` : '',
-    beat.atmosphere ? `atmosphere: ${beat.atmosphere}` : '',
+    locationContinuityBlock,
+    source.atmosphere ? `atmosphere: ${source.atmosphere}` : '',
     panel.shotType ? `shot type: ${panel.shotType}` : '',
     panel.cameraAngle ? `camera angle: ${panel.cameraAngle}` : '',
+    panel.cameraDistance ? `camera distance: ${panel.cameraDistance}` : '',
+    panel.lensFeel ? `lens feel: ${panel.lensFeel}` : '',
     panel.framing ? `framing: ${panel.framing}` : '',
     panel.composition ? `composition: ${panel.composition}` : '',
-    panel.lighting ? `lighting: ${panel.lighting}` : '',
-    panel.actionInFrame ? `visible action: ${panel.actionInFrame}` : '',
-    beat.interaction ? `interaction: ${beat.interaction}` : '',
-    beat.posture ? `posture: ${beat.posture}` : '',
+    panel.foreground ? `foreground: ${panel.foreground}` : '',
+    panel.midground ? `midground: ${panel.midground}` : '',
+    panel.background ? `background: ${panel.background}` : '',
+    panel.lightingDirection || panel.lighting ? `lighting direction: ${panel.lightingDirection || panel.lighting}` : '',
+    panel.depthAndPerspective ? `depth and perspective: ${panel.depthAndPerspective}` : '',
+    panel.visualEmphasis ? `visual emphasis: ${panel.visualEmphasis}` : '',
+    source.action ? `visible action: ${source.action}` : '',
+    source.interaction ? `interaction: ${source.interaction}` : '',
+    source.posture ? `posture: ${source.posture}` : '',
     props ? `important props: ${props}` : '',
+    panel.characterBlocking?.length ? `character blocking: ${panel.characterBlocking.map((item) => `${item.characterName}: ${item.framePosition}, ${item.bodyPosition}, facing ${item.facingDirection}, expression ${item.expression}, pose refinement ${item.poseRefinement}`).join(' | ')}` : '',
     visibleCharacterPrompts.length ? `visible characters: ${visibleCharacterPrompts.join(' | ')}` : '',
-    panel.continuityNotes ? `panel continuity: ${panel.continuityNotes}` : '',
+    panel.cameraNotes || panel.continuityNotes ? `panel continuity: ${panel.cameraNotes || panel.continuityNotes}` : '',
     'preserve character identity and outfit exactly',
     'preserve location layout and key objects exactly',
     'no text, no captions, no subtitles, no speech bubbles, no watermark'

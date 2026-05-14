@@ -45,6 +45,8 @@ export interface StoryBeat extends BeatAnalysis {
   summary?: string;
   characters?: string[];
   location?: string;
+  locationId?: string;
+  locationState?: string;
   action?: string;
   visualFocus?: string;
 }
@@ -80,7 +82,12 @@ export interface CharacterProfile {
   eyes?: string;
   signatureFeatures?: string[];
   outfit?: string;
+  accessories?: string[];
+  props?: string[];
+  colorPalette?: string[];
   personalityVisualCues?: string;
+  expressionSet?: string[];
+  gestureSet?: string[];
   continuityNotes?: string;
   firstAppearanceBeatId?: number | null;
   appearsInBeatIds?: number[];
@@ -92,9 +99,12 @@ export interface LocationProfile {
   aliases?: string[];
   description?: string;
   details?: string;
+  layout?: string;
   keyObjects?: string[];
   lighting?: string;
   atmosphere?: string;
+  colorPalette?: string[];
+  baseState?: string;
   lightingDefault?: string;
   atmosphereDefault?: string;
   continuityNotes?: string;
@@ -102,20 +112,51 @@ export interface LocationProfile {
   appearsInBeatIds?: number[];
 }
 
+export interface CharacterBlocking {
+  characterId?: string;
+  characterName: string;
+  framePosition: string;
+  bodyPosition: string;
+  facingDirection: string;
+  expression: string;
+  poseRefinement: string;
+  interactionWith?: string;
+}
+
 export interface StoryboardPanel {
-  panelNumber: number;
+  panelId?: string;
+  panelNumber?: number;
   beatId?: number;
-  originalText?: string;
-  description?: string;
   shotType?: string;
   cameraAngle?: string;
-  framing?: string;
+  cameraDistance?: string;
+  lensFeel?: string;
   composition?: string;
+  foreground?: string;
+  midground?: string;
+  background?: string;
+  characterBlocking?: CharacterBlocking[];
+  lightingDirection?: string;
+  depthAndPerspective?: string;
+  visualEmphasis?: string;
+  cameraNotes?: string;
+  /** @deprecated Use StoryBeat.originalText via beatId. */
+  originalText?: string;
+  /** @deprecated Use StoryBeat action fields via beatId. */
+  description?: string;
+  framing?: string;
+  /** @deprecated Use lightingDirection plus StoryBeat.timeOfDay via beatId. */
   lighting?: string;
+  /** @deprecated Use StoryBeat.characters via beatId. */
   visibleCharacters?: string[];
+  /** @deprecated Use StoryBeat.location/locationId via beatId. */
   locationName?: string;
+  locationId?: string;
+  locationState?: string;
+  /** @deprecated Use StoryBeat.action via beatId. */
   actionInFrame?: string;
   continuityNotes?: string;
+  /** @deprecated Use StoryBeat.timeOfDay via beatId. */
   timeOfDay?: string;
 }
 

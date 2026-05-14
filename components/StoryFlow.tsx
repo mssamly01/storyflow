@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ProductionStage, ScriptData, ProductionData } from '../types';
+import { ProductionStage, ScriptData, ProductionData, CharacterProfile, LocationProfile } from '../types';
 import * as gemini from '../services/geminiService';
-import { buildCharacterReferencePrompt, buildLocationReferencePrompt } from '../services/promptBuilder';
+import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptService';
+import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
+import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
 import { 
   FileText, 
   BarChart2, 
@@ -113,6 +115,12 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
   const [showLibraryModal, setShowLibraryModal] = useState(false);
+  const [referencePromptModal, setReferencePromptModal] = useState<{
+    open: boolean;
+    title: string;
+    subjectName: string;
+    prompt: string;
+  }>({ open: false, title: '', subjectName: '', prompt: '' });
   const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
 
   const [inputData, setInputData] = useState<ScriptData>({
@@ -449,6 +457,29 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return false;
   };
 
+  const normalizeBeatForUi = (beat: any, index: number) => {
+    if (!beat || typeof beat !== 'object' || Array.isArray(beat)) return beat;
+
+    const characters = beat.charactersInvolved ?? beat.characters ?? [];
+    const props = beat.props ?? [];
+
+    return {
+      ...beat,
+      beatId: beat.beatId ?? index + 1,
+      actionAnalysis: beat.actionAnalysis || beat.analysis || beat.action || beat.summary || '',
+      charactersInvolved: Array.isArray(characters) ? characters : [characters].filter(Boolean),
+      locationName: beat.locationName || beat.location || '',
+      locationId: beat.locationId || '',
+      locationState: beat.locationState || '',
+      props: Array.isArray(props) ? props : [props].filter(Boolean)
+    };
+  };
+
+  const getAnalysisBeatsFromParsed = (parsed: any) => {
+    const rawBeats = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.beats) ? parsed.beats : null);
+    return rawBeats ? rawBeats.map((beat: any, index: number) => normalizeBeatForUi(beat, index)) : null;
+  };
+
   const currentStepPrompt = useMemo(() => {
     const stylePrompt = getSelectedStylePrompt();
     switch(stage) {
@@ -457,14 +488,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       case ProductionStage.CHARACTER_LOCATION:
         const existingLibrary = getMasterLibrary();
         try {
-          const beats = production.analysis ? JSON.parse(production.analysis) : [];
+          const parsedAnalysis = production.analysis ? JSON.parse(production.analysis) : [];
+          const beats = getAnalysisBeatsFromParsed(parsedAnalysis) || [];
           return gemini.getCharacterLocationLibraryPrompt(inputData.script, beats, stylePrompt, existingLibrary);
         } catch {
           return gemini.getCharacterLocationLibraryPrompt(inputData.script, [], stylePrompt, existingLibrary);
         }
       case ProductionStage.STORYBOARD: 
-        return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
-      case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);
+        return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
+      case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt, production.analysis || '');
       case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '');
       default: return '';
@@ -495,10 +527,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     } catch (e) {}
 
     if (parsedJson && (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION)) {
+      const pastedBeatAnalysis = getAnalysisBeatsFromParsed(parsedJson);
+      if (stage === ProductionStage.ANALYSIS && pastedBeatAnalysis) {
+        const analysisPayload = Array.isArray(parsedJson)
+          ? pastedBeatAnalysis
+          : { ...parsedJson, beats: pastedBeatAnalysis };
+        setProduction(prev => ({
+          ...prev,
+          analysis: JSON.stringify(analysisPayload, null, 2)
+        }));
+        setManualInputValue('');
+        setIsManualMode(false);
+        setStage(ProductionStage.CHARACTER_LOCATION);
+        return;
+      }
+
       if (parsedJson.analysis || parsedJson.characterLocationAnalysis) {
         const formatValue = (val: any) => {
           if (typeof val === 'string') return val;
           if (val === undefined || val === null) return '';
+          const beats = getAnalysisBeatsFromParsed(val);
+          if (beats) return JSON.stringify(beats, null, 2);
           return JSON.stringify(val, null, 2);
         };
 
@@ -583,8 +632,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const handleUpdateBeat = (index: number) => {
     if (!production.analysis) return;
     try {
-      const beats = JSON.parse(production.analysis);
-      beats[index] = editingBeatData;
+      const parsed = JSON.parse(production.analysis);
+      const beats = getAnalysisBeatsFromParsed(parsed) || [];
+      beats[index] = normalizeBeatForUi(editingBeatData, index);
       updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
       setEditingBeatIndex(null);
       setEditingBeatData(null);
@@ -603,7 +653,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       onConfirm: () => {
         try {
           if (!production.analysis) return;
-          const beats = JSON.parse(production.analysis);
+          const parsed = JSON.parse(production.analysis);
+          const beats = getAnalysisBeatsFromParsed(parsed) || [];
           beats.splice(index, 1);
           updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
           setConfirmModal(prev => ({ ...prev, show: false }));
@@ -617,8 +668,17 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const handleAddBeat = (index: number) => {
     if (!production.analysis) return;
     try {
-      const beats = JSON.parse(production.analysis);
+      const parsed = JSON.parse(production.analysis);
+      const beats = getAnalysisBeatsFromParsed(parsed) || [];
       const newBeat = {
+        summary: "",
+        charactersInvolved: [],
+        locationName: "",
+        locationId: "",
+        locationState: "",
+        props: [],
+        visualFocus: "",
+        interaction: "",
         originalText: "Nội dung văn bản mới...",
         actionAnalysis: "Mô tả bối cảnh và hành động mới...",
         atmosphere: "Cảm xúc chủ đạo",
@@ -674,10 +734,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         setIsLoading(false);
         return;
       } else if (stage === ProductionStage.STORYBOARD) {
-        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '');
+        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
-        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt(), production.analysis || '');
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
         result = await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
@@ -929,6 +989,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
+  const openCharacterReferenceSheetPrompt = (character: CharacterProfile) => {
+    const prompt = buildCharacterReferenceSheetPrompt(character, getSelectedStylePrompt());
+    setReferencePromptModal({
+      open: true,
+      title: 'Character Reference Sheet Prompt',
+      subjectName: character.name || 'Character',
+      prompt
+    });
+  };
+
+  const openLocationReferenceSheetPrompt = (location: LocationProfile) => {
+    const prompt = buildLocationReferenceSheetPrompt(location, getSelectedStylePrompt());
+    setReferencePromptModal({
+      open: true,
+      title: 'Location Reference Sheet Prompt',
+      subjectName: location.name || 'Location',
+      prompt
+    });
+  };
+
   const renderToast = () => {
     if (!toast.visible) return null;
     return (
@@ -938,6 +1018,45 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             <CheckCircle2 className="w-4 h-4 text-white" />
           </div>
           <span className="text-sm font-bold tracking-wide">{toast.message}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderReferencePromptModal = () => {
+    if (!referencePromptModal.open) return null;
+
+    return (
+      <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden border border-slate-100 animate-in zoom-in duration-200">
+          <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">{referencePromptModal.title}</p>
+              <h3 className="text-xl font-black text-slate-900 mt-1">{referencePromptModal.subjectName}</h3>
+            </div>
+            <button
+              onClick={() => setReferencePromptModal({ open: false, title: '', subjectName: '', prompt: '' })}
+              className="p-2 rounded-xl bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-6 bg-slate-50">
+            <textarea
+              value={referencePromptModal.prompt}
+              readOnly
+              className="w-full h-[58vh] resize-none rounded-2xl border border-slate-200 bg-white p-5 text-xs font-mono leading-relaxed text-slate-700 outline-none"
+            />
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => copyToClipboard(referencePromptModal.prompt)}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-600 transition-colors"
+              >
+                <Copy className="w-4 h-4" /> Copy Prompt
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1171,12 +1290,29 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
 
     switch (stage) {
-      case ProductionStage.ANALYSIS:
+      case ProductionStage.ANALYSIS: {
+        const analysisBeats = getAnalysisBeatsFromParsed(parsed);
         return (
           <div className="space-y-6">
-            {Array.isArray(parsed) ? (
+            {parsed?.coverageCheck && (
+              <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Coverage Check</span>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${parsed.coverageCheck.allSourceTextCovered ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'}`}>
+                    {parsed.coverageCheck.allSourceTextCovered ? 'Covered' : 'Needs Review'}
+                  </span>
+                </div>
+                {(parsed.coverageCheck.notes || parsed.coverageCheck.missingText || parsed.coverageCheck.duplicatedText) && (
+                  <p className="text-xs text-emerald-800 leading-relaxed">
+                    {parsed.coverageCheck.notes || parsed.coverageCheck.missingText || parsed.coverageCheck.duplicatedText}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {analysisBeats ? (
               <>
-                {parsed.map((beat: any, i: number) => (
+                {analysisBeats.map((beat: any, i: number) => (
                   <div key={i} className="relative group">
                     <div className={`bg-white border ${editingBeatIndex === i ? 'border-indigo-500 ring-2 ring-indigo-50 shadow-lg' : 'border-slate-200'} rounded-2xl p-6 transition-all duration-300`}>
                       <div className="flex items-center justify-between mb-4">
@@ -1271,7 +1407,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                           <div>
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Bối cảnh & Hành động (Analysis)</label>
                             <textarea 
-                              value={editingBeatData.actionAnalysis || editingBeatData.analysis || ''}
+                              value={editingBeatData.actionAnalysis || editingBeatData.analysis || editingBeatData.action || editingBeatData.summary || ''}
                               onChange={(e) => setEditingBeatData({...editingBeatData, actionAnalysis: e.target.value})}
                               className="w-full text-xs text-slate-500 leading-relaxed p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none min-h-[60px]"
                             />
@@ -1310,6 +1446,48 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                               </p>
                             </div>
                           )}
+                          {(beat.summary || beat.locationName || beat.locationId || beat.locationState || beat.charactersInvolved?.length || beat.interaction || beat.props?.length || beat.visualFocus) && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {beat.summary && (
+                                <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Summary</span>
+                                  <p className="text-xs text-slate-600 leading-relaxed">{beat.summary}</p>
+                                </div>
+                              )}
+                              {beat.locationName && (
+                                <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-emerald-500 block mb-1">Location</span>
+                                  <p className="text-xs font-bold text-emerald-700">{beat.locationName}</p>
+                                  {beat.locationId && <p className="text-[10px] text-emerald-600 mt-1">{beat.locationId}</p>}
+                                  {beat.locationState && <p className="text-[10px] text-emerald-700 mt-1 leading-relaxed">{beat.locationState}</p>}
+                                </div>
+                              )}
+                              {beat.charactersInvolved?.length > 0 && (
+                                <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block mb-1">Characters</span>
+                                  <p className="text-xs font-bold text-indigo-700">{beat.charactersInvolved.join(', ')}</p>
+                                </div>
+                              )}
+                              {beat.interaction && (
+                                <div className="bg-amber-50 p-3 rounded-xl border border-amber-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-amber-500 block mb-1">Interaction</span>
+                                  <p className="text-xs text-amber-800 leading-relaxed">{beat.interaction}</p>
+                                </div>
+                              )}
+                              {beat.props?.length > 0 && (
+                                <div className="bg-rose-50 p-3 rounded-xl border border-rose-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-rose-500 block mb-1">Props</span>
+                                  <p className="text-xs font-bold text-rose-700">{beat.props.join(', ')}</p>
+                                </div>
+                              )}
+                              {beat.visualFocus && (
+                                <div className="bg-cyan-50 p-3 rounded-xl border border-cyan-100">
+                                  <span className="font-black text-[9px] uppercase tracking-wider text-cyan-500 block mb-1">Visual Focus</span>
+                                  <p className="text-xs text-cyan-800 leading-relaxed">{beat.visualFocus}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1327,7 +1505,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   </div>
                 ))}
                 
-                {parsed.length === 0 && (
+                {analysisBeats.length === 0 && (
                   <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
                     <p className="text-slate-400 text-sm mb-4">Chưa có nhịp truyện nào được tạo.</p>
                     <button 
@@ -1346,6 +1524,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             )}
           </div>
         );
+      }
 
       case ProductionStage.CHARACTER_LOCATION:
         if (!production.characterLocationAnalysis) {
@@ -1380,19 +1559,55 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <div className="text-slate-600 col-span-2 italic">{char.face || 'N/A'}</div>
                       <div className="text-slate-400 uppercase col-span-2 mt-1">Outfit</div>
                       <div className="text-slate-600 col-span-2 italic">{char.outfit || 'N/A'}</div>
+                      {Array.isArray(char.accessories) && char.accessories.length > 0 && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Accessories</div>
+                          <div className="text-slate-600 col-span-2 italic">{char.accessories.join(', ')}</div>
+                        </>
+                      )}
+                      {Array.isArray(char.props) && char.props.length > 0 && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Props</div>
+                          <div className="text-slate-600 col-span-2 italic">{char.props.join(', ')}</div>
+                        </>
+                      )}
+                      {Array.isArray(char.colorPalette) && char.colorPalette.length > 0 && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Color Palette</div>
+                          <div className="text-slate-600 col-span-2 italic">{char.colorPalette.join(', ')}</div>
+                        </>
+                      )}
                     </div>
-                    {(() => {
-                      const prompt = buildCharacterReferencePrompt(char);
-                      return prompt ? (
-                      <div className="mt-4 bg-slate-900 rounded-lg p-3 relative group/char">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Generated Reference Prompt</span>
-                          <button onClick={() => copyToClipboard(prompt)} className="opacity-0 group-hover/char:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                    <div className="mt-4 bg-slate-900 rounded-lg p-3 relative group/char">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Generated Reference Prompt</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => copyToClipboard(buildCharacterReferenceSheetPrompt(char, getSelectedStylePrompt()))}
+                            className="p-1.5 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                            title="Copy reference sheet prompt"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => openCharacterReferenceSheetPrompt(char)}
+                            className="p-1.5 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                            title="Open reference sheet prompt"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
                         </div>
-                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{prompt}</p>
                       </div>
-                      ) : null;
-                    })()}
+                      <p className="text-[10px] font-mono text-indigo-100 leading-tight line-clamp-3">
+                        Character reference sheet with turnaround views, expression grid, head details, pose variations, hand gestures, wardrobe/accessory panels, prop reference, and color palette.
+                      </p>
+                      <button
+                        onClick={() => openCharacterReferenceSheetPrompt(char)}
+                        className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-500 transition-colors"
+                      >
+                        <Sparkles className="w-3 h-3" /> Generate Reference Sheet Prompt
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1404,18 +1619,68 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                     <h4 className="font-bold text-emerald-600 mb-2">{loc.name}</h4>
                     <p className="text-[11px] text-slate-600 leading-relaxed mb-3">{loc.description || loc.details || JSON.stringify(loc)}</p>
-                    {(() => {
-                      const prompt = buildLocationReferencePrompt(loc, getSelectedStylePrompt());
-                      return prompt ? (
-                      <div className="bg-slate-900 rounded-lg p-3 relative group/loc">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Generated Reference Prompt</span>
-                          <button onClick={() => copyToClipboard(prompt)} className="opacity-0 group-hover/loc:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] mb-4">
+                      {loc.layout && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Layout</div>
+                          <div className="text-slate-600 col-span-2 italic">{loc.layout}</div>
+                        </>
+                      )}
+                      {Array.isArray(loc.keyObjects) && loc.keyObjects.length > 0 && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Key Objects</div>
+                          <div className="text-slate-600 col-span-2 italic">{loc.keyObjects.join(', ')}</div>
+                        </>
+                      )}
+                      {loc.lighting && (
+                        <>
+                          <div className="text-slate-400 uppercase">Lighting</div>
+                          <div className="text-slate-700 font-medium">{loc.lighting}</div>
+                        </>
+                      )}
+                      {Array.isArray(loc.colorPalette) && loc.colorPalette.length > 0 && (
+                        <>
+                          <div className="text-slate-400 uppercase">Palette</div>
+                          <div className="text-slate-700 font-medium">{loc.colorPalette.join(', ')}</div>
+                        </>
+                      )}
+                      {loc.baseState && (
+                        <>
+                          <div className="text-slate-400 uppercase col-span-2 mt-1">Base State</div>
+                          <div className="text-slate-600 col-span-2 italic">{loc.baseState}</div>
+                        </>
+                      )}
+                    </div>
+                    <div className="bg-slate-900 rounded-lg p-3 relative group/loc">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">Generated Location Reference Prompt</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => copyToClipboard(buildLocationReferenceSheetPrompt(loc, getSelectedStylePrompt()))}
+                            className="p-1.5 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                            title="Copy location reference sheet prompt"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => openLocationReferenceSheetPrompt(loc)}
+                            className="p-1.5 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                            title="Open location reference sheet prompt"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
                         </div>
-                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{prompt}</p>
                       </div>
-                      ) : null;
-                    })()}
+                      <p className="text-[10px] font-mono text-emerald-100 leading-tight line-clamp-3">
+                        Location reference sheet with establishing view, side views, top-down layout, key object close-ups, lighting reference, and fixed spatial continuity.
+                      </p>
+                      <button
+                        onClick={() => openLocationReferenceSheetPrompt(loc)}
+                        className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-500 transition-colors"
+                      >
+                        <Sparkles className="w-3 h-3" /> Generate Location Reference Prompt
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1423,37 +1688,79 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </div>
         );
 
-      case ProductionStage.STORYBOARD:
+      case ProductionStage.STORYBOARD: {
+        const panels = normalizeStoryboardPanels(parsed);
+        let sourceBeats: any[] = [];
+        try {
+          sourceBeats = production.analysis ? (getAnalysisBeatsFromParsed(JSON.parse(production.analysis)) || []) : [];
+        } catch {}
         return (
           <div className="space-y-6">
-            {Array.isArray(parsed) ? parsed.map((panel: any, i: number) => (
+            {panels.length ? panels.map((panel: any, i: number) => {
+              const source = getPanelSourceFields(panel, sourceBeats);
+              return (
               <div key={i} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col md:flex-row">
                 <div className="bg-slate-50 p-6 md:w-48 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-slate-100">
                   <span className="text-[10px] font-black text-slate-400 uppercase mb-1">Panel</span>
                   <span className="text-4xl font-black text-slate-200">{panel.panelNumber || i + 1}</span>
+                  <span className="text-[10px] font-bold text-indigo-400 mt-2">Beat {panel.beatId || i + 1}</span>
                 </div>
                 <div className="p-6 flex-1 space-y-4">
                   <div>
                     <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Original Text</h4>
-                    <p className="text-xs text-slate-600 italic">{panel.originalText}</p>
+                    <p className="text-xs text-slate-600 italic">{source.originalText || 'N/A'}</p>
                   </div>
                   <div>
-                    <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Visible Action</h4>
-                    <p className="text-sm text-slate-800 leading-relaxed">{panel.actionInFrame || panel.description}</p>
+                    <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Approved Beat Source</h4>
+                    <p className="text-sm text-slate-800 leading-relaxed">{source.action || source.summary || 'N/A'}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                      <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-100">{source.timeOfDay}</span>
+                      <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100">{source.location}</span>
+                      {source.visibleCharacters.map((name: string) => (
+                        <span key={name} className="px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100">{name}</span>
+                      ))}
+                    </div>
                   </div>
-                  {(panel.cameraAngle || panel.framing || panel.composition || panel.lighting) && (
+                  {(panel.shotType || panel.cameraAngle || panel.cameraDistance || panel.lensFeel || panel.framing || panel.composition || panel.lightingDirection || panel.lighting) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                      {panel.shotType && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Shot</span>{panel.shotType}</div>}
                       {panel.cameraAngle && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Camera</span>{panel.cameraAngle}</div>}
+                      {panel.cameraDistance && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Distance</span>{panel.cameraDistance}</div>}
+                      {panel.lensFeel && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Lens</span>{panel.lensFeel}</div>}
                       {panel.framing && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Framing</span>{panel.framing}</div>}
                       {panel.composition && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Composition</span>{panel.composition}</div>}
-                      {panel.lighting && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Lighting</span>{panel.lighting}</div>}
+                      {(panel.lightingDirection || panel.lighting) && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Lighting Direction</span>{panel.lightingDirection || panel.lighting}</div>}
+                    </div>
+                  )}
+                  {(panel.foreground || panel.midground || panel.background || panel.depthAndPerspective || panel.visualEmphasis || panel.cameraNotes) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                      {panel.foreground && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Foreground</span>{panel.foreground}</div>}
+                      {panel.midground && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Midground</span>{panel.midground}</div>}
+                      {panel.background && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Background</span>{panel.background}</div>}
+                      {panel.depthAndPerspective && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Depth</span>{panel.depthAndPerspective}</div>}
+                      {panel.visualEmphasis && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Emphasis</span>{panel.visualEmphasis}</div>}
+                      {panel.cameraNotes && <div className="bg-white rounded-xl p-3 border border-slate-100"><span className="block text-slate-400 uppercase font-black mb-1">Camera Notes</span>{panel.cameraNotes}</div>}
+                    </div>
+                  )}
+                  {Array.isArray(panel.characterBlocking) && panel.characterBlocking.length > 0 && (
+                    <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+                      <h4 className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-3">Character Blocking</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {panel.characterBlocking.map((item: any, blockIndex: number) => (
+                          <div key={blockIndex} className="bg-white rounded-lg p-3 text-[11px] text-slate-600 border border-indigo-100">
+                            <p className="font-black text-indigo-700 mb-1">{item.characterName || item.characterId || 'Character'}</p>
+                            <p>{[item.framePosition, item.bodyPosition, item.facingDirection, item.expression, item.poseRefinement].filter(Boolean).join(', ')}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
-            )) : <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>}
+            )}) : <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>}
           </div>
         );
+      }
 
       case ProductionStage.PROMPTS:
         return (
@@ -2079,6 +2386,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       {renderLibraryModal()}
       {renderLitLibraryModal()}
       {renderAnalysisModeModal()}
+      {renderReferencePromptModal()}
       <div className="w-72 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col shadow-2xl z-50 border-r border-white/5">
         <div className="p-8">
           <div className="flex items-center gap-3 mb-10">
