@@ -1,0 +1,2143 @@
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { ProductionStage, ScriptData, ProductionData } from '../types';
+import * as gemini from '../services/geminiService';
+import { 
+  FileText, 
+  BarChart2, 
+  Users,
+  Layout, 
+  Zap, 
+  ShieldCheck, 
+  ChevronRight, 
+  Loader2, 
+  Copy, 
+  RefreshCw,
+  Send,
+  Eye,
+  CheckCircle2,
+  Palette,
+  Table,
+  Code2,
+  Settings2,
+  Terminal,
+  Save,
+  Sparkles,
+  Library,
+  Trash2,
+  History,
+  Clock,
+  Book,
+  AlertCircle,
+  ArrowRight,
+  Download,
+  Home,
+  Camera,
+  Move,
+  Play,
+  MapPin,
+  Sun,
+  Plus,
+  Edit2,
+  Check,
+  X
+} from 'lucide-react';
+
+const STYLE_OPTIONS = [
+  {
+    id: 'manhua',
+    label: 'Manhua (Hiện đại)',
+    description: 'Phong cách truyện tranh Trung Quốc hiện đại.',
+    prompt: 'Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired.'
+  },
+  {
+    id: 'manhwa',
+    label: 'Manhwa (Hàn Quốc)',
+    description: 'Phong cách truyện tranh Hàn Quốc hiện đại, sắc nét, màu sắc rực rỡ.',
+    prompt: 'Modern Manhwa style, South Korean webtoon aesthetic, sharp line art, vibrant digital coloring, elegant character designs, beautiful lighting, high contrast, clean and polished look, Solo Leveling inspired.'
+  },
+  { 
+    id: 'anime', 
+    label: 'Anime Hiện đại', 
+    description: 'Phong cách hoạt hình Nhật Bản hiện đại, hiệu ứng ánh sáng đẹp.',
+    prompt: 'Modern high-end anime style, Makoto Shinkai aesthetic, beautiful lighting effects, detailed backgrounds, expressive eyes, vibrant colors, lens flares, soft shadows, cinematic anime composition.'
+  },
+  { 
+    id: 'cinematic', 
+    label: 'Điện ảnh (Cinematic)', 
+    description: 'Điện ảnh kịch tính, độ chi tiết cực cao, ánh sáng phức tạp.',
+    prompt: 'Cinematic thriller style, high-budget Hollywood movie aesthetic, dramatic chiaroscuro lighting, intense shadows, hyper-realistic textures, 8k resolution, shot on 35mm lens, moody atmosphere, deep color grading.'
+  },
+  {
+    id: 'manhua_ancient',
+    label: 'Manhua (Cổ trang)',
+    description: 'Phong cách tiên hiệp, cổ trang, kiếm hiệp Trung Quốc.',
+    prompt: 'Ancient Manhua style, Chinese webtoon aesthetic, ethereal and graceful character designs, soft lighting, detailed traditional Chinese elements, flowing silk garments, long hair, beautiful mountain landscapes, fantasy martial arts (Xianxia/Wuxia) atmosphere.'
+  },
+  { 
+    id: '2d-animated', 
+    label: 'Hoạt hình 2D', 
+    description: 'Hoạt hình truyền thống, nét vẽ rõ ràng, màu sắc phẳng.',
+    prompt: 'Traditional 2D animation style, cel-shaded, clean bold outlines, vibrant flat colors, high-quality hand-drawn aesthetic, Studio Ghibli inspired but sharper, smooth line art, expressive character features.'
+  },
+  {
+    id: 'cyberpunk',
+    label: 'Cyberpunk / Viễn tưởng',
+    description: 'Tương lai, ánh đèn neon, công nghệ cao nhưng đời sống thấp.',
+    prompt: 'Cyberpunk aesthetic, neon-drenched cityscapes, rainy nights, high-tech low-life, glowing accents, cinematic sci-fi lighting, futuristic textures, vibrant purples and blues, Blade Runner inspired.'
+  },
+  { 
+    id: 'horror', 
+    label: 'Kinh dị (Horror)', 
+    description: 'U tối, rùng rợn, bầu không khí ám ảnh, phong cách cổ điển.',
+    prompt: 'Gothic horror style, dark and eerie atmosphere, Victorian aesthetic, muted colors, fog and mist, unsettling shadows, grainy film texture, macabre details, inspired by Guillermo del Toro.'
+  },
+  { 
+    id: 'noir', 
+    label: 'Phim đen (Film Noir)', 
+    description: 'Trắng đen cổ điển, độ tương phản cực cao, ánh sáng đổ bóng mạnh.',
+    prompt: 'Classic Film Noir style, black and white, extreme high contrast, dramatic shadows (venetian blind shadows), rainy urban settings, 1940s aesthetic, moody and cynical atmosphere, sharp focus.'
+  }
+];
+
+interface StoryFlowProps {
+  onBack: () => void;
+}
+
+const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
+  const [stage, setStage] = useState<ProductionStage>(ProductionStage.INPUT);
+  const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [isGlobalManualMode, setIsGlobalManualMode] = useState(false);
+  const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
+  const [manualInputValue, setManualInputValue] = useState('');
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
+  const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
+
+  const [inputData, setInputData] = useState<ScriptData>({
+    script: '',
+    selectedStyle: 'manhua',
+    title: '',
+    chapter: '',
+    chapterTitle: ''
+  });
+  const [production, setProduction] = useState<ProductionData>({});
+  const [unlockedStages, setUnlockedStages] = useState<ProductionStage[]>([ProductionStage.INPUT]);
+  const [savedProjects, setSavedProjects] = useState<any[]>([]);
+  const [litProjects, setLitProjects] = useState<any[]>([]);
+  const [showLitLibraryModal, setShowLitLibraryModal] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'info';
+  }>({
+    show: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'info'
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  function computeUnlockedStages(data: ScriptData, prod: ProductionData, currentStage: ProductionStage) {
+    const set = new Set<ProductionStage>([ProductionStage.INPUT]);
+    if (prod.analysis) set.add(ProductionStage.ANALYSIS);
+    if (prod.characterLocationAnalysis) set.add(ProductionStage.CHARACTER_LOCATION);
+    if (prod.storyboard) set.add(ProductionStage.STORYBOARD);
+    if (prod.prompts) set.add(ProductionStage.PROMPTS);
+    if (prod.qaReport) set.add(ProductionStage.QA);
+    if (prod.finalResult) set.add(ProductionStage.FINAL);
+    if (currentStage !== ProductionStage.LIBRARY) set.add(currentStage);
+    return Array.from(set);
+  }
+
+  // Group projects by title for library view
+  const groupedProjects = useMemo<Record<string, any[]>>(() => {
+    const groups: { [key: string]: any[] } = {};
+    savedProjects.forEach(project => {
+      const title = project.inputData?.title || 'Chưa đặt tên';
+      if (!groups[title]) groups[title] = [];
+      groups[title].push(project);
+    });
+    // Sort chapters within each group
+    Object.keys(groups).forEach(title => {
+      groups[title].sort((a, b) => {
+        const aNum = parseInt(a.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+        const bNum = parseInt(b.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+        return aNum - bNum;
+      });
+    });
+    return groups;
+  }, [savedProjects]);
+
+  // States for editing beats in Analysis stage
+  const [editingBeatIndex, setEditingBeatIndex] = useState<number | null>(null);
+  const [editingBeatData, setEditingBeatData] = useState<any>(null);
+
+  // Load temporary state from localStorage
+  useEffect(() => {
+    const savedState = localStorage.getItem('storyflow_temp_state');
+    if (savedState) {
+      try {
+        const { stage: savedStage, inputData: savedInputData, production: savedProduction, unlockedStages: savedUnlockedStages, isManualMode: savedManual, isGlobalManualMode: savedGlobalManual } = JSON.parse(savedState);
+        const initialStage = savedStage || ProductionStage.INPUT;
+        const initialInputData = savedInputData || { script: '', selectedStyle: 'manhua', title: '', chapter: '', chapterTitle: '' };
+        const initialProduction = savedProduction || {};
+        setStage(initialStage);
+        setInputData(initialInputData);
+        setProduction(initialProduction);
+        if (Array.isArray(savedUnlockedStages) && savedUnlockedStages.length > 0) {
+          setUnlockedStages(savedUnlockedStages);
+        } else {
+          setUnlockedStages(computeUnlockedStages(initialInputData, initialProduction, initialStage));
+        }
+        if (savedManual !== undefined) setIsManualMode(savedManual);
+        if (savedGlobalManual !== undefined) setIsGlobalManualMode(savedGlobalManual);
+      } catch (e) {
+        console.error("Failed to parse saved state:", e);
+      }
+    }
+    setIsLoaded(true);
+  }, []);
+
+  // Save temporary state to localStorage
+  useEffect(() => {
+    if (!isLoaded) return;
+    
+    const stateToSave = {
+      stage,
+      inputData,
+      production,
+      unlockedStages,
+      isManualMode,
+      isGlobalManualMode
+    };
+    localStorage.setItem('storyflow_temp_state', JSON.stringify(stateToSave));
+  }, [isLoaded, stage, inputData, production, unlockedStages, isManualMode, isGlobalManualMode]);
+
+  useEffect(() => {
+    if (stage === ProductionStage.LIBRARY) return;
+    setUnlockedStages(prev => (prev.includes(stage) ? prev : [...prev, stage]));
+  }, [stage]);
+
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          // Phân loại dự án
+          setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
+          setLitProjects(data.filter((p: any) => p.type === 'literary'));
+        }
+      })
+      .catch(err => console.error("Failed to load projects:", err));
+  }, []);
+
+  const steps = [
+    { id: ProductionStage.INPUT, label: "Nhập tiểu thuyết", icon: FileText },
+    { id: ProductionStage.ANALYSIS, label: "Phân tích nội dung", icon: BarChart2 },
+    { id: ProductionStage.CHARACTER_LOCATION, label: "Nhân vật & Bối cảnh", icon: Users },
+    { id: ProductionStage.STORYBOARD, label: "Phác thảo minh họa", icon: Layout },
+    { id: ProductionStage.PROMPTS, label: "Prompt Engineering", icon: Zap },
+    { id: ProductionStage.QA, label: "QA & Consistency", icon: ShieldCheck },
+    { id: ProductionStage.FINAL, label: "Kết quả cuối cùng", icon: Sparkles }
+  ];
+
+  const getSelectedStylePrompt = () => {
+    const option = STYLE_OPTIONS.find(s => s.id === inputData.selectedStyle);
+    return option ? option.prompt : inputData.selectedStyle;
+  };
+
+  const getMasterLibrary = () => {
+    const characterMap = new Map<string, any>();
+    const locationMap = new Map<string, any>();
+
+    // Chỉ lấy các dự án thuộc cùng bộ truyện hiện tại
+    const sameBookProjects = savedProjects.filter(p => 
+      p.inputData?.title === inputData.title && 
+      p.inputData?.title !== ''
+    );
+
+    // Sắp xếp theo số chương để đảm bảo tính kế thừa đúng trình tự
+    const sortedProjects = [...sameBookProjects].sort((a, b) => {
+      const aNum = parseInt(a.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+      const bNum = parseInt(b.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+      return aNum - bNum;
+    });
+
+    // Lấy project của chương ngay trước chương hiện tại
+    const currentChapterNum = parseInt(inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+    const previousProjects = sortedProjects.filter(p => {
+      const pNum = parseInt(p.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
+      return pNum < currentChapterNum;
+    });
+    
+    const lastProject = previousProjects.length > 0 ? previousProjects[previousProjects.length - 1] : null;
+    let lastChapterContext = "";
+
+    if (lastProject) {
+      try {
+        const getParsedData = (data: any) => {
+          if (!data) return null;
+          if (typeof data === 'string') {
+            try { return JSON.parse(data); } catch(e) { return null; }
+          }
+          return data;
+        };
+
+        const lastBeats = getParsedData(lastProject.production?.analysis);
+        const lastCharAnalysis = getParsedData(lastProject.production?.characterLocationAnalysis);
+        const lastFinalResultRaw = getParsedData(lastProject.production?.finalResult);
+        const lastFinalResult = (lastFinalResultRaw && typeof lastFinalResultRaw === 'object' && Array.isArray(lastFinalResultRaw.panels)) 
+          ? lastFinalResultRaw.panels 
+          : lastFinalResultRaw;
+
+        const charOutfits = new Map<string, string>();
+        const charProfiles = new Map<string, any>();
+
+        if (lastCharAnalysis?.characters) {
+          lastCharAnalysis.characters.forEach((c: any) => charProfiles.set(c.name, c));
+          const charNames = Array.from(charProfiles.keys());
+          
+          if (Array.isArray(lastFinalResult)) {
+            // Quét ngược từ panel cuối lên đầu
+            for (let i = lastFinalResult.length - 1; i >= 0; i--) {
+              const panel = lastFinalResult[i];
+              const prompt = panel.visualPrompt || "";
+              
+              charNames.forEach((name: string) => {
+                if (!charOutfits.has(name)) {
+                  const profile = charProfiles.get(name);
+                  if (!profile) return;
+
+                  // Tìm tên nhân vật và nội dung trong ngoặc đơn sau đó
+                  // Regex linh hoạt hơn để bắt được các biến thể của ngoặc đơn và dấu phẩy
+                  const regex = new RegExp(`${name}\\s*\\(([^)]+)\\)`, 'i');
+                  const match = prompt.match(regex);
+                  
+                  if (match && match[1]) {
+                    const profileOutfitsText = profile.outfit || "";
+                    // Phân tách các outfit trong profile
+                    const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
+                      .map(s => s.trim())
+                      .filter(Boolean);
+                    
+                    if (outfitParts.length > 0) {
+                      const promptContent = match[1].toLowerCase();
+                      let matchedIndex = -1;
+
+                      // ƯU TIÊN 1: Tìm nhãn "Outfit X" trực tiếp trong prompt
+                      const outfitLabelMatch = promptContent.match(/outfit\s*(\d+)/i);
+                      if (outfitLabelMatch && outfitLabelMatch[1]) {
+                        const outfitNum = parseInt(outfitLabelMatch[1]);
+                        if (outfitNum > 0 && outfitNum <= outfitParts.length) {
+                          matchedIndex = outfitNum - 1;
+                        }
+                      }
+
+                      // ƯU TIÊN 2: Nếu không có nhãn hoặc nhãn không khớp, tìm theo nội dung tương đồng
+                      if (matchedIndex === -1) {
+                        outfitParts.forEach((part, index) => {
+                          if (promptContent.includes(part.toLowerCase()) || 
+                              part.toLowerCase().includes(promptContent)) {
+                            matchedIndex = index;
+                          }
+                        });
+                      }
+
+                      if (matchedIndex !== -1) {
+                        // CHỈ lấy nội dung mô tả, không lấy nhãn "Outfit X"
+                        charOutfits.set(name, outfitParts[matchedIndex]);
+                      }
+                    }
+                  }
+                }
+              });
+
+              if (charOutfits.size === charNames.length) break;
+            }
+          }
+
+          // Fallback: Nếu không tìm thấy trong prompt, lấy outfit mặc định/đầu tiên từ profile
+          charNames.forEach(name => {
+            if (!charOutfits.has(name)) {
+              const profile = charProfiles.get(name);
+              if (profile && profile.outfit) {
+                const profileOutfitsText = profile.outfit || "";
+                const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
+                  .map(s => s.trim())
+                  .filter(Boolean);
+                
+                if (outfitParts.length > 0) {
+                  // CHỈ lấy nội dung mô tả, không lấy nhãn "Outfit X"
+                  charOutfits.set(name, outfitParts[0]);
+                } else {
+                  charOutfits.set(name, profile.outfit);
+                }
+              }
+            }
+          });
+        }
+
+        const lastBeat = Array.isArray(lastBeats) && lastBeats.length > 0 ? lastBeats[lastBeats.length - 1] : null;
+        
+        if (lastBeat || charOutfits.size > 0) {
+          lastChapterContext = `
+CHƯƠNG TRƯỚC ĐÓ (Chương ${lastProject.inputData.chapter}):
+- Kết thúc tại thời điểm: ${lastBeat?.timeOfDay || 'Không rõ'}
+- Bối cảnh cuối: ${lastBeat?.analysis || 'Không rõ'}
+- Không khí cuối: ${lastBeat?.atmosphere || 'Không rõ'}
+- TRANG PHỤC CUỐI CÙNG CỦA NHÂN VẬT (LAST KNOWN OUTFITS):
+${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outfit}`).join('\n')}
+`;
+        }
+      } catch (e) {
+        console.error("Error parsing last project context", e);
+      }
+    }
+
+    sortedProjects.forEach(project => {
+      if (project.production?.characterLocationAnalysis) {
+        try {
+          const data = typeof project.production.characterLocationAnalysis === 'string' 
+            ? JSON.parse(project.production.characterLocationAnalysis) 
+            : project.production.characterLocationAnalysis;
+          
+          if (data.characters) {
+            data.characters.forEach((char: any) => {
+              characterMap.set(char.name, char);
+            });
+          }
+          if (data.locations) {
+            data.locations.forEach((loc: any) => {
+              locationMap.set(loc.name, loc);
+            });
+          }
+        } catch (e) {
+          console.error("Error parsing characterLocationAnalysis from saved project", e);
+        }
+      }
+    });
+
+    const characters = Array.from(characterMap.values());
+    const locations = Array.from(locationMap.values());
+
+    return characters.length > 0 || locations.length > 0 
+      ? JSON.stringify({ characters, locations, lastChapterContext }, null, 2) 
+      : undefined;
+  };
+
+  const hasData = (s: ProductionStage) => {
+    if (s === ProductionStage.INPUT) {
+      return !!inputData.script.trim() && !!inputData.title.trim() && !!inputData.chapter.trim();
+    }
+    if (s === ProductionStage.ANALYSIS) return !!production.analysis;
+    if (s === ProductionStage.CHARACTER_LOCATION) {
+      // Chỉ hiển thị dữ liệu nếu đã có phân tích cho chương hiện tại
+      return !!production.characterLocationAnalysis;
+    }
+    if (s === ProductionStage.STORYBOARD) return !!production.storyboard;
+    if (s === ProductionStage.PROMPTS) return !!production.prompts;
+    if (s === ProductionStage.QA) return !!production.qaReport;
+    if (s === ProductionStage.FINAL) return !!production.finalResult;
+    return false;
+  };
+
+  const currentStepPrompt = useMemo(() => {
+    const stylePrompt = getSelectedStylePrompt();
+    switch(stage) {
+      case ProductionStage.ANALYSIS:
+      case ProductionStage.CHARACTER_LOCATION:
+        const existingLibrary = getMasterLibrary();
+        return gemini.getPhase1AnalysisPrompt(inputData.script, stylePrompt, existingLibrary);
+      case ProductionStage.STORYBOARD: 
+        return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
+      case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);
+      case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
+      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '');
+      default: return '';
+    }
+  }, [stage, inputData, production, savedProjects]);
+
+  const finalJsonData = useMemo(() => {
+    if (stage === ProductionStage.FINAL && production.finalResult) {
+      try { 
+        const parsed = JSON.parse(production.finalResult); 
+        // Hỗ trợ cả cấu trúc cũ (array) và cấu trúc mới (object { panels: [] })
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.panels)) {
+          return parsed.panels.filter((item: any) => item !== null && typeof item === 'object');
+        }
+        if (!Array.isArray(parsed)) return null;
+        return parsed.filter(item => item !== null && typeof item === 'object');
+      } catch (e) { return null; }
+    }
+    return null;
+  }, [stage, production.finalResult]);
+
+  const handleManualSave = () => {
+    if (!manualInputValue.trim()) return;
+    
+    let parsedJson: any = null;
+    try {
+      parsedJson = JSON.parse(manualInputValue);
+    } catch (e) {}
+
+    if (parsedJson && (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION)) {
+      if (parsedJson.analysis || parsedJson.characterLocationAnalysis) {
+        const formatValue = (val: any) => {
+          if (typeof val === 'string') return val;
+          if (val === undefined || val === null) return '';
+          return JSON.stringify(val, null, 2);
+        };
+
+        setProduction(prev => ({
+          ...prev,
+          analysis: parsedJson.analysis ? formatValue(parsedJson.analysis) : prev.analysis,
+          characterLocationAnalysis: parsedJson.characterLocationAnalysis ? formatValue(parsedJson.characterLocationAnalysis) : prev.characterLocationAnalysis
+        }));
+        setManualInputValue('');
+        setIsManualMode(false);
+        
+        // Nếu nhập dữ liệu ở bước Analysis mà có cả 2 phần, nhảy thẳng tới Storyboard
+        if (stage === ProductionStage.ANALYSIS && (parsedJson.analysis && parsedJson.characterLocationAnalysis)) {
+          setStage(ProductionStage.STORYBOARD);
+        } else {
+          const currentIndex = steps.findIndex(s => s.id === stage);
+          if (currentIndex < steps.length - 1) {
+            setStage(steps[currentIndex + 1].id);
+          }
+        }
+        return;
+      }
+    }
+
+    const finalValueToSave = parsedJson ? JSON.stringify(parsedJson, null, 2) : manualInputValue;
+    updateProductionDataByStage(finalValueToSave, stage);
+    setManualInputValue('');
+    setIsManualMode(false);
+    
+    const nextIndex = steps.findIndex(s => s.id === stage) + 1;
+    if (nextIndex < steps.length) {
+      setStage(steps[nextIndex].id);
+    }
+  };
+
+  const startAnalysis = (mode: 'manual' | 'auto') => {
+    setShowAnalysisModeModal(false);
+    setStage(ProductionStage.ANALYSIS);
+    if (mode === 'manual') {
+      setIsManualMode(true);
+      setIsGlobalManualMode(true);
+    } else {
+      setIsManualMode(false);
+      setIsGlobalManualMode(false);
+      handleAutoAnalysis();
+    }
+  };
+
+  const handleAutoAnalysis = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const existingLibrary = getMasterLibrary();
+      const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
+      const parsed = JSON.parse(result);
+      setProduction(prev => ({
+        ...prev,
+        analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
+        characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+      }));
+      setStage(ProductionStage.STORYBOARD);
+    } catch (err: any) {
+      setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updateProductionDataByStage = (result: string, targetStage: ProductionStage) => {
+    setProduction(prev => {
+      const updated = { ...prev };
+      if (targetStage === ProductionStage.ANALYSIS) updated.analysis = result;
+      else if (targetStage === ProductionStage.CHARACTER_LOCATION) updated.characterLocationAnalysis = result;
+      else if (targetStage === ProductionStage.STORYBOARD) updated.storyboard = result;
+      else if (targetStage === ProductionStage.PROMPTS) updated.prompts = result;
+      else if (targetStage === ProductionStage.QA) updated.qaReport = result;
+      else if (targetStage === ProductionStage.FINAL) updated.finalResult = result;
+      return updated;
+    });
+  };
+
+  const handleUpdateBeat = (index: number) => {
+    if (!production.analysis) return;
+    try {
+      const beats = JSON.parse(production.analysis);
+      beats[index] = editingBeatData;
+      updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+      setEditingBeatIndex(null);
+      setEditingBeatData(null);
+    } catch (e) {
+      console.error("Failed to update beat:", e);
+    }
+  };
+
+  const handleDeleteBeat = (index: number) => {
+    if (!production.analysis) return;
+    setConfirmModal({
+      show: true,
+      title: 'Xóa Beat',
+      message: `Bạn có chắc chắn muốn xóa Beat ${index + 1} này không? Hành động này không thể hoàn tác.`,
+      type: 'danger',
+      onConfirm: () => {
+        try {
+          if (!production.analysis) return;
+          const beats = JSON.parse(production.analysis);
+          beats.splice(index, 1);
+          updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+          setConfirmModal(prev => ({ ...prev, show: false }));
+        } catch (e) {
+          console.error("Failed to delete beat:", e);
+        }
+      }
+    });
+  };
+
+  const handleAddBeat = (index: number) => {
+    if (!production.analysis) return;
+    try {
+      const beats = JSON.parse(production.analysis);
+      const newBeat = {
+        originalText: "Nội dung văn bản mới...",
+        analysis: "Mô tả bối cảnh và hành động mới...",
+        atmosphere: "Cảm xúc chủ đạo",
+        posture: "Tư thế",
+        timeOfDay: "Thời điểm"
+      };
+      beats.splice(index + 1, 0, newBeat);
+      updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+      setEditingBeatIndex(index + 1);
+      setEditingBeatData(newBeat);
+    } catch (e) {
+      console.error("Failed to add beat:", e);
+    }
+  };
+
+  const handleProcess = async () => {
+    if (isManualMode) return;
+    
+    const currentIndex = steps.findIndex(s => s.id === stage);
+    const nextStep = steps[currentIndex + 1];
+
+    if (nextStep && hasData(nextStep.id)) {
+      setStage(nextStep.id);
+      return;
+    }
+
+    if (stage === ProductionStage.INPUT) {
+      setShowAnalysisModeModal(true);
+      return;
+    }
+
+    if (stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL)) return;
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      let result = '';
+      let targetStage = stage;
+
+      if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION) {
+        const existingLibrary = getMasterLibrary();
+        result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
+        const parsed = JSON.parse(result);
+        setProduction(prev => ({
+          ...prev,
+          analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
+          characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+        }));
+        const nextIdx = steps.findIndex(s => s.id === stage) + 1;
+        if (nextIdx < steps.length) {
+          setStage(steps[nextIdx].id);
+        }
+        setIsLoading(false);
+        return;
+      } else if (stage === ProductionStage.STORYBOARD) {
+        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '');
+        targetStage = ProductionStage.STORYBOARD;
+      } else if (stage === ProductionStage.PROMPTS) {
+        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        targetStage = ProductionStage.PROMPTS;
+      } else if (stage === ProductionStage.QA) {
+        result = await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        targetStage = ProductionStage.QA;
+      } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
+        result = await gemini.generateFinalResult(
+          production.storyboard || '', 
+          production.prompts || '', 
+          production.qaReport || '',
+          production.characterLocationAnalysis || ''
+        );
+        targetStage = ProductionStage.FINAL;
+      }
+      
+      updateProductionDataByStage(result, targetStage);
+      const nextIndex = steps.findIndex(s => s.id === targetStage) + 1;
+      if (nextIndex < steps.length) {
+        setStage(steps[nextIndex].id);
+      }
+    } catch (err: any) {
+      setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveProject = async () => {
+    if (!inputData.title || !inputData.chapter) {
+      setToast({ message: "Vui lòng nhập Tên tiểu thuyết và Chương để lưu!", visible: true });
+      setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+      return;
+    }
+
+    const projectData = {
+      id: Date.now(),
+      type: 'storyflow',
+      inputData,
+      production,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+      });
+
+      if (!response.ok) throw new Error("Failed to save to server");
+
+      const existingIndex = savedProjects.findIndex((p: any) => 
+        p.inputData.title === inputData.title && p.inputData.chapter === inputData.chapter
+      );
+
+      const updatedProjects = existingIndex >= 0 
+        ? savedProjects.map((p, i) => i === existingIndex ? projectData : p)
+        : [projectData, ...savedProjects];
+
+      setSavedProjects(updatedProjects);
+      setToast({ message: "Đã lưu kết quả phân tích vào thư viện!", visible: true });
+    } catch (err) {
+      console.error(err);
+      setToast({ message: "Lỗi khi lưu dự án vào server", visible: true });
+    }
+    
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const deleteProject = (id: number) => {
+    setConfirmModal({
+      show: true,
+      title: 'Xóa dự án',
+      message: 'Bạn có chắc chắn muốn xóa dự án này không? Tất cả dữ liệu sản xuất sẽ bị mất.',
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error("Failed to delete from server");
+
+          const updatedProjects = savedProjects.filter(p => p.id !== id);
+          setSavedProjects(updatedProjects);
+          setToast({ message: "Đã xóa dự án khỏi thư viện", visible: true });
+        } catch (err) {
+          console.error(err);
+          setToast({ message: "Lỗi khi xóa dự án", visible: true });
+        } finally {
+          setConfirmModal(prev => ({ ...prev, show: false }));
+          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+        }
+      }
+    });
+  };
+
+  const handleNextChapter = () => {
+    const currentChapter = parseInt(inputData.chapter);
+    const nextChapter = !isNaN(currentChapter) ? (currentChapter + 1).toString() : "";
+    
+    setProduction({
+      analysis: null,
+      characterLocationAnalysis: null,
+      storyboard: null,
+      prompts: null,
+      qaReport: null,
+      finalResult: null
+    });
+    setUnlockedStages([ProductionStage.INPUT]);
+
+    setInputData(prev => ({
+      ...prev,
+      chapter: nextChapter,
+      script: ""
+    }));
+
+    setStage(ProductionStage.INPUT);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    setToast({ message: "Đã chuẩn bị cho chương mới!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const handleExportSRT = () => {
+    if (!finalJsonData || finalJsonData.length === 0) return;
+
+    const formatSRTTime = (seconds: number) => {
+      const hh = Math.floor(seconds / 3600).toString().padStart(2, '0');
+      const mm = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+      const ss = Math.floor(seconds % 60).toString().padStart(2, '0');
+      return `${hh}:${mm}:${ss},000`;
+    };
+
+    let srtContent = '';
+    finalJsonData.forEach((item, index) => {
+      const startTime = index * 5;
+      const endTime = (index + 1) * 5;
+      
+      srtContent += `${index + 1}\n`;
+      srtContent += `${formatSRTTime(startTime)} --> ${formatSRTTime(endTime)}\n`;
+      srtContent += `${item.originalText || ''}\n\n`;
+    });
+
+    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}.srt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    setToast({ message: "Đã xuất file SRT thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const handleExportJSON = () => {
+    if (!finalJsonData || finalJsonData.length === 0) return;
+
+    // Helper function to format name: lowercase, no accents, space to underscore
+    const formatCharName = (name: string) => {
+      return name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/Đ/g, "d")
+        .toLowerCase()
+        .replace(/\s+/g, "_");
+    };
+
+    // Lấy danh sách nhân vật từ production.characterLocationAnalysis
+    let characterProfiles: { original: string, searchTerms: string[] }[] = [];
+    if (production.characterLocationAnalysis) {
+      try {
+        const charLocData = JSON.parse(production.characterLocationAnalysis);
+        if (charLocData.characters && Array.isArray(charLocData.characters)) {
+          characterProfiles = charLocData.characters.map((c: any) => {
+            const name = c.name || "";
+            // Tách tên thành các phần để tìm kiếm linh hoạt hơn
+            // Ví dụ: "Wang Yue (Vương Việt)" -> ["Wang Yue (Vương Việt)", "Wang Yue", "Vương Việt"]
+            const terms = [name];
+            
+            // Xử lý trường hợp có ngoặc đơn: Wang Yue (Vương Việt)
+            const bracketMatch = name.match(/^(.+?)\s*\((.+?)\)$/);
+            if (bracketMatch) {
+              terms.push(bracketMatch[1].trim());
+              terms.push(bracketMatch[2].trim());
+            }
+
+            return { original: name, searchTerms: terms.filter(t => t.length > 2) };
+          });
+        }
+      } catch (e) {
+        console.error("Failed to parse characterLocationAnalysis for JSON export:", e);
+      }
+    }
+
+    // Bỏ trường originalText và thêm trường character
+    const allFoundCharacters = new Set<string>();
+    
+    const panelsData = finalJsonData.map(({ originalText, ...rest }) => {
+      const visualPrompt = rest.visualPrompt || "";
+      
+      // Tìm các nhân vật xuất hiện trong visualPrompt
+      const foundMatches = characterProfiles.map(profile => {
+        // Tìm vị trí xuất hiện đầu tiên của bất kỳ term nào trong profile
+        let firstIndex = -1;
+        for (const term of profile.searchTerms) {
+          const idx = visualPrompt.indexOf(term);
+          if (idx !== -1 && (firstIndex === -1 || idx < firstIndex)) {
+            firstIndex = idx;
+          }
+        }
+        return { name: profile.original, index: firstIndex };
+      })
+      .filter(item => item.index !== -1)
+      .sort((a, b) => a.index - b.index)
+      .map(item => formatCharName(item.name));
+
+      foundMatches.forEach(name => allFoundCharacters.add(name));
+
+      return {
+        ...rest,
+        character: foundMatches.join(" ")
+      };
+    });
+
+    const exportedData = {
+      characterName: Array.from(allFoundCharacters),
+      panels: panelsData
+    };
+
+    const blob = new Blob([JSON.stringify(exportedData, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}_final.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    setToast({ message: "Đã xuất file JSON thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const copyToClipboard = (text?: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setToast({ message: "Đã sao chép vào bộ nhớ tạm!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const renderToast = () => {
+    if (!toast.visible) return null;
+    return (
+      <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/10">
+          <div className="bg-emerald-500 p-1 rounded-lg">
+            <CheckCircle2 className="w-4 h-4 text-white" />
+          </div>
+          <span className="text-sm font-bold tracking-wide">{toast.message}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderManualView = () => (
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
+        <div className="bg-slate-800 px-6 py-3 flex justify-between items-center border-b border-slate-700">
+          <div className="flex items-center gap-2">
+            <Terminal className="w-4 h-4 text-indigo-400" />
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Prompt cho AI bên ngoài</span>
+          </div>
+          <button onClick={() => copyToClipboard(currentStepPrompt)} className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-400 hover:text-white transition-colors">
+            <Copy className="w-3 h-3" /> COPY PROMPT
+          </button>
+        </div>
+        <div className="p-6">
+          <pre className="text-xs text-slate-400 whitespace-pre-wrap font-mono leading-relaxed h-48 overflow-y-auto">
+            {currentStepPrompt}
+          </pre>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 text-slate-800 font-bold">
+            <Save className="w-5 h-5 text-indigo-600" />
+            <span>Dán kết quả AI trả về vào đây</span>
+          </div>
+        </div>
+        <textarea
+          value={manualInputValue}
+          onChange={(e) => setManualInputValue(e.target.value)}
+          placeholder="Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."
+          className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
+        />
+        <button 
+          onClick={handleManualSave}
+          disabled={!manualInputValue.trim()}
+          className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+        >
+          <CheckCircle2 className="w-5 h-5" /> Lưu và Tiếp tục
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderFinalView = () => {
+    if (!finalJsonData || !Array.isArray(finalJsonData) || finalJsonData.length === 0) {
+      return (
+        <div className="p-10 text-center bg-white rounded-2xl shadow-sm border border-slate-200">
+          <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-red-500" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-900 mb-2">Lỗi định dạng JSON</h3>
+          <p className="text-slate-500 max-w-md mx-auto mb-6">Hãy đảm bảo kết quả là một mảng các đối tượng Panel. Kiểm tra lại dấu ngoặc và cấu trúc JSON.</p>
+          <button 
+            onClick={() => setIsManualMode(true)}
+            className="px-6 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all"
+          >
+            Sửa lại thủ công
+          </button>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="space-y-8 pb-10">
+        <div className="flex items-center justify-between bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-white/20 shadow-sm sticky top-0 z-30">
+          <div className="flex items-center gap-4">
+            <div className="bg-indigo-600 p-2 rounded-xl shadow-indigo-200 shadow-lg">
+              <CheckCircle2 className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Kết quả sản xuất cuối cùng</h3>
+              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{finalJsonData.length} Khung hình đã sẵn sàng</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button 
+              onClick={handleExportSRT}
+              className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100"
+            >
+              <Download className="w-3.5 h-3.5" /> Xuất SRT
+            </button>
+            <button 
+              onClick={handleExportJSON}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
+            >
+              <Download className="w-3.5 h-3.5" /> Xuất JSON
+            </button>
+            <div className="w-px h-4 bg-slate-300 mx-1"></div>
+            <button 
+              onClick={handleNextChapter}
+              className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100"
+            >
+              <ArrowRight className="w-3.5 h-3.5" /> Phân tích chương tiếp theo
+            </button>
+            <div className="w-px h-4 bg-slate-300 mx-1"></div>
+            <button onClick={() => setViewMode('table')} className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'table' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><Layout className="w-3.5 h-3.5" /> Thẻ</button>
+            <button onClick={() => setViewMode('json')} className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'json' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><Code2 className="w-3.5 h-3.5" /> JSON</button>
+          </div>
+        </div>
+
+        {viewMode === 'table' ? (
+          <div className="grid grid-cols-1 gap-8">
+            {finalJsonData.map((item: any, idx: number) => (
+              <div key={idx} className="group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-500 border border-slate-100 flex flex-col lg:flex-row">
+                <div className="lg:w-64 bg-slate-50 p-8 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-slate-100 group-hover:bg-indigo-50 transition-colors duration-500 relative">
+                  <div className="relative">
+                    <span className="text-[10px] font-black text-indigo-300 uppercase tracking-[0.2em] mb-2 block text-center">Panel</span>
+                    <span className="text-6xl font-black text-slate-200 group-hover:text-indigo-200 transition-colors duration-500 leading-none">{item?.panelNumber}</span>
+                  </div>
+                  {item?.shotName && (
+                    <span className="mt-6 px-3 py-1 bg-white border border-slate-200 rounded-full text-[9px] font-bold text-slate-500 uppercase tracking-wider shadow-sm text-center">
+                      {item?.shotName}
+                    </span>
+                  )}
+                  <button 
+                    onClick={() => {
+                      const { originalText, ...dataToCopy } = item || {};
+                      copyToClipboard(JSON.stringify(dataToCopy, null, 2));
+                    }}
+                    className="mt-8 flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-bold text-slate-600 hover:text-indigo-600 hover:border-indigo-600 hover:shadow-md transition-all uppercase tracking-wider"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copy Panel
+                  </button>
+                </div>
+
+                <div className="flex-1 p-8 space-y-8">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className="space-y-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nội dung gốc</h4>
+                        </div>
+                        <div className="relative">
+                          <p className="text-sm text-slate-600 leading-relaxed italic pl-6 border-l-2 border-slate-100 group-hover:border-indigo-100 transition-colors">
+                            {item?.originalText}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Camera className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Góc máy</span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">{item?.cameraAngle || 'Eye level'}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Move className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bố cục</span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">{item?.framing || 'Central'}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <Users className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Chủ thể</span>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-700 line-clamp-1">{item?.subject || 'N/A'}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <Play className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Hành động</span>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-700 line-clamp-1">{item?.action || 'N/A'}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bối cảnh</span>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-700 line-clamp-1">{item?.location_cues || 'N/A'}</p>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all group/info">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <Sun className="w-3.5 h-3.5 text-indigo-400 group-hover/info:text-indigo-600 transition-colors" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ánh sáng</span>
+                          </div>
+                          <p className="text-[11px] font-bold text-slate-700 line-clamp-1">{item?.lighting || 'N/A'}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1 h-4 bg-emerald-500 rounded-full"></div>
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Visual Prompt</h4>
+                        </div>
+                        <div className="bg-slate-900 rounded-2xl p-6 relative group/prompt shadow-lg shadow-slate-200 h-full min-h-[200px]">
+                          <p className="text-[11px] font-mono text-indigo-50 leading-relaxed pr-8">{item?.visualPrompt}</p>
+                          <button onClick={() => copyToClipboard(item?.visualPrompt)} className="absolute top-4 right-4 text-white/30 hover:text-white transition-colors"><Copy className="w-4 h-4" /></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-slate-900 rounded-3xl p-8 shadow-2xl border border-slate-800 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5">
+              <Code2 className="w-48 h-48 text-white" />
+            </div>
+            <pre className="text-emerald-400 text-xs font-mono leading-relaxed overflow-x-auto relative z-0">
+              {JSON.stringify(finalJsonData, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderDataView = (data: any, stage: ProductionStage) => {
+    if (!data) return null;
+
+    let parsed: any = null;
+    try {
+      parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    } catch (e) {
+      return <div className="text-slate-800 text-sm whitespace-pre-wrap font-sans leading-relaxed">{data}</div>;
+    }
+
+    switch (stage) {
+      case ProductionStage.ANALYSIS:
+        return (
+          <div className="space-y-6">
+            {Array.isArray(parsed) ? (
+              <>
+                {parsed.map((beat: any, i: number) => (
+                  <div key={i} className="relative group">
+                    <div className={`bg-white border ${editingBeatIndex === i ? 'border-indigo-500 ring-2 ring-indigo-50 shadow-lg' : 'border-slate-200'} rounded-2xl p-6 transition-all duration-300`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-lg uppercase shadow-sm">Beat {i + 1}</span>
+                          {editingBeatIndex === i ? (
+                            <input 
+                              type="text"
+                              value={editingBeatData.atmosphere || ''}
+                              onChange={(e) => setEditingBeatData({...editingBeatData, atmosphere: e.target.value})}
+                              placeholder="Cảm xúc chủ đạo..."
+                              className="text-[10px] font-bold uppercase px-3 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 outline-none w-48"
+                            />
+                          ) : beat.atmosphere && (
+                            <div className="flex items-center gap-1.5 bg-purple-50 text-purple-600 px-3 py-1 rounded-lg border border-purple-100">
+                              <Zap className="w-3 h-3" />
+                              <span className="text-[10px] font-bold uppercase">{beat.atmosphere}</span>
+                            </div>
+                          )}
+                          
+                          {editingBeatIndex !== i && beat.posture && (
+                            <div className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1 rounded-lg border border-blue-100">
+                              <Move className="w-3 h-3" />
+                              <span className="text-[10px] font-bold uppercase">{beat.posture}</span>
+                            </div>
+                          )}
+                          
+                          {editingBeatIndex !== i && beat.timeOfDay && (
+                            <div className="flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-lg border border-amber-100">
+                              <Clock className="w-3 h-3" />
+                              <span className="text-[10px] font-bold uppercase">{beat.timeOfDay}</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {editingBeatIndex === i ? (
+                            <>
+                              <button 
+                                onClick={() => handleUpdateBeat(i)}
+                                className="p-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors shadow-sm"
+                                title="Lưu thay đổi"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => { setEditingBeatIndex(null); setEditingBeatData(null); }}
+                                className="p-2 bg-slate-200 text-slate-600 rounded-xl hover:bg-slate-300 transition-colors shadow-sm"
+                                title="Hủy"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button 
+                                onClick={() => { setEditingBeatIndex(i); setEditingBeatData(beat); }}
+                                className="p-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                                title="Chỉnh sửa"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteBeat(i)}
+                                className="p-2 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-600 hover:text-white transition-all shadow-sm"
+                                title="Xóa Beat"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleAddBeat(i)}
+                                className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                                title="Thêm Beat sau"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingBeatIndex === i ? (
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Văn bản gốc (Original Text)</label>
+                            <textarea 
+                              value={editingBeatData.originalText || ''}
+                              onChange={(e) => setEditingBeatData({...editingBeatData, originalText: e.target.value})}
+                              className="w-full text-sm text-slate-800 leading-relaxed italic border-l-4 border-indigo-200 pl-4 py-2 bg-slate-50 rounded-r-xl outline-none min-h-[80px]"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Bối cảnh & Hành động (Analysis)</label>
+                            <textarea 
+                              value={editingBeatData.analysis || ''}
+                              onChange={(e) => setEditingBeatData({...editingBeatData, analysis: e.target.value})}
+                              className="w-full text-xs text-slate-500 leading-relaxed p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none min-h-[60px]"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tư thế (Posture)</label>
+                              <input 
+                                type="text"
+                                value={editingBeatData.posture || ''}
+                                onChange={(e) => setEditingBeatData({...editingBeatData, posture: e.target.value})}
+                                placeholder="Đứng, ngồi, chạy..."
+                                className="w-full text-xs text-slate-600 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Thời điểm (Time of Day)</label>
+                              <input 
+                                type="text"
+                                value={editingBeatData.timeOfDay || ''}
+                                onChange={(e) => setEditingBeatData({...editingBeatData, timeOfDay: e.target.value})}
+                                placeholder="Early Morning, Night..."
+                                className="w-full text-xs text-slate-600 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || beat}</p>
+                          {beat.analysis && (
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                              <p className="text-slate-500 text-xs leading-relaxed">
+                                <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Bối cảnh & Hành động</span>
+                                {beat.analysis}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Add Button between beats */}
+                    <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => handleAddBeat(i)}
+                        className="bg-emerald-500 text-white p-1.5 rounded-full shadow-lg hover:scale-110 transition-transform flex items-center gap-1 px-3"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span className="text-[9px] font-black">THÊM BEAT</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                
+                {parsed.length === 0 && (
+                  <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                    <p className="text-slate-400 text-sm mb-4">Chưa có nhịp truyện nào được tạo.</p>
+                    <button 
+                      onClick={() => handleAddBeat(-1)}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-xs font-black hover:bg-indigo-700 transition-all shadow-md"
+                    >
+                      <Plus className="w-4 h-4" /> TẠO BEAT ĐẦU TIÊN
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-slate-800 text-sm whitespace-pre-wrap bg-white p-8 rounded-3xl border border-slate-200">
+                {JSON.stringify(parsed, null, 2)}
+              </div>
+            )}
+          </div>
+        );
+
+      case ProductionStage.CHARACTER_LOCATION:
+        if (!production.characterLocationAnalysis) {
+          return (
+            <div className="flex flex-col items-center justify-center py-20 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+                <Users className="w-8 h-8 text-slate-300" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-400">Chưa có dữ liệu phân tích</h3>
+              <p className="text-slate-400 text-sm mt-1 max-w-xs text-center">
+                Thông tin nhân vật và bối cảnh sẽ hiển thị tại đây sau khi bạn hoàn thành bước "Phân tích nội dung".
+              </p>
+            </div>
+          );
+        }
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {parsed.characters && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Users className="w-4 h-4" /> Characters</h3>
+                {parsed.characters.map((char: any, i: number) => (
+                  <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+                    <h4 className="font-bold text-indigo-600 mb-2">{char.name}</h4>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                      <div className="text-slate-400 uppercase">Gender</div>
+                      <div className="text-slate-700 font-medium">{char.gender || 'N/A'}</div>
+                      <div className="text-slate-400 uppercase">Age/Height</div>
+                      <div className="text-slate-700 font-medium">{char.age || 'N/A'} / {char.height || 'N/A'}</div>
+                      <div className="text-slate-400 uppercase">Hair/Eyes</div>
+                      <div className="text-slate-700 font-medium">{char.hair || 'N/A'} / {char.eyes || 'N/A'}</div>
+                      <div className="text-slate-400 uppercase col-span-2 mt-1">Face Details</div>
+                      <div className="text-slate-600 col-span-2 italic">{char.face || 'N/A'}</div>
+                      <div className="text-slate-400 uppercase col-span-2 mt-1">Outfit</div>
+                      <div className="text-slate-600 col-span-2 italic">{char.outfit || 'N/A'}</div>
+                    </div>
+                    {char.imagePrompt && (
+                      <div className="mt-4 bg-slate-900 rounded-lg p-3 relative group/char">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Character Design Prompt</span>
+                          <button onClick={() => copyToClipboard(char.imagePrompt)} className="opacity-0 group-hover/char:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                        </div>
+                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{char.imagePrompt}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.locations && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Layout className="w-4 h-4" /> Locations</h3>
+                {parsed.locations.map((loc: any, i: number) => (
+                  <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+                    <h4 className="font-bold text-emerald-600 mb-2">{loc.name}</h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed mb-3">{loc.description || loc.details || JSON.stringify(loc)}</p>
+                    {loc.imagePrompt && (
+                      <div className="bg-slate-900 rounded-lg p-3 relative group/loc">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Establishing Shot Prompt</span>
+                          <button onClick={() => copyToClipboard(loc.imagePrompt)} className="opacity-0 group-hover/loc:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                        </div>
+                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{loc.imagePrompt}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+      case ProductionStage.STORYBOARD:
+        return (
+          <div className="space-y-6">
+            {Array.isArray(parsed) ? parsed.map((panel: any, i: number) => (
+              <div key={i} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col md:flex-row">
+                <div className="bg-slate-50 p-6 md:w-48 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase mb-1">Panel</span>
+                  <span className="text-4xl font-black text-slate-200">{panel.panelNumber || i + 1}</span>
+                </div>
+                <div className="p-6 flex-1 space-y-4">
+                  <div>
+                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Original Text</h4>
+                    <p className="text-xs text-slate-600 italic">{panel.originalText}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Description</h4>
+                    <p className="text-sm text-slate-800 leading-relaxed">{panel.description}</p>
+                  </div>
+                </div>
+              </div>
+            )) : <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>}
+          </div>
+        );
+
+      case ProductionStage.PROMPTS:
+        return (
+          <div className="grid grid-cols-1 gap-6">
+            {Array.isArray(parsed) ? parsed.map((item: any, i: number) => (
+              <div key={i} className="group bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300">
+                <div className="flex flex-col lg:flex-row">
+                  <div className="lg:w-32 bg-slate-50 p-6 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-slate-100 group-hover:bg-indigo-50 transition-colors">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Panel</span>
+                    <span className="text-2xl font-black text-slate-300 group-hover:text-indigo-300 transition-colors">{item.panelNumber}</span>
+                  </div>
+                  <div className="flex-1 p-6 space-y-6">
+                    {/* Hiển thị metadata theo hàng ngang nếu có dữ liệu */}
+                    {(item.cameraAngle || item.framing || item.subject || item.action) && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {item.cameraAngle && (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Góc máy</span>
+                            <p className="text-[10px] font-bold text-slate-700">{item.cameraAngle}</p>
+                          </div>
+                        )}
+                        {item.framing && (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Bố cục</span>
+                            <p className="text-[10px] font-bold text-slate-700">{item.framing}</p>
+                          </div>
+                        )}
+                        {item.subject && (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Chủ thể</span>
+                            <p className="text-[10px] font-bold text-slate-700 line-clamp-1">{item.subject}</p>
+                          </div>
+                        )}
+                        {item.action && (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-[8px] font-black text-slate-400 uppercase block mb-1">Hành động</span>
+                            <p className="text-[10px] font-bold text-slate-700 line-clamp-1">{item.action}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Visual Prompt chiếm hết chiều rộng */}
+                    <div className="bg-slate-900 rounded-xl p-6 relative group/inner shadow-2xl">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1 h-3 bg-indigo-500 rounded-full"></div>
+                          <h4 className="text-[9px] font-black text-indigo-400 uppercase tracking-[0.2em]">Visual Prompt</h4>
+                        </div>
+                        <button onClick={() => copyToClipboard(item.visualPrompt)} className="opacity-0 group-hover/inner:opacity-100 transition-opacity text-white/50 hover:text-white flex items-center gap-2 text-[10px] font-bold">
+                          <Copy className="w-3.5 h-3.5" /> SAO CHÉP
+                        </button>
+                      </div>
+                      <p className="text-[11px] font-mono text-indigo-50 leading-relaxed pr-6">{item.visualPrompt}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )) : null}
+          </div>
+        );
+
+      case ProductionStage.QA:
+        if (!Array.isArray(parsed)) return <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>;
+        const failedPanels = parsed.filter((item: any) => !item.qaNotes?.toLowerCase().includes('pass'));
+        if (failedPanels.length === 0) {
+          return (
+            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-8 text-center">
+              <div className="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-6 h-6 text-emerald-600" /></div>
+              <h4 className="text-emerald-900 font-bold mb-1">Tất cả Panel đã vượt qua kiểm tra</h4>
+              <p className="text-emerald-600 text-xs">Không có lỗi hoặc thay đổi nào cần xử lý.</p>
+            </div>
+          );
+        }
+        return (
+          <div className="space-y-4">
+            {failedPanels.map((item: any, i: number) => (
+              <div key={i} className="bg-white border border-amber-200 rounded-xl overflow-hidden shadow-sm">
+                <div className="px-4 py-2 flex justify-between items-center border-b bg-amber-50 border-amber-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase">Panel {item.panelNumber}</span>
+                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-700">{item.qaNotes}</span>
+                </div>
+                <div className="p-4"><p className="text-xs font-mono text-slate-600 leading-relaxed">{item.visualPrompt}</p></div>
+              </div>
+            ))}
+          </div>
+        );
+
+      default:
+        return <div className="text-slate-800 text-sm whitespace-pre-wrap font-sans leading-relaxed">{JSON.stringify(parsed, null, 2)}</div>;
+    }
+  };
+
+  const renderLibraryModal = () => {
+    if (!showLibraryModal) return null;
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full h-[80vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+          <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><Library className="w-6 h-6" /></div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">Thư viện dự án</h3>
+                <p className="text-xs text-slate-500 font-medium">Chọn một dự án để nhập vào StoryFlow</p>
+              </div>
+            </div>
+            <button onClick={() => setShowLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><RefreshCw className="w-5 h-5" /></button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-8">
+            {Object.keys(groupedProjects).length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center">
+                <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mb-6"><Library className="w-10 h-10 text-slate-200" /></div>
+                <h4 className="text-lg font-bold text-slate-900 mb-2">Thư viện trống</h4>
+                <p className="text-slate-400 text-sm max-w-xs">Bạn chưa có dự án nào được lưu.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(Object.entries(groupedProjects) as [string, any[]][]).map(([title, chapters]) => {
+                  const lastUpdated = chapters.reduce((latest, current) => {
+                    const currentTimestamp = new Date(current.timestamp).getTime();
+                    return currentTimestamp > latest ? currentTimestamp : latest;
+                  }, 0);
+
+                  return (
+                    <div 
+                      key={title} 
+                      className="group flex flex-col p-5 rounded-2xl border border-slate-100 hover:shadow-xl hover:shadow-indigo-50 transition-all text-left bg-white relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 right-0 px-3 py-1 text-[8px] font-black uppercase tracking-widest rounded-bl-xl bg-indigo-100 text-indigo-600">
+                        STORYFLOW
+                      </div>
+                      <div className="flex items-start gap-4 mb-4">
+                        <div className="p-3 rounded-xl bg-indigo-50 text-indigo-600">
+                          <Book className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-slate-900 line-clamp-1">{title}</h4>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                            {chapters.length} chương đã lưu
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar mb-4">
+                        {chapters.map((project) => (
+                          <button
+                            key={project.id}
+                            onClick={() => handleImportProject(project)}
+                            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition-all border border-transparent hover:border-indigo-100 group/chapter"
+                          >
+                            <div className="flex flex-col items-start">
+                              <span className="font-bold text-[11px]">Chương {project.inputData.chapter}</span>
+                              {project.inputData.chapterTitle && (
+                                <span className="text-[9px] opacity-70 line-clamp-1">{project.inputData.chapterTitle}</span>
+                              )}
+                            </div>
+                            <ChevronRight className="w-3 h-3 opacity-0 group-hover/chapter:opacity-100 transition-all" />
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="mt-auto flex items-center justify-between pt-3 border-t border-slate-50">
+                        <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
+                          <Clock className="w-3 h-3" />
+                          {new Date(lastUpdated).toLocaleDateString('vi-VN')}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          
+          <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end">
+            <button onClick={() => setShowLibraryModal(false)} className="px-6 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-100 transition-all">Đóng</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleImportProject = (project: any, chapterIndex?: number) => {
+    // Kiểm tra xem có phải đang trong luồng "Phân tích chương tiếp theo" không
+    // (Đã có tiêu đề và số chương)
+    const isNextChapterFlow = !!(inputData.title.trim() && inputData.chapter.trim());
+
+    if (project.type === 'literary') {
+      // Handle new multi-chapter structure
+      if (project.chapters && Array.isArray(project.chapters) && project.chapters.length > 0) {
+        // If a specific chapter index is provided, use it, otherwise use the latest
+        const idx = chapterIndex !== undefined ? chapterIndex : project.chapters.length - 1;
+        const chapter = project.chapters[idx];
+        const scriptFromBlocks = chapter.blocks 
+          ? chapter.blocks.map((b: any) => b.content).join('\n\n')
+          : chapter.script || '';
+        
+        setInputData(prev => ({
+          ...prev,
+          title: isNextChapterFlow ? prev.title : (project.title || ''),
+          chapter: isNextChapterFlow ? prev.chapter : (chapter.chapter || ''),
+          chapterTitle: isNextChapterFlow ? prev.chapterTitle : (chapter.chapterTitle || ''),
+          script: scriptFromBlocks,
+        }));
+      } else {
+        // Handle legacy single-chapter structure
+        const scriptFromBlocks = project.blocks 
+          ? project.blocks.map((b: any) => b.content).join('\n\n')
+          : project.inputData?.script || '';
+        
+        setInputData(prev => ({
+          ...prev,
+          title: isNextChapterFlow ? prev.title : (project.inputData?.title || ''),
+          chapter: isNextChapterFlow ? prev.chapter : (project.inputData?.chapter || ''),
+          chapterTitle: isNextChapterFlow ? prev.chapterTitle : (project.inputData?.chapterTitle || ''),
+          script: scriptFromBlocks,
+        }));
+      }
+      setToast({ message: isNextChapterFlow ? "Đã nhập nội dung chương mới từ LitStruct!" : "Đã nhập dữ liệu từ LitStruct Parser!", visible: true });
+    } else {
+      if (isNextChapterFlow) {
+        // Nếu là dự án StoryFlow và đang ở luồng chương tiếp theo, cũng chỉ lấy script
+        const scriptToImport = project.inputData?.script || '';
+        setInputData(prev => ({
+          ...prev,
+          script: scriptToImport
+        }));
+        setToast({ message: "Đã nhập nội dung chương mới từ thư viện!", visible: true });
+      } else {
+        const nextInputData = project.inputData || { title: '', chapter: '', chapterTitle: '', script: '', selectedStyle: 'standard' };
+        const nextProduction = project.production || {};
+        setInputData(nextInputData);
+        setProduction(nextProduction);
+        setUnlockedStages(computeUnlockedStages(nextInputData, nextProduction, stage));
+        setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
+      }
+    }
+    setShowLibraryModal(false);
+    setShowLitLibraryModal(false);
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const renderLitLibraryModal = () => {
+    if (!showLitLibraryModal) return null;
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full h-[80vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+          <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-purple-100 p-2 rounded-xl text-purple-600"><Code2 className="w-6 h-6" /></div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">Thư viện LitStruct Parser</h3>
+                <p className="text-xs text-slate-500 font-medium">Chọn một bản phân tích văn học để nhập nội dung vào StoryFlow</p>
+              </div>
+            </div>
+            <button onClick={() => setShowLitLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><RefreshCw className="w-5 h-5" /></button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-8">
+            {litProjects.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center">
+                <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mb-6"><Code2 className="w-10 h-10 text-slate-200" /></div>
+                <h4 className="text-lg font-bold text-slate-900 mb-2">Thư viện trống</h4>
+                <p className="text-slate-400 text-sm max-w-xs">Bạn chưa có bản phân tích văn học nào được lưu ở LitStruct Parser.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {litProjects.map((project) => (
+                  <div 
+                    key={project.id} 
+                    className="group flex flex-col p-5 rounded-2xl border border-slate-100 hover:shadow-xl hover:shadow-purple-50 transition-all text-left bg-white relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 px-3 py-1 text-[8px] font-black uppercase tracking-widest rounded-bl-xl bg-purple-100 text-purple-600">
+                      LITSTRUCT PARSER
+                    </div>
+                    <div className="flex items-start gap-4 mb-4">
+                      <div className="p-3 rounded-xl bg-purple-50 text-purple-600">
+                        <Code2 className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-slate-900 line-clamp-1">
+                          {project.title || project.inputData?.title || 'Không có tiêu đề'}
+                        </h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                          {project.chapters ? (
+                            `${(project.chapters || []).length} chương đã phân tích`
+                          ) : (
+                            `${project.inputData?.chapter || '?'} ${project.inputData?.chapterTitle ? `| ${project.inputData.chapterTitle}` : ''}`
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar mb-4">
+                      {project.chapters ? (
+                        (project.chapters || []).map((chapter: any, idx: number) => (
+                          <button
+                            key={chapter.id}
+                            onClick={() => handleImportProject(project, idx)}
+                            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-purple-50 text-slate-600 hover:text-purple-600 transition-all border border-transparent hover:border-purple-100 group/chapter"
+                          >
+                            <div className="flex flex-col items-start">
+                              <span className="font-bold text-[11px]">Chương {chapter.chapter}</span>
+                              {chapter.chapterTitle && (
+                                <span className="text-[9px] opacity-70 line-clamp-1">{chapter.chapterTitle}</span>
+                              )}
+                            </div>
+                            <ArrowRight className="w-3 h-3 opacity-0 group-hover/chapter:opacity-100 transition-all" />
+                          </button>
+                        ))
+                      ) : (
+                        <button
+                          onClick={() => handleImportProject(project)}
+                          className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-purple-50 text-slate-600 hover:text-purple-600 transition-all border border-transparent hover:border-purple-100 group/chapter"
+                        >
+                          <span className="font-bold text-[11px]">Nhập bản phân tích này</span>
+                          <ArrowRight className="w-3 h-3 opacity-0 group-hover/chapter:opacity-100 transition-all" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-auto flex items-center justify-between pt-3 border-t border-slate-50">
+                      <span className="text-[9px] font-bold text-slate-400">
+                        {new Date(project.lastUpdated || project.timestamp).toLocaleDateString('vi-VN')}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end">
+            <button onClick={() => setShowLitLibraryModal(false)} className="px-6 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-100 transition-all">Đóng</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderConfirmModal = () => {
+    if (!confirmModal.show) return null;
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full p-8 border border-slate-100 animate-in zoom-in duration-300">
+          <div className="text-center">
+            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 ${confirmModal.type === 'danger' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>
+              {confirmModal.type === 'danger' ? <Trash2 className="w-10 h-10" /> : <ShieldCheck className="w-10 h-10" />}
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-3 tracking-tight">{confirmModal.title}</h3>
+            <p className="text-slate-500 text-sm leading-relaxed mb-8 px-2 font-medium">
+              {confirmModal.message}
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                className="flex-1 py-4 px-6 rounded-2xl bg-slate-50 text-slate-500 font-black text-[11px] uppercase tracking-widest hover:bg-slate-100 transition-all border border-slate-100"
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                onClick={confirmModal.onConfirm}
+                className={`flex-1 py-4 px-6 rounded-2xl text-white font-black text-[11px] uppercase tracking-widest shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-rose-500 shadow-rose-200 hover:bg-rose-600' : 'bg-indigo-600 shadow-indigo-200 hover:bg-indigo-700'}`}
+              >
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAnalysisModeModal = () => {
+    if (!showAnalysisModeModal) return null;
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 animate-in fade-in zoom-in duration-200">
+          <div className="text-center mb-8">
+            <div className="bg-indigo-100 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"><Zap className="w-8 h-8 text-indigo-600" /></div>
+            <h3 className="text-2xl font-black text-slate-900">Chọn chế độ phân tích</h3>
+          </div>
+          <div className="space-y-4">
+            <button onClick={() => startAnalysis('auto')} className="w-full p-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl transition-all group flex items-center gap-4 text-left shadow-lg shadow-indigo-200">
+              <div className="bg-white/20 p-3 rounded-xl group-hover:scale-110 transition-transform"><Sparkles className="w-6 h-6" /></div>
+              <div><div className="font-bold text-lg">Phân tích tự động</div><div className="text-indigo-100 text-xs mt-0.5">Sử dụng Gemini API</div></div>
+            </button>
+            <button onClick={() => startAnalysis('manual')} className="w-full p-6 bg-white border-2 border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/50 text-slate-700 rounded-2xl transition-all group flex items-center gap-4 text-left">
+              <div className="bg-slate-100 p-3 rounded-xl group-hover:bg-indigo-100 group-hover:scale-110 transition-all"><Terminal className="w-6 h-6 text-slate-600 group-hover:text-indigo-600" /></div>
+              <div><div className="font-bold text-lg text-slate-800">Phân tích thủ công</div><div className="text-slate-500 text-xs mt-0.5">Copy prompt và dán kết quả</div></div>
+            </button>
+          </div>
+          <button onClick={() => setShowAnalysisModeModal(false)} className="mt-6 w-full py-3 text-slate-400 font-bold hover:text-slate-600 transition-colors text-sm">Hủy bỏ</button>
+        </div>
+      </div>
+    );
+  };
+
+  const deleteBook = (title: string) => {
+    const chaptersToDelete = groupedProjects[title];
+    if (!chaptersToDelete) return;
+
+    setConfirmModal({
+      show: true,
+      title: 'Xóa toàn bộ bộ truyện',
+      message: `Bạn có chắc chắn muốn xóa tất cả ${chaptersToDelete.length} chương của bộ truyện "${title}" không?`,
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          for (const project of chaptersToDelete) {
+            await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+          }
+          const deletedIds = chaptersToDelete.map(p => p.id);
+          setSavedProjects(prev => prev.filter(p => !deletedIds.includes(p.id)));
+          setToast({ message: `Đã xóa bộ truyện "${title}" khỏi thư viện`, visible: true });
+        } catch (err) {
+          console.error(err);
+          setToast({ message: "Lỗi khi xóa bộ truyện", visible: true });
+        } finally {
+          setConfirmModal(prev => ({ ...prev, show: false }));
+          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+        }
+      }
+    });
+  };
+
+  const renderLibraryView = () => (
+    <div className="max-w-7xl mx-auto space-y-8">
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+          <Library className="w-8 h-8 text-indigo-600" />
+          Thư viện dự án
+        </h2>
+        <div className="text-sm font-bold text-slate-400 bg-slate-100 px-4 py-2 rounded-xl">
+          {Object.keys(groupedProjects).length} bộ truyện đã lưu
+        </div>
+      </div>
+
+      {Object.keys(groupedProjects).length === 0 ? (
+        <div className="bg-white rounded-[40px] border-2 border-dashed border-slate-200 p-20 text-center">
+          <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"><Library className="w-10 h-10 text-slate-300" /></div>
+          <h4 className="text-lg font-bold text-slate-900 mb-2">Thư viện trống</h4>
+          <p className="text-slate-500 mb-8 max-w-xs mx-auto text-sm">Hãy thực hiện phân tích và lưu lại để xây dựng thư viện của bạn.</p>
+          <button onClick={() => setStage(ProductionStage.INPUT)} className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">Bắt đầu ngay</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto max-h-[calc(100vh-250px)] pr-2 custom-scrollbar">
+          {(Object.entries(groupedProjects) as [string, any[]][]).map(([title, chapters]) => {
+            const lastUpdated = chapters.reduce((latest, current) => {
+              const currentTimestamp = new Date(current.timestamp).getTime();
+              return currentTimestamp > latest ? currentTimestamp : latest;
+            }, 0);
+
+            return (
+              <div 
+                key={title} 
+                className="group bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col"
+              >
+                <div className="p-6 flex-1">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="bg-indigo-50 p-3 rounded-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                      <Book className="w-6 h-6" />
+                    </div>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteBook(title);
+                      }}
+                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                  
+                  <h3 className="font-black text-slate-800 text-lg mb-1 line-clamp-1">{title}</h3>
+                  <div className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest">
+                    {chapters.length} chương đã phân tích
+                  </div>
+                  
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                    {chapters.map((project) => (
+                      <div key={project.id} className="group/chapter flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setInputData(project.inputData); 
+                            setProduction(project.production); 
+                            setUnlockedStages(computeUnlockedStages(project.inputData, project.production || {}, ProductionStage.INPUT));
+                            setStage(ProductionStage.INPUT);
+                          }}
+                          className="flex-1 flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition-all border border-transparent hover:border-indigo-100"
+                        >
+                          <div className="flex flex-col items-start text-left">
+                            <span className="font-bold text-xs">Chương {project.inputData.chapter}</span>
+                            {project.inputData.chapterTitle && (
+                              <span className="text-[10px] opacity-70 line-clamp-1">{project.inputData.chapterTitle}</span>
+                            )}
+                          </div>
+                          <ChevronRight className="w-4 h-4 opacity-0 group-hover/chapter:opacity-100 transition-all" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteProject(project.id);
+                          }}
+                          className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover/chapter:opacity-100"
+                          title="Xóa chương này"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    <Clock className="w-3.5 h-3.5" />
+                    Cập nhật: {new Date(lastUpdated).toLocaleDateString('vi-VN')}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderContent = () => {
+    if (stage === ProductionStage.LIBRARY) return renderLibraryView();
+    if (stage === ProductionStage.INPUT) return (
+      <div className="max-w-7xl mx-auto space-y-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">Tên tiểu thuyết <span className="text-red-500">*</span></label>
+            <input type="text" value={inputData.title} onChange={(e) => setInputData(prev => ({ ...prev, title: e.target.value }))} placeholder="Ví dụ: Tây Du Ký" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">Chương <span className="text-red-500">*</span></label>
+            <input type="text" value={inputData.chapter} onChange={(e) => setInputData(prev => ({ ...prev, chapter: e.target.value }))} placeholder="Ví dụ: Chương 1" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">Tên chương</label>
+            <input type="text" value={inputData.chapterTitle} onChange={(e) => setInputData(prev => ({ ...prev, chapterTitle: e.target.value }))} placeholder="Ví dụ: Đại náo Thiên cung" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+        </div>
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-indigo-600" />
+              <label className="text-lg font-bold text-slate-800">Nội dung tiểu thuyết</label>
+            </div>
+            <button 
+              onClick={() => setShowLitLibraryModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-xl text-xs font-bold transition-all border border-purple-100 shadow-sm"
+            >
+              <Library className="w-3.5 h-3.5" /> Nhập từ LitStruct
+            </button>
+          </div>
+          <textarea value={inputData.script} onChange={(e) => setInputData(prev => ({ ...prev, script: e.target.value }))} placeholder="Dán đoạn trích tiểu thuyết của bạn vào đây hoặc lấy từ thư viện..." className="w-full h-80 p-5 border border-slate-200 rounded-xl bg-slate-50 text-sm leading-relaxed outline-none" />
+        </div>
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2 mb-6 w-full"><Palette className="w-5 h-5 text-indigo-600" /><label className="text-lg font-bold text-slate-800">Phong cách hình ảnh</label></div>
+            <div className="w-full">
+              <div className="flex flex-wrap justify-center gap-3">
+                {STYLE_OPTIONS.map((s) => (
+                  <button key={s.id} onClick={() => setInputData(prev => ({ ...prev, selectedStyle: s.id }))} className={`p-4 rounded-xl border-2 transition-all flex items-center justify-center min-h-[64px] w-[calc(50%-0.75rem)] md:w-[calc(33.33%-0.75rem)] lg:w-[calc(25%-0.75rem)] xl:w-[calc(16.66%-0.75rem)] ${inputData.selectedStyle === s.id ? "border-indigo-600 bg-indigo-50/50 ring-1 ring-indigo-600 shadow-md" : "border-slate-100 hover:border-slate-200 hover:bg-slate-50"}`}>
+                    <h4 className={`font-bold text-[13px] text-center leading-tight ${inputData.selectedStyle === s.id ? "text-indigo-700" : "text-slate-700"}`}>{s.label}</h4>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+
+    const currentResult = stage === ProductionStage.ANALYSIS ? production.analysis 
+                      : stage === ProductionStage.CHARACTER_LOCATION ? production.characterLocationAnalysis
+                      : stage === ProductionStage.STORYBOARD ? production.storyboard
+                      : stage === ProductionStage.PROMPTS ? production.prompts
+                      : stage === ProductionStage.QA ? production.qaReport
+                      : production.finalResult;
+
+    if (isManualMode || (isGlobalManualMode && !currentResult)) return renderManualView();
+
+    return (
+      <div className="max-w-7xl mx-auto">
+        {!currentResult && !isLoading && !isGlobalManualMode ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>
+        ) : stage === ProductionStage.FINAL ? renderFinalView() : (
+          <div className="bg-slate-50/30 rounded-3xl">
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center min-h-[400px] text-indigo-600 gap-4"><Loader2 className="w-12 h-12 animate-spin" /><p className="font-bold animate-pulse">AI đang làm việc...</p></div>
+            ) : renderDataView(currentResult, stage)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const currentResult = stage === ProductionStage.ANALYSIS ? production.analysis 
+                      : stage === ProductionStage.CHARACTER_LOCATION ? production.characterLocationAnalysis
+                      : stage === ProductionStage.STORYBOARD ? production.storyboard
+                      : stage === ProductionStage.PROMPTS ? production.prompts
+                      : stage === ProductionStage.QA ? production.qaReport
+                      : production.finalResult;
+
+  const isShowingManual = isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT);
+  const btn = isLoading ? { label: "Đang xử lý...", icon: <Loader2 className="w-5 h-5 animate-spin" />, color: "bg-indigo-600" } 
+             : isShowingManual ? { label: "Xác nhận dữ liệu", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
+             : stage === ProductionStage.INPUT ? { label: "Bắt đầu phân tích", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
+             : stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL) ? { label: "Dự án hoàn tất", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
+             : stage === ProductionStage.FINAL ? { label: "Phân tích kết quả", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
+             : { label: isGlobalManualMode ? "Tiếp tục" : "Tiếp tục với AI", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
+      {renderToast()}
+      {renderConfirmModal()}
+      {renderLibraryModal()}
+      {renderLitLibraryModal()}
+      {renderAnalysisModeModal()}
+      <div className="w-72 bg-slate-900 text-white h-screen fixed left-0 top-0 flex flex-col shadow-2xl z-50 border-r border-white/5">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-10">
+            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-500/20"><Layout className="w-6 h-6 text-white" /></div>
+            <div>
+              <h1 className="text-xl font-black tracking-tight">StoryFlow</h1>
+              <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div><span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">AI Production</span></div>
+            </div>
+          </div>
+          <nav className="space-y-1.5 pt-4">
+            <button onClick={() => {setStage(ProductionStage.LIBRARY); setIsManualMode(false);}} className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all duration-300 group ${stage === ProductionStage.LIBRARY ? "bg-indigo-600 shadow-xl shadow-indigo-600/20 text-white" : "text-slate-500 hover:bg-white/5 hover:text-slate-300"}`}>
+              <div className={`p-1.5 rounded-lg transition-colors ${stage === ProductionStage.LIBRARY ? "bg-white/20" : "bg-slate-800 group-hover:bg-slate-700"}`}><Library className="w-4 h-4" /></div>
+              <span className="truncate">Thư viện</span>
+            </button>
+            <div className="py-2"><div className="h-px bg-white/5 mx-4"></div></div>
+            {steps.map((s, i) => {
+              const isUnlocked = s.id === ProductionStage.INPUT || hasData(s.id) || stage === s.id || unlockedStages.includes(s.id);
+              
+              return (
+                <button 
+                  key={s.id} 
+                  onClick={() => {setStage(s.id); setIsManualMode(false);}} 
+                  disabled={!isUnlocked} 
+                  className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all duration-300 group ${stage === s.id ? "bg-indigo-600 shadow-xl shadow-indigo-600/20 text-white" : "text-slate-500 hover:bg-white/5 hover:text-slate-300 disabled:opacity-20 disabled:cursor-not-allowed"}`}
+                >
+                  <div className={`p-1.5 rounded-lg transition-colors ${stage === s.id ? "bg-white/20" : "bg-slate-800 group-hover:bg-slate-700"}`}><s.icon className="w-4 h-4" /></div>
+                  <span className="truncate">{s.label}</span>
+                  {hasData(s.id) && stage !== s.id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto text-emerald-500" />}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
+      <main className="flex-1 ml-72 p-12 pb-40">
+        <div className="max-w-7xl mx-auto">
+          <header className="flex justify-between items-end mb-12">
+            <div>
+              <button 
+                onClick={onBack}
+                className="flex items-center gap-2 text-slate-400 hover:text-indigo-600 font-bold text-xs uppercase tracking-widest mb-6 transition-colors group"
+              >
+                <div className="p-1 rounded-lg bg-slate-100 group-hover:bg-indigo-50 transition-colors">
+                  <Home className="w-3.5 h-3.5" />
+                </div>
+                Về trang chủ
+              </button>
+              <div className="flex items-center gap-3 mb-3">{stage !== ProductionStage.LIBRARY && <span className="bg-indigo-100 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-indigo-200 shadow-sm">Bước {steps.findIndex(s => s.id === stage) + 1} / {steps.length}</span>}</div>
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight leading-tight">{stage === ProductionStage.LIBRARY ? "Thư viện dự án" : steps.find(s => s.id === stage)?.label}</h2>
+            </div>
+            {stage !== ProductionStage.LIBRARY && (
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={saveProject} 
+                  className="flex items-center gap-3 px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 shadow-sm bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:shadow-md"
+                >
+                  <Save className="w-4 h-4" /> LƯU DỰ ÁN
+                </button>
+                {stage !== ProductionStage.INPUT && (
+                  <button 
+                    onClick={() => setIsManualMode(!isManualMode)} 
+                    className={`flex items-center gap-3 px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 shadow-sm ${isShowingManual ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:shadow-md"}`}
+                  >
+                    <Settings2 className="w-4 h-4" /> {isShowingManual ? "TẮT CHẾ ĐỘ THỦ CÔNG" : "CHẾ ĐỘ THỦ CÔNG"}
+                  </button>
+                )}
+              </div>
+            )}
+          </header>
+          {error && <div className="mb-8 p-6 bg-red-50 text-red-600 rounded-3xl border border-red-100 text-sm font-bold flex items-center gap-4 shadow-sm animate-shake"><div className="bg-red-100 p-2 rounded-xl">⚠️</div>{error}</div>}
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">{renderContent()}</div>
+        </div>
+        {!isShowingManual && (stage === ProductionStage.INPUT || !hasData(stage)) && (
+          <div className="fixed bottom-12 right-12 z-30">
+            <button onClick={handleProcess} disabled={isLoading || (stage === ProductionStage.INPUT && (!inputData.script.trim() || !inputData.title.trim() || !inputData.chapter.trim())) || (stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL))} className={`group flex items-center gap-4 px-10 py-6 rounded-3xl font-black text-white shadow-2xl transition-all active:scale-95 disabled:opacity-50 ${btn.color} hover:brightness-110 hover:-translate-y-1 shadow-indigo-500/40`}>{btn.icon} <span className="uppercase tracking-[0.2em] text-sm">{btn.label}</span><ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></button>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default StoryFlow;
