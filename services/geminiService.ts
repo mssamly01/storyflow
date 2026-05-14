@@ -5,7 +5,7 @@ import { getConfig } from "./configService";
 // Helper to get AI instance with current config
 export const getAI = () => {
   const config = getConfig();
-  const apiKey = config.geminiApiKey || process.env.API_KEY || "";
+  const apiKey = config.geminiApiKey || "";
   if (!apiKey) {
     throw new Error("API Key not found. Please configure it in Settings.");
   }
