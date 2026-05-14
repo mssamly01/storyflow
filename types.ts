@@ -170,7 +170,9 @@ export interface EngineerPrompt {
   panelId?: string;
   beatId?: number;
   visualPrompt: string;
+  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
   negativePrompt?: string;
+  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
   negative_prompt?: string;
   notes?: string;
   timeOfDay?: string;
@@ -229,7 +231,6 @@ export interface FinalResultPanel {
   };
   prompt: {
     visualPrompt: string;
-    negativePrompt: string;
   };
   qa: {
     status: "pass" | "warning" | "fail" | "unchecked";
@@ -248,7 +249,8 @@ export interface FinalResultPanel {
   location_cues: string;
   lighting: string;
   visualPrompt: string;
-  negative_prompt: string;
+  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
+  negative_prompt?: string;
   qaNotes?: string;
 }
 

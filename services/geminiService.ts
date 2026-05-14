@@ -264,32 +264,26 @@ ${originalText}
 export const getPhase1AnalysisPrompt = (script: string, style: string, _existingLibrary?: string) => getBeatAnalysisPrompt(script, style);
 
 const getLegacyStoryboardPrompt = (analysis: string, charLocAnalysis: string) => `
-Bạn là chuyên gia họa sĩ minh họa và đạo diễn hình ảnh. Dựa trên kết quả phân tích nội dung và hồ sơ nhân vật/bối cảnh, hãy phác thảo storyboard chi tiết.
+You are an illustration artist and visual director. Based on the content analysis and the character/location library, draft a detailed storyboard.
 
-YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
-- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "beatId": 1, "originalText": "...", "shotType": "...", "cameraAngle": "...", "framing": "...", "composition": "...", "lighting": "...", "visibleCharacters": ["..."], "locationName": "...", "actionInFrame": "...", "continuityNotes": "..." }]
-- Tạo danh sách các khung hình tương ứng với từng Beat trong bản phân tích.
-- **ANTI-DUPLICATION:** Không lặp lại full profile nhân vật/địa điểm. Không viết final image prompt. \`actionInFrame\` chỉ mô tả hành động nhìn thấy trong panel; camera/framing/composition/lighting nằm ở field riêng.
+OUTPUT REQUIREMENTS (MUST RETURN JSON):
+- Return an array of objects: [{ "panelNumber": 1, "beatId": 1, "originalText": "...", "shotType": "...", "cameraAngle": "...", "framing": "...", "composition": "...", "lighting": "...", "visibleCharacters": ["..."], "locationName": "...", "actionInFrame": "...", "continuityNotes": "..." }]
+- Create panels that correspond to each beat in the analysis.
+- ANTI-DUPLICATION: Do not repeat full character/location profiles. Do not write final image prompts. actionInFrame should only describe visible action in the panel; camera/framing/composition/lighting must stay in separate fields.
 
-PHÂN TÍCH NHỊP TRUYỆN:
+BEAT ANALYSIS:
 ${analysis}
 
-HỒ SƠ NHÂN VẬT & BỐI CẢNH:
+CHARACTER + LOCATION LIBRARY:
 ${charLocAnalysis}
 
-QUY TẮC MÔ TẢ (DESCRIPTION RULES - CRITICAL):
-1. **SỰ NHẤT QUÁN CỦA ĐẠO CỤ (PROP CONTINUITY):** Nếu một nhân vật đang cầm hoặc sử dụng một vật dụng (thùng, túi, vũ khí, vật dụng cá nhân) trong một khung hình, vật dụng đó PHẢI được nhắc lại trong mô tả của các khung hình tiếp theo trừ khi có hành động rõ ràng là họ đã bỏ nó xuống.
-2. **CHI TIẾT TƯ THẾ & HÀNH ĐỘNG (POSTURE & ACTION - MANDATORY):** 
-   - Mô tả rõ tư thế (nằm, ngồi, đứng, quỳ, chạy, nhảy), cử chỉ và biểu cảm dựa trên nội dung văn bản. 
-   - **QUY TẮC DUY TRÌ TƯ THẾ:** Nếu nhân vật đang ở một tư thế đặc biệt (ví dụ: đang nằm trên sofa) và chưa có hành động thay đổi tư thế trong văn bản, tư thế này PHẢI được nhắc lại RÕ RÀNG trong mô tả của các khung hình tiếp theo. TUYỆT ĐỐI KHÔNG được bỏ qua thông tin tư thế ở các khung hình sau.
-   - **QUY TẮC ĐỊNH DANH & TƯƠNG TÁC (CRITICAL):** 
-     - Luôn sử dụng TÊN CỤ THỂ của nhân vật. KHÔNG dùng đại từ hoặc mô tả chung chung.
-     - Phải mô tả rõ nhân vật đang tương tác với ai, nhìn vào ai. (Ví dụ: "Trương Kiến Quốc nhìn chằm chằm vào Vương Việt với vẻ khinh miệt").
-     - **QUY TẮC OFF-SCREEN:** Ngay cả khi nhân vật ở ngoài màn hình (off-screen), nếu họ được nhắc đến trong hành động hoặc tương tác, họ vẫn phải được mô tả đầy đủ đặc điểm nhận dạng từ Profile.
-     - Đối với đám đông hoặc nhân vật phụ, phải mô tả cụ thể hành động và hướng nhìn của họ (Ví dụ: "Nhóm nhân viên ở tiền cảnh đang xì xào và nhìn về phía văn phòng nơi xảy ra tranh chấp").
-3. **BỐI CẢNH:** Luôn nhắc lại các chi tiết bối cảnh quan trọng để duy trì không gian.
+DESCRIPTION RULES - CRITICAL:
+1. PROP CONTINUITY: If a character is holding or using an item in one panel, mention that item in following panels until the story clearly says it was put down or lost.
+2. POSTURE AND ACTION: Describe clear posture, gesture, facial expression, action, and interaction based on the text. If a character is lying, sitting, kneeling, or in another specific posture, keep that posture until the story explicitly changes it.
+3. NAMED INTERACTIONS: Use specific character names. Do not use vague pronouns or group labels. Describe who looks at whom, speaks to whom, or interacts with whom.
+4. BACKGROUND CHARACTERS: For crowds or side characters, describe their concrete action and gaze direction.
+5. LOCATION: Repeat important location details needed to preserve spatial continuity.
 `;
-
 export const getStoryboardPrompt = (
   analysis: string,
   charLocAnalysis: string,
@@ -404,52 +398,99 @@ ${artStyleDescription || "No specific style selected."}
 };
 
 export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string, analysis = "") => `
-You are an expert image prompt engineer for an illustrated story pipeline.
+You are a senior Prompt Engineering specialist. Convert the Storyboard into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
 
-Your ONLY task:
-Build final image-generation prompts by combining approved source data.
+TASK:
+Create one copy-ready visualPrompt for each panel. Each visualPrompt must contain both the positive prompt and a final "Negative prompt:" section.
 
-SOURCE OF TRUTH RULES:
-- Do not re-analyze the story.
-- Do not infer or change location, characters, props, action, interaction, posture, atmosphere, or visualFocus.
-- Use APPROVED BEATS as the source of truth for story fields.
-- Use CHARACTER + LOCATION LIBRARY as the source of truth for identity and continuity.
-- Use STORYBOARD VISUAL DIRECTION only for camera, composition, blocking, lighting direction, depth, and visual emphasis.
-- Do not output source fields as separate fields unless the schema below requires them.
-- Do not output timeOfDay as a separate field.
+SOURCE-OF-TRUTH RULES:
+- Do not re-analyze story fields.
+- Do not infer timeOfDay, location, visible characters, props, action, interaction, posture, atmosphere, or visualFocus.
+- originalText, timeOfDay, location, locationId, locationState, visible characters, props, action, interaction, posture, atmosphere, and visualFocus must come from APPROVED BEAT SOURCE.
+- Storyboard is only visual direction: shotType, cameraAngle, cameraDistance, lensFeel, composition, foreground, midground, background, characterBlocking, lightingDirection, depthAndPerspective, visualEmphasis, cameraNotes.
+- Character Library is the source of truth for identity, face, hair, eyes, outfit, accessories, props, colorPalette, and continuityNotes.
+- Location Library is the source of truth for description, layout, keyObjects, lighting, colorPalette, continuityNotes, and baseState.
+- If data conflicts, prioritize APPROVED BEAT SOURCE plus Character/Location Library.
 - If any input entity contains meta.locks.lockedFields, preserve those fields exactly and only regenerate unlocked fields.
 
-Return ONLY a valid JSON array. No markdown. No commentary.
+OUTPUT RULES:
+- Return ONLY valid JSON. No markdown. No commentary.
+- Output may be a JSON array or an object with "engineerPrompts".
+- Each item must only contain panelNumber, panelId, beatId, visualPrompt, and optional sourceUsage.
+- Never return a negativePrompt field.
+- Never return a negative_prompt field.
+- visualPrompt must include "Negative prompt:" at the end.
 
-Required JSON schema:
-[
-  {
-    "panelNumber": 1,
-    "panelId": "panel_001",
-    "beatId": 1,
-    "visualPrompt": "string",
-    "negativePrompt": "text, speech bubbles, watermark, low quality",
-    "sourceUsage": {
-      "usedBeatId": 1,
-      "usedLocationId": "loc_001",
-      "usedCharacterIds": ["char_001"]
+REQUIRED JSON SHAPE:
+{
+  "engineerPrompts": [
+    {
+      "panelNumber": 1,
+      "panelId": "panel_001",
+      "beatId": 1,
+      "visualPrompt": "string ending with Negative prompt:",
+      "sourceUsage": {
+        "usedBeatId": 1,
+        "usedLocationId": "loc_001",
+        "usedCharacterIds": ["char_001"]
+      }
     }
-  }
-]
+  ]
+}
 
-VISUAL PROMPT COMPOSITION:
-For each storyboard panel:
-1. Find the matching approved beat by panel.beatId.
-2. Reuse beat originalText, location, locationId, locationState, characters, props, action, interaction, posture, atmosphere, and visualFocus without changing their meaning.
-3. Reuse character profiles for identity, outfit, accessories, props, color palette, and continuity notes.
-4. Reuse location profiles for description, layout, key objects, lighting, color palette, continuity notes, and base state.
-5. Reuse storyboard visual direction only for shotType, cameraAngle, cameraDistance, lensFeel, composition, foreground, midground, background, characterBlocking, lightingDirection, depthAndPerspective, visualEmphasis, and cameraNotes.
-6. Produce one self-contained visualPrompt per panel.
-
-STYLE:
+VISUAL STYLE:
 ${style}
 
-APPROVED BEATS:
+VISUAL PROMPT TEMPLATE - MUST FOLLOW ORDER:
+
+1. STYLE FIRST:
+Start every visualPrompt exactly with the selected visual style:
+"${style}"
+
+2. LOCATION FIRST:
+Immediately after style, write:
+"Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SOURCE], [lighting/material from Location Library + Storyboard]."
+Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SOURCE. Match Location Library by locationId first, then name/aliases. Include description, layout, keyObjects, lighting, colorPalette where available. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
+
+3. LOCATION CONTINUITY BLOCK:
+Every visualPrompt must include this block right after Location:
+"Location Continuity: use location [locationId]: [name]; base description: [description]; spatial layout: [layout]; key objects to preserve: [keyObjects]; lighting: [lighting]; color palette: [colorPalette]; current beat state: [locationState/baseState]; keep the same room layout, furniture placement, architectural features, and object relationships across panels. Camera angle may change, but object positions and room structure must remain consistent."
+
+4. SCENE + POSTURE + INTERACTION:
+After Location Continuity, write:
+"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from APPROVED BEAT SOURCE + Storyboard blocking]."
+Always describe posture for each visible character. Always describe action and interaction: who looks at whom, speaks to whom, touches whom. For side/background characters, describe concrete action and gaze direction. Avoid vague group nouns such as "the group", "the trio", "both of them", or ambiguous "they"; use specific character names.
+
+5. GLOBAL CHARACTER DESCRIPTION:
+Every named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground/background/off-screen characters and body parts.
+Required format:
+"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hair], Eyes: [eyes], Posture: [current posture], Outfit: [copy outfit exactly])"
+If a profile field is missing, use available fields only. Do not invent new appearance details.
+
+6. OUTFIT FIDELITY:
+Copy outfit text from Character Library exactly. Do not shorten, summarize, or remove material/color/style details. If multiple outfits exist, choose the most story-appropriate outfit, then copy it verbatim.
+
+7. CAMERA / OTS / POV / OBJECT INTERACTION:
+Dialogue prefers close-up or medium close-up. Interaction prefers medium shot or over-the-shoulder. Large action prefers wide shot. If Storyboard provides cameraAngle/shotType, use it as source.
+For OTS or POV, the foreground viewpoint character must have a full profile:
+"Over-the-shoulder shot, foreground: [Character A profile]'s shoulder and back of head, background: [Character B profile] [action]."
+When a character interacts with phone/book/mirror/weapon/object, do not describe the object alone. Show the character's hand/shoulder/body holding or interacting with it. If screen content matters but the screen is not front-facing, use inset panel or split screen. Reflections must be "faint reflection" or "low opacity reflection".
+
+8. OBJECT PERMANENCE & STATE CONTINUITY:
+Keep posture/action/props from previous panels if the text does not clearly change them. If a character is lying/sitting/kneeling, keep that posture until an explicit change. If a character holds a phone/bag/weapon/cup, mention it until the text says it was put down or lost. Do not forget approved props or change location state without beat evidence.
+
+9. FOREGROUND / MIDGROUND / BACKGROUND:
+Use Storyboard fields foreground, midground, background, depthAndPerspective, visualEmphasis, lightingDirection, but never alter source fields from Beat.
+
+10. STRICT NO TEXT RULE:
+End the positive part with:
+"no text, no speech bubbles, no captions, no subtitles, no watermark, no logo."
+
+11. NEGATIVE PROMPT INSIDE visualPrompt:
+Every visualPrompt must end with:
+"Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
+
+APPROVED BEAT SOURCE:
 ${analysis || "No approved beat data provided. Use storyboard legacy source fields only as fallback."}
 
 STORYBOARD VISUAL DIRECTION:
@@ -553,8 +594,7 @@ Required JSON schema:
       "action": "copy from approved beat source",
       "location_cues": "copy/reuse approved location source",
       "lighting": "reuse approved location/storyboard lighting direction",
-      "visualPrompt": "final approved prompt",
-      "negative_prompt": "text, speech bubbles, watermark, low quality, blurry",
+      "visualPrompt": "final approved prompt, including Negative prompt: section at the end",
       "qaNotes": "QA notes if any"
     }
   ]
@@ -838,29 +878,34 @@ export const engineerPrompts = async (storyboard: string, charLocAnalysis: strin
     config: {
       responseMimeType: "application/json",
       responseSchema: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            panelNumber: { type: "integer" },
-            panelId: { type: "string" },
-            beatId: { type: "integer" },
-            visualPrompt: { type: "string" },
-            negativePrompt: { type: "string" },
-            sourceUsage: {
+        type: "object",
+        properties: {
+          engineerPrompts: {
+            type: "array",
+            items: {
               type: "object",
               properties: {
-                usedBeatId: { type: "integer" },
-                usedLocationId: { type: "string" },
-                usedCharacterIds: {
-                  type: "array",
-                  items: { type: "string" }
+                panelNumber: { type: "integer" },
+                panelId: { type: "string" },
+                beatId: { type: "integer" },
+                visualPrompt: { type: "string" },
+                sourceUsage: {
+                  type: "object",
+                  properties: {
+                    usedBeatId: { type: "integer" },
+                    usedLocationId: { type: "string" },
+                    usedCharacterIds: {
+                      type: "array",
+                      items: { type: "string" }
+                    }
+                  }
                 }
-              }
+              },
+              required: ["panelNumber", "visualPrompt"]
             }
-          },
-          required: ["panelNumber", "visualPrompt"]
-        }
+          }
+        },
+        required: ["engineerPrompts"]
       } as any
     }
   });
@@ -937,8 +982,7 @@ export const generateFinalResult = async (
                 action: { type: "string" },
                 location_cues: { type: "string" },
                 lighting: { type: "string" },
-                visualPrompt: { type: "string" },
-                negative_prompt: { type: "string" }
+                visualPrompt: { type: "string" }
               },
               required: ["panelNumber", "shotName", "originalText", "visualPrompt"]
             }

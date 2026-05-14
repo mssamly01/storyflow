@@ -221,4 +221,4 @@ export const STORYBOARD_VISUAL_FIELDS = [
   "cameraNotes"
 ];
 
-export const PROMPT_FIELDS = ["visualPrompt", "negativePrompt"];
+export const PROMPT_FIELDS = ["visualPrompt"];

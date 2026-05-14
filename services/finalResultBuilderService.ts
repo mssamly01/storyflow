@@ -19,6 +19,21 @@ export interface FinalResultBuildCheck {
   warnings: string[];
 }
 
+export const DEFAULT_NEGATIVE_PROMPT =
+  "low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows";
+
+export function ensureVisualPromptHasNegativePrompt(
+  visualPrompt: string,
+  legacyNegativePrompt?: string
+): string {
+  const trimmedPrompt = (visualPrompt || "").trim();
+  const negativeText = (legacyNegativePrompt || DEFAULT_NEGATIVE_PROMPT).trim();
+
+  if (!trimmedPrompt) return `Negative prompt: ${negativeText}`;
+  if (/negative prompt\s*:/i.test(trimmedPrompt)) return trimmedPrompt;
+  return `${trimmedPrompt}\n\nNegative prompt: ${negativeText}`;
+}
+
 export function parseJsonSafe<T>(value: unknown, fallback: T): T {
   if (!value) return fallback;
   if (typeof value !== "string") return value as T;
@@ -48,16 +63,20 @@ function getItems(raw: unknown, keys: string[]): UnknownRecord[] {
 }
 
 export function normalizeEngineerPrompts(raw: unknown): EngineerPrompt[] {
-  return getItems(raw, ["engineerPrompts", "prompts", "panels", "results"]).map((item, index) => ({
-    panelNumber: asNumber(item.panelNumber ?? item.panel_number, index + 1),
-    panelId: item.panelId ?? item.panel_id,
-    beatId: asNumber(item.beatId ?? item.beat_id, 0) || undefined,
-    visualPrompt: item.visualPrompt ?? item.visual_prompt ?? "",
-    negativePrompt: item.negativePrompt ?? item.negative_prompt ?? "",
-    negative_prompt: item.negative_prompt,
-    notes: item.notes,
-    sourceUsage: item.sourceUsage ?? item.source_usage
-  }));
+  return getItems(raw, ["engineerPrompts", "prompts", "panels", "results"]).map((item, index) => {
+    const visualPrompt = item.visualPrompt ?? item.visual_prompt ?? "";
+    const legacyNegativePrompt = item.negativePrompt ?? item.negative_prompt ?? "";
+
+    return {
+      panelNumber: asNumber(item.panelNumber ?? item.panel_number, index + 1),
+      panelId: item.panelId ?? item.panel_id,
+      beatId: asNumber(item.beatId ?? item.beat_id, 0) || undefined,
+      visualPrompt: ensureVisualPromptHasNegativePrompt(visualPrompt, legacyNegativePrompt),
+      notes: item.notes,
+      sourceUsage: item.sourceUsage ?? item.source_usage,
+      meta: item.meta
+    };
+  });
 }
 
 export function normalizeQAResults(raw: unknown): QAResult[] {
@@ -156,8 +175,10 @@ export function buildFinalResultPanel(params: {
   const source = bundle.sourceFields;
   const prompt = findEngineerPromptForPanel(panel, engineerPrompts);
   const qa = findQAResultForPanel(panel, qaResults);
-  const finalVisualPrompt = qa?.visualPrompt || prompt?.visualPrompt || "";
-  const negativePrompt = prompt?.negativePrompt || prompt?.negative_prompt || "text, speech bubbles, watermark, low quality, blurry";
+  const finalVisualPrompt = ensureVisualPromptHasNegativePrompt(
+    qa?.visualPrompt || prompt?.visualPrompt || "",
+    prompt?.negativePrompt || prompt?.negative_prompt
+  );
   const qaStatus = qa?.status || "unchecked";
   const qaIssues = qa?.issues || [];
   const qaPatch = qa?.suggestedPromptPatch || "";
@@ -202,8 +223,7 @@ export function buildFinalResultPanel(params: {
       cameraNotes: panel.cameraNotes || panel.continuityNotes || ""
     },
     prompt: {
-      visualPrompt: finalVisualPrompt,
-      negativePrompt
+      visualPrompt: finalVisualPrompt
     },
     qa: {
       status: qaStatus,
@@ -222,7 +242,6 @@ export function buildFinalResultPanel(params: {
     location_cues: source.locationName,
     lighting: panel.lightingDirection || panel.lighting || bundle.location?.lighting || "",
     visualPrompt: finalVisualPrompt,
-    negative_prompt: negativePrompt,
     qaNotes: [qaStatus, ...qaIssues, qaPatch].filter(Boolean).join("; ")
   };
 }

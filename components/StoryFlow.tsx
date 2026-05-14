@@ -7,6 +7,7 @@ import { buildLocationReferenceSheetPrompt } from '../services/locationContinuit
 import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
 import {
   buildFinalResult,
+  ensureVisualPromptHasNegativePrompt,
   getFinalResultMissingInputs,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
@@ -1311,11 +1312,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const getPanelVisualPrompt = (panel: FinalResultPanel) => {
-    return panel.prompt?.visualPrompt || (panel as unknown as { visualPrompt?: string }).visualPrompt || '';
-  };
-
-  const getPanelNegativePrompt = (panel: FinalResultPanel) => {
-    return panel.prompt?.negativePrompt || (panel as unknown as { negative_prompt?: string }).negative_prompt || '';
+    const legacy = panel as unknown as { visualPrompt?: string; negative_prompt?: string };
+    return ensureVisualPromptHasNegativePrompt(panel.prompt?.visualPrompt || legacy.visualPrompt || '', legacy.negative_prompt);
   };
 
   const renderToast = () => {
@@ -1419,7 +1417,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const storyboard = panel.storyboard;
     const qa = panel.qa;
     const visualPrompt = getPanelVisualPrompt(panel);
-    const negativePrompt = getPanelNegativePrompt(panel);
 
     return (
       <article key={`${panel.panelId}-${panel.beatId}-${panel.panelNumber}`} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -1473,7 +1470,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
         <section className="mb-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h5 className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Visual Prompt</h5>
+            <div>
+              <h5 className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Visual Prompt</h5>
+              <p className="mt-1 text-[10px] font-bold text-indigo-600">Bao gồm cả phần Negative prompt ở cuối.</p>
+            </div>
             <button
               onClick={() => copyToClipboard(visualPrompt)}
               disabled={!visualPrompt}
@@ -1486,13 +1486,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             {visualPrompt || 'No visual prompt found.'}
           </pre>
         </section>
-
-        {negativePrompt && (
-          <section className="mb-4 rounded-2xl border border-slate-200 p-4">
-            <h5 className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Negative Prompt</h5>
-            <p className="text-xs leading-relaxed text-slate-700">{negativePrompt}</p>
-          </section>
-        )}
 
         {qa?.issues?.length > 0 && (
           <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
