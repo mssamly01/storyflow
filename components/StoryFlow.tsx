@@ -540,10 +540,41 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  const resolveOriginalText = (beats: Record<string, any>[], script: string): Record<string, any>[] => {
+    let searchFrom = 0;
+    return beats.map((beat: Record<string, any>) => {
+      const startMarker = beat.startMarker || '';
+      const endMarker = beat.endMarker || '';
+      
+      if (!startMarker || !endMarker) {
+        return { ...beat, originalText: beat.originalText || startMarker || '' };
+      }
+      
+      const startIdx = script.indexOf(startMarker, searchFrom);
+      if (startIdx === -1) {
+        return { ...beat, originalText: beat.originalText || startMarker || '' };
+      }
+      
+      const endIdx = script.indexOf(endMarker, startIdx);
+      if (endIdx === -1) {
+        return { ...beat, originalText: script.substring(startIdx, startIdx + 200).trim() };
+      }
+      
+      const originalText = script.substring(startIdx, endIdx + endMarker.length).trim();
+      searchFrom = endIdx + endMarker.length;
+      return { ...beat, originalText };
+    });
+  };
+
   const runPhase1Analysis = async (): Promise<void> => {
     const existingLibrary = getMasterLibrary();
     const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
     const parsed = JSON.parse(result || '{}');
+    
+    if (Array.isArray(parsed.analysis)) {
+      parsed.analysis = resolveOriginalText(parsed.analysis, inputData.script);
+    }
+    
     setProduction(prev => ({
       ...prev,
       analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),

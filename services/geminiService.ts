@@ -64,7 +64,13 @@ ${style}
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
 
 1. **analysis (Phân tích nhịp truyện):** 
-   - Trả về một mảng các đối tượng: [{ "originalText": "...", "analysis": "...", "atmosphere": "...", "posture": "...", "timeOfDay": "...", "keyActions": ["..."] }]
+   - Trả về một mảng các đối tượng: [{ "startMarker": "...", "endMarker": "...", "analysis": "...", "atmosphere": "...", "posture": "...", "timeOfDay": "...", "keyActions": ["..."] }]
+   - **QUY TẮC ĐÁNH DẤU VĂN BẢN GỐC (TEXT MARKERS - CRITICAL):**
+     - **KHÔNG SAO CHÉP** toàn bộ văn bản gốc vào trường output. Thay vào đó, dùng 2 trường đánh dấu:
+     - **startMarker**: Sao chép NGUYÊN VĂN **10-15 ký tự đầu tiên** của đoạn văn bản gốc thuộc beat này. Phải khớp chính xác 100% với văn bản gốc (kể cả dấu câu, khoảng trắng).
+     - **endMarker**: Sao chép NGUYÊN VĂN **10-15 ký tự cuối cùng** của đoạn văn bản gốc thuộc beat này. Phải khớp chính xác 100% với văn bản gốc.
+     - **MỤC ĐÍCH:** Hệ thống sẽ dùng startMarker và endMarker để trích xuất chính xác đoạn văn bản gốc từ input, đảm bảo không bị biến tấu hay mất nội dung.
+     - **VÍ DỤ:** Nếu beat là "Vương Việt bước vào phòng, nhìn quanh một lượt rồi ngồi xuống ghế." thì startMarker = "Vương Việt bước" và endMarker = "xuống ghế."
    - Trường **keyActions** là mảng liệt kê TẤT CẢ các hành động/sự kiện chính trong beat (Ví dụ: ["Vương Việt mở cửa", "Trương Kiến Quốc quay đầu nhìn"]). Mỗi hành động phải kèm tên nhân vật cụ thể.
    - Chia TOÀN BỘ văn bản thành các nhịp truyện (beats) liên tục, KHÔNG BỎ SÓT bất kỳ nội dung nào.
    - **TỰ KIỂM TRA SỐ HÀNH ĐỘNG (BEAT COMPLEXITY CHECK - CRITICAL):**
@@ -404,7 +410,8 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
             items: {
               type: "object",
               properties: {
-                originalText: { type: "string" },
+                startMarker: { type: "string" },
+                endMarker: { type: "string" },
                 analysis: { type: "string" },
                 atmosphere: { type: "string" },
                 posture: { type: "string" },
