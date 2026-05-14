@@ -64,8 +64,14 @@ ${style}
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
 
 1. **analysis (Phân tích nhịp truyện):** 
-   - Trả về một mảng các đối tượng: [{ "originalText": "...", "analysis": "...", "atmosphere": "...", "posture": "...", "timeOfDay": "..." }]
+   - Trả về một mảng các đối tượng: [{ "originalText": "...", "analysis": "...", "atmosphere": "...", "posture": "...", "timeOfDay": "...", "keyActions": ["..."] }]
+   - Trường **keyActions** là mảng liệt kê TẤT CẢ các hành động/sự kiện chính trong beat (Ví dụ: ["Vương Việt mở cửa", "Trương Kiến Quốc quay đầu nhìn"]). Mỗi hành động phải kèm tên nhân vật cụ thể.
    - Chia TOÀN BỘ văn bản thành các nhịp truyện (beats) liên tục, KHÔNG BỎ SÓT bất kỳ nội dung nào.
+   - **TỰ KIỂM TRA SỐ HÀNH ĐỘNG (BEAT COMPLEXITY CHECK - CRITICAL):**
+     - Sau khi tạo xong mỗi Beat, đếm số lượng hành động chính (keyActions).
+     - Nếu một Beat có **NHIỀU HƠN 2 hành động chính** (keyActions.length > 2) → BẮT BUỘC phải TÁCH beat đó thành các beat nhỏ hơn sao cho mỗi beat chỉ chứa tối đa 2 hành động chính.
+     - **LÝ DO:** Mỗi beat sẽ tương ứng với 1 khung hình (panel). Nếu beat chứa quá nhiều hành động, image prompt không thể mô tả hết trong 1 hình ảnh duy nhất, dẫn đến mất thông tin.
+     - **NGOẠI LỆ:** Chỉ cho phép >2 hành động nếu tất cả hành động diễn ra ĐỒNG THỜI trong cùng 1 khoảnh khắc (Ví dụ: "Mọi người cùng cười" + "Vương Việt giơ ly" + "Pháo hoa nổ" → cùng 1 thời điểm, gộp được).
    - **QUY TẮC CẮT CẢNH (SCENE-CUTTING RULES - CRITICAL):**
      - **Giới hạn độ dài:** Lý tưởng 40-50 từ/Beat. Giữ trọn vẹn câu văn, KHÔNG bao giờ cắt ngang câu.
      - **TÁCH CẢNH NGAY LẬP TỨC KHI:**
@@ -155,10 +161,11 @@ export const getStoryboardPrompt = (analysis: string, charLocAnalysis: string) =
 Bạn là chuyên gia họa sĩ minh họa và đạo diễn hình ảnh. Dựa trên kết quả phân tích nội dung và hồ sơ nhân vật/bối cảnh, hãy phác thảo storyboard chi tiết.
 
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
-- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "originalText": "...", "description": "...", "timeOfDay": "..." }]
+- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "originalText": "...", "description": "...", "timeOfDay": "...", "keyActions": ["..."] }]
 - Tạo danh sách các khung hình tương ứng với từng Beat trong bản phân tích.
 - Giá trị "timeOfDay" phải được lấy chính xác từ phần "PHÂN TÍCH NHỊP TRUYỆN" bên dưới.
-- Mô tả chi tiết: Bố cục, Ánh sáng, Hành động.
+- Trường "keyActions" phải được SAO CHÉP NGUYÊN VĂN từ phần phân tích nhịp truyện (beat analysis) tương ứng. Đây là danh sách các hành động chính mà mỗi panel CẦN mô tả hết.
+- Mô tả chi tiết: Bố cục, Ánh sáng, Hành động. Đảm bảo mọi hành động trong keyActions đều được phản ánh trong description.
 
 PHÂN TÍCH NHỊP TRUYỆN:
 ${analysis}
@@ -243,12 +250,20 @@ QUY TẮC CẤU TRÚC PROMPT (PHẢI TUÂN THỦ THỨ TỰ):
 VÍ DỤ CẤU TRÚC:
 "${style}, Location: Living Room, wooden floor, warm sunset light. Scene: John (Male, 25, 180cm, ...) sitting on the sofa, holding a cup of coffee..."
 
+9. **ĐỐI CHIẾU VỚI VĂN BẢN GỐC (CROSS-REFERENCE WITH ORIGINAL TEXT - CRITICAL):**
+   - Sau khi tạo xong visualPrompt cho mỗi panel, BẮT BUỘC đối chiếu lại với trường \`originalText\` và \`description\` trong storyboard.
+   - **KIỂM TRA:** Mỗi hành động/sự kiện quan trọng trong \`originalText\` có được phản ánh trong visualPrompt không?
+   - **NẾU THIẾU:** Bổ sung chi tiết bị thiếu vào prompt. Ví dụ: Nếu originalText nói "cô ấy vừa cầm ly nước vừa nhìn ra cửa sổ" nhưng prompt chỉ mô tả "looking out the window" → phải thêm "holding a glass of water".
+   - **TRƯỜNG HỢP ĐẶC BIỆT:** Nếu originalText chứa hành động/chi tiết mà KHÔNG THỂ mô tả bằng hình ảnh tĩnh (suy nghĩ nội tâm, hồi tưởng, cảm giác trừu tượng), hãy chuyển thành biểu cảm khuôn mặt hoặc ngôn ngữ cơ thể tương ứng.
+   - **MỤC TIÊU:** Người đọc nhìn vào hình ảnh phải hiểu được TẤT CẢ diễn biến quan trọng trong đoạn văn bản gốc mà không cần đọc text.
+
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
 Trả về một mảng các đối tượng, mỗi đối tượng tương ứng với một panel:
 {
   "panelNumber": number,
   "timeOfDay": "string",
-  "visualPrompt": "string (định dạng Style-First + Location-First)"
+  "visualPrompt": "string (định dạng Style-First + Location-First)",
+  "coverageNotes": "string (ghi chú ngắn gọn: các chi tiết nào từ originalText đã được phản ánh trong prompt, và các chi tiết nào bị bỏ qua kèm lý do)"
 }
 
 HỒ SƠ NHÂN VẬT & ĐỊA ĐIỂM:
@@ -306,13 +321,26 @@ KIỂM TRA CÁC LỖI SAU (ĐẶC BIỆT CHÚ TRỌNG TÍNH NHẤT QUÁN):
      - Thay các từ nhạy cảm về cơ thể bằng các mô tả về trang phục hoặc ánh sáng che khuất.
      - Thay "gun/weapon" (nếu bị chặn) bằng "metallic tool" hoặc mô tả hình dáng cụ thể.
 12. Vị trí nhân vật có bị thay đổi vô lý giữa các screen không?
+13. **KIỂM TRA ĐỘ PHỦ NỘI DUNG (CONTENT COVERAGE CHECK - CRITICAL):**
+   - Đối chiếu \`originalText\` của mỗi panel với \`visualPrompt\` tương ứng.
+   - **KIỂM TRA:** Mỗi hành động/sự kiện quan trọng trong originalText có được mô tả trong visualPrompt không?
+   - **CÁC LOẠI THIẾU SÓT CẦN PHÁT HIỆN:**
+     a) **Thiếu hành động:** originalText mô tả nhân vật làm gì đó nhưng prompt không nhắc (Ví dụ: văn bản nói "cầm điện thoại" nhưng prompt không mô tả điện thoại).
+     b) **Thiếu đối tượng/vật dụng:** Văn bản nhắc đến vật dụng quan trọng nhưng prompt bỏ qua.
+     c) **Thiếu phản ứng:** Văn bản mô tả phản ứng của nhân vật phụ nhưng prompt chỉ tập trung nhân vật chính.
+     d) **Thiếu chi tiết bối cảnh:** Văn bản mô tả thay đổi trong bối cảnh (cửa mở, đèn tắt, mưa rơi) nhưng prompt không phản ánh.
+   - **HÀNH ĐỘNG KHI PHÁT HIỆN THIẾU:** Bổ sung chi tiết bị thiếu vào visualPrompt đã sửa.
+   - **GHI CHÚ:** Ghi rõ trong qaNotes: "COVERAGE: Đã bổ sung [chi tiết] từ originalText vào prompt".
+14. **KIỂM TRA ĐỘ PHỦ TOÀN CỤC (GLOBAL COVERAGE):**
+   - Đảm bảo TẤT CẢ các beat/panel đều có visualPrompt tương ứng. Không được bỏ sót panel nào.
+   - Nếu phát hiện panel thiếu visualPrompt hoặc visualPrompt rỗng → phải tạo prompt đầy đủ theo quy tắc.
 
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
 CHỈ trả về các panel có lỗi cần sửa hoặc có thay đổi. Các panel đạt yêu cầu (Pass) thì KHÔNG cần đưa vào danh sách kết quả này.
 {
   "panelNumber": number,
   "visualPrompt": "string (đã được fix)",
-  "qaNotes": "string (ghi chú lỗi đã sửa)"
+  "qaNotes": "string (ghi chú lỗi đã sửa, bao gồm cả ghi chú COVERAGE nếu có)"
 }
 
 HỒ SƠ GỐC:
@@ -380,7 +408,8 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
                 analysis: { type: "string" },
                 atmosphere: { type: "string" },
                 posture: { type: "string" },
-                timeOfDay: { type: "string" }
+                timeOfDay: { type: "string" },
+                keyActions: { type: "array", items: { type: "string" } }
               }
             }
           },
