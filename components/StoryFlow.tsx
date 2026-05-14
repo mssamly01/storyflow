@@ -1166,6 +1166,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     switch (stage) {
       case ProductionStage.ANALYSIS:
+        if (Array.isArray(parsed)) {
+          parsed = resolveOriginalText(parsed, inputData.script);
+        }
         return (
           <div className="space-y-6">
             {Array.isArray(parsed) ? (
@@ -1295,7 +1298,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                         </div>
                       ) : (
                         <div className="space-y-4">
-                          <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || beat}</p>
+                          <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || (typeof beat === 'string' ? beat : '')}</p>
                           {beat.analysis && (
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                               <p className="text-slate-500 text-xs leading-relaxed">
