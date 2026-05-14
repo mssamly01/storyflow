@@ -66,14 +66,13 @@ export function normalizeEngineerPrompts(raw: unknown): EngineerPrompt[] {
   return getItems(raw, ["engineerPrompts", "prompts", "panels", "results"]).map((item, index) => {
     const visualPrompt = item.visualPrompt ?? item.visual_prompt ?? "";
     const legacyNegativePrompt = item.negativePrompt ?? item.negative_prompt ?? "";
+    const panelNumber = asNumber(item.panelNumber ?? item.panel_number, index + 1);
 
     return {
-      panelNumber: asNumber(item.panelNumber ?? item.panel_number, index + 1),
-      panelId: item.panelId ?? item.panel_id,
-      beatId: asNumber(item.beatId ?? item.beat_id, 0) || undefined,
+      panelNumber,
+      panelId: String(item.panelId ?? item.panel_id ?? `panel_${String(panelNumber).padStart(3, "0")}`),
+      beatId: asNumber(item.beatId ?? item.beat_id, panelNumber),
       visualPrompt: ensureVisualPromptHasNegativePrompt(visualPrompt, legacyNegativePrompt),
-      notes: item.notes,
-      sourceUsage: item.sourceUsage ?? item.source_usage,
       meta: item.meta
     };
   });
@@ -176,8 +175,7 @@ export function buildFinalResultPanel(params: {
   const prompt = findEngineerPromptForPanel(panel, engineerPrompts);
   const qa = findQAResultForPanel(panel, qaResults);
   const finalVisualPrompt = ensureVisualPromptHasNegativePrompt(
-    qa?.visualPrompt || prompt?.visualPrompt || "",
-    prompt?.negativePrompt || prompt?.negative_prompt
+    qa?.visualPrompt || prompt?.visualPrompt || ""
   );
   const qaStatus = qa?.status || "unchecked";
   const qaIssues = qa?.issues || [];

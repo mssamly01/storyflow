@@ -167,20 +167,9 @@ export interface StoryboardPanel {
 export interface EngineerPrompt {
   meta?: EditableMeta;
   panelNumber?: number;
-  panelId?: string;
-  beatId?: number;
+  panelId: string;
+  beatId: number;
   visualPrompt: string;
-  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
-  negativePrompt?: string;
-  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
-  negative_prompt?: string;
-  notes?: string;
-  timeOfDay?: string;
-  sourceUsage?: {
-    usedBeatId?: number;
-    usedLocationId?: string;
-    usedCharacterIds?: string[];
-  };
 }
 
 export interface QAResult {

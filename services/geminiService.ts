@@ -1,4 +1,4 @@
-
+﻿
 import { GoogleGenAI, Part } from "@google/genai";
 import { getConfig } from "./configService";
 import { mapLocationIdsToBeats } from "./locationContinuityService";
@@ -416,7 +416,12 @@ SOURCE-OF-TRUTH RULES:
 OUTPUT RULES:
 - Return ONLY valid JSON. No markdown. No commentary.
 - Output may be a JSON array or an object with "engineerPrompts".
-- Each item must only contain panelNumber, panelId, beatId, visualPrompt, and optional sourceUsage.
+- Each item must only contain panelNumber, panelId, beatId, and visualPrompt.
+- All source linking is handled by the app through beatId.
+- Do NOT output sourceUsage.
+- Do NOT output usedBeatId.
+- Do NOT output usedLocationId.
+- Do NOT output usedCharacterIds.
 - Never return a negativePrompt field.
 - Never return a negative_prompt field.
 - visualPrompt must include "Negative prompt:" at the end.
@@ -428,12 +433,7 @@ REQUIRED JSON SHAPE:
       "panelNumber": 1,
       "panelId": "panel_001",
       "beatId": 1,
-      "visualPrompt": "string ending with Negative prompt:",
-      "sourceUsage": {
-        "usedBeatId": 1,
-        "usedLocationId": "loc_001",
-        "usedCharacterIds": ["char_001"]
-      }
+      "visualPrompt": "string ending with Negative prompt:"
     }
   ]
 }
@@ -888,20 +888,9 @@ export const engineerPrompts = async (storyboard: string, charLocAnalysis: strin
                 panelNumber: { type: "integer" },
                 panelId: { type: "string" },
                 beatId: { type: "integer" },
-                visualPrompt: { type: "string" },
-                sourceUsage: {
-                  type: "object",
-                  properties: {
-                    usedBeatId: { type: "integer" },
-                    usedLocationId: { type: "string" },
-                    usedCharacterIds: {
-                      type: "array",
-                      items: { type: "string" }
-                    }
-                  }
-                }
+                visualPrompt: { type: "string" }
               },
-              required: ["panelNumber", "visualPrompt"]
+              required: ["panelNumber", "panelId", "beatId", "visualPrompt"]
             }
           }
         },
