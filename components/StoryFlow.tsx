@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ProductionStage, ScriptData, ProductionData } from '../types';
 import * as gemini from '../services/geminiService';
+import { buildCharacterReferencePrompt, buildLocationReferencePrompt } from '../services/promptBuilder';
 import { 
   FileText, 
   BarChart2, 
@@ -390,7 +391,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
           lastChapterContext = `
 CHƯƠNG TRƯỚC ĐÓ (Chương ${lastProject.inputData.chapter}):
 - Kết thúc tại thời điểm: ${lastBeat?.timeOfDay || 'Không rõ'}
-- Bối cảnh cuối: ${lastBeat?.analysis || 'Không rõ'}
+- Bối cảnh cuối: ${lastBeat?.actionAnalysis || lastBeat?.analysis || 'Không rõ'}
 - Không khí cuối: ${lastBeat?.atmosphere || 'Không rõ'}
 - TRANG PHỤC CUỐI CÙNG CỦA NHÂN VẬT (LAST KNOWN OUTFITS):
 ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outfit}`).join('\n')}
@@ -459,7 +460,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
-      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '');
+      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '');
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
@@ -613,7 +614,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       const beats = JSON.parse(production.analysis);
       const newBeat = {
         originalText: "Nội dung văn bản mới...",
-        analysis: "Mô tả bối cảnh và hành động mới...",
+        actionAnalysis: "Mô tả bối cảnh và hành động mới...",
         atmosphere: "Cảm xúc chủ đạo",
         posture: "Tư thế",
         timeOfDay: "Thời điểm"
@@ -1264,8 +1265,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                           <div>
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Bối cảnh & Hành động (Analysis)</label>
                             <textarea 
-                              value={editingBeatData.analysis || ''}
-                              onChange={(e) => setEditingBeatData({...editingBeatData, analysis: e.target.value})}
+                              value={editingBeatData.actionAnalysis || editingBeatData.analysis || ''}
+                              onChange={(e) => setEditingBeatData({...editingBeatData, actionAnalysis: e.target.value})}
                               className="w-full text-xs text-slate-500 leading-relaxed p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none min-h-[60px]"
                             />
                           </div>
@@ -1295,11 +1296,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       ) : (
                         <div className="space-y-4">
                           <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || beat}</p>
-                          {beat.analysis && (
+                          {(beat.actionAnalysis || beat.analysis) && (
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                               <p className="text-slate-500 text-xs leading-relaxed">
                                 <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Bối cảnh & Hành động</span>
-                                {beat.analysis}
+                                {beat.actionAnalysis || beat.analysis}
                               </p>
                             </div>
                           )}
@@ -1374,15 +1375,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <div className="text-slate-400 uppercase col-span-2 mt-1">Outfit</div>
                       <div className="text-slate-600 col-span-2 italic">{char.outfit || 'N/A'}</div>
                     </div>
-                    {char.imagePrompt && (
+                    {(() => {
+                      const prompt = buildCharacterReferencePrompt(char);
+                      return prompt ? (
                       <div className="mt-4 bg-slate-900 rounded-lg p-3 relative group/char">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Character Design Prompt</span>
-                          <button onClick={() => copyToClipboard(char.imagePrompt)} className="opacity-0 group-hover/char:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Generated Reference Prompt</span>
+                          <button onClick={() => copyToClipboard(prompt)} className="opacity-0 group-hover/char:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
                         </div>
-                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{char.imagePrompt}</p>
+                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{prompt}</p>
                       </div>
-                    )}
+                      ) : null;
+                    })()}
                   </div>
                 ))}
               </div>
@@ -1394,15 +1398,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                     <h4 className="font-bold text-emerald-600 mb-2">{loc.name}</h4>
                     <p className="text-[11px] text-slate-600 leading-relaxed mb-3">{loc.description || loc.details || JSON.stringify(loc)}</p>
-                    {loc.imagePrompt && (
+                    {(() => {
+                      const prompt = buildLocationReferencePrompt(loc, getSelectedStylePrompt());
+                      return prompt ? (
                       <div className="bg-slate-900 rounded-lg p-3 relative group/loc">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Establishing Shot Prompt</span>
-                          <button onClick={() => copyToClipboard(loc.imagePrompt)} className="opacity-0 group-hover/loc:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
+                          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Generated Reference Prompt</span>
+                          <button onClick={() => copyToClipboard(prompt)} className="opacity-0 group-hover/loc:opacity-100 transition-opacity text-white/50 hover:text-white"><Copy className="w-2.5 h-2.5" /></button>
                         </div>
-                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{loc.imagePrompt}</p>
+                        <p className="text-[10px] font-mono text-indigo-100 leading-tight">{prompt}</p>
                       </div>
-                    )}
+                      ) : null;
+                    })()}
                   </div>
                 ))}
               </div>
@@ -1425,9 +1432,17 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                     <p className="text-xs text-slate-600 italic">{panel.originalText}</p>
                   </div>
                   <div>
-                    <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Description</h4>
-                    <p className="text-sm text-slate-800 leading-relaxed">{panel.description}</p>
+                    <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Visible Action</h4>
+                    <p className="text-sm text-slate-800 leading-relaxed">{panel.actionInFrame || panel.description}</p>
                   </div>
+                  {(panel.cameraAngle || panel.framing || panel.composition || panel.lighting) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                      {panel.cameraAngle && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Camera</span>{panel.cameraAngle}</div>}
+                      {panel.framing && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Framing</span>{panel.framing}</div>}
+                      {panel.composition && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Composition</span>{panel.composition}</div>}
+                      {panel.lighting && <div className="bg-slate-50 rounded-xl p-3"><span className="block text-slate-400 uppercase font-black mb-1">Lighting</span>{panel.lighting}</div>}
+                    </div>
+                  )}
                 </div>
               </div>
             )) : <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>}

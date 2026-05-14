@@ -48,12 +48,10 @@ QUY TẮC SỬ DỤNG THƯ VIỆN (MASTER LIBRARY RULES - CRITICAL):
        - **LƯU Ý:** TUYỆT ĐỐI KHÔNG tạo outfit thứ 3 cho cùng một bối cảnh trừ khi văn bản tiểu thuyết có mô tả cực kỳ cụ thể về một bộ đồ mới hoàn toàn.
        - Nếu trang phục mới **GIỐNG HỆT** một trang phục đã có trong bối cảnh đó: **KHÔNG** tạo thêm entry mới. Hãy sử dụng lại.
        - **Cập nhật Profile**: Khi thêm outfit, hãy ghi chú rõ bối cảnh (Ví dụ: "Outfit 1 (Work): [Mô tả]", "Outfit 2 (Home): [Mô tả]").
-     - **Image Prompt (Current Chapter Outfits ONLY)**: Trong trường \`imagePrompt\`, bạn PHẢI bao gồm TOÀN BỘ các trang phục mà nhân vật mặc trong CHƯƠNG HIỆN TẠI này, theo đúng thứ tự xuất hiện (Ví dụ: "Outfit 1: [Mô tả], Outfit 2: [Mô tả]"). 
-       - **LƯU Ý QUAN TRỌNG**: TUYỆT ĐỐI KHÔNG liệt kê các trang phục từ các chương trước (trong Master Library) vào đây nếu chúng không xuất hiện trong chương hiện tại. Mục tiêu là tạo bản thiết kế chỉ dành riêng cho chương này.
-       - **ĐỐI CHIẾU THỨ TỰ OUTFIT**: Đảm bảo số thứ tự Outfit trong \`imagePrompt\` khớp với logic trong phần \`outfit\` của Profile. 
+     - **Profile sạch, không prompt dựng sẵn:** KHÔNG tạo bất kỳ trường prompt dựng sẵn nào cho nhân vật. Chỉ cập nhật các trường profile nguyên tử như face, hair, eyes, outfit, continuityNotes. App sẽ tự build prompt tham chiếu từ profile này.
 2. **KẾ THỪA & CẬP NHẬT (LOCATIONS):**
    - Nếu địa điểm đã tồn tại:
-     - **Giữ nguyên** \`name\`, \`description\` và \`imagePrompt\`.
+     - **Giữ nguyên** \`name\` và \`description\`. KHÔNG tạo hoặc kế thừa bất kỳ trường prompt dựng sẵn nào; app sẽ tự build prompt địa điểm khi cần.
      - **Cập nhật**: Nếu bối cảnh có sự thay đổi (ví dụ: bị phá hủy, được trang trí lại), hãy cập nhật mô tả hoặc tạo profile mới với hậu tố trạng thái (ví dụ: "Tên Địa Điểm (Phá hủy)").
 3. **THỰC THỂ MỚI:** Nếu xuất hiện nhân vật hoặc địa điểm mới hoàn toàn, hãy tạo profile mới theo quy tắc bên dưới.
 ` : ''}
@@ -64,7 +62,8 @@ ${style}
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
 
 1. **analysis (Phân tích nhịp truyện):** 
-   - Trả về một mảng các đối tượng: [{ "originalText": "...", "analysis": "...", "atmosphere": "...", "posture": "...", "timeOfDay": "..." }]
+   - Trả về một mảng các đối tượng: [{ "beatId": 1, "originalText": "...", "actionAnalysis": "...", "charactersInvolved": ["..."], "locationName": "...", "interaction": "...", "posture": "...", "props": ["..."], "atmosphere": "...", "timeOfDay": "..." }]
+   - **ANTI-DUPLICATION:** \`actionAnalysis\` chỉ mô tả chuyện gì xảy ra. KHÔNG lặp lại posture/timeOfDay/atmosphere nếu các thông tin đó đã nằm trong field riêng. KHÔNG mô tả camera, framing, composition ở phase này.
    - Chia TOÀN BỘ văn bản thành các nhịp truyện (beats) liên tục, KHÔNG BỎ SÓT bất kỳ nội dung nào.
    - **QUY TẮC CẮT CẢNH (SCENE-CUTTING RULES - CRITICAL):**
      - **Giới hạn độ dài:** Lý tưởng 40-50 từ/Beat. Giữ trọn vẹn câu văn, KHÔNG bao giờ cắt ngang câu.
@@ -110,11 +109,9 @@ YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
      - \`hair\`: Kiểu tóc và màu sắc (Tiếng Anh).
      - \`eyes\`: Đặc điểm đôi mắt (Tiếng Anh).
      - \`outfit\`: Trang phục (Theo quy tắc bên dưới).
-     - \`imagePrompt\`: Prompt tạo ảnh nhân vật (Tiếng Anh, theo quy tắc bên dưới).
    - **CẤU TRÚC JSON ĐỊA ĐIỂM:** Mỗi địa điểm trong mảng \`locations\` phải có:
      - \`name\`: Tên địa điểm.
      - \`description\`: Mô tả chi tiết (Tiếng Anh).
-     - \`imagePrompt\`: Prompt Establishing Shot (Tiếng Anh).
    
    **QUY TẮC CHI TIẾT NHÂN VẬT (CHARACTERS):**
    - **Thư viện:** Kiểm tra kỹ Master Library (nếu có thông tin từ trước). Nếu nhân vật đã tồn tại, COPY LẠI Profile cũ.
@@ -145,7 +142,7 @@ YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
      - Nếu địa điểm ĐÃ CÓ nhưng trạng thái thị giác thay đổi đáng kể trong chương này (Ví dụ: "Messy Room" -> "Cleaned Room", "Intact Building" -> "Ruined Building"), hãy tạo một **PROFILE MỚI** với tên kèm hậu tố trạng thái (Ví dụ: "Tên Địa Điểm (Trạng thái)").
      - Ví dụ: \`My Bedroom (Cleaned)\`, \`CitySquare (Ruined)\`.
      - **Description:** Mô tả trạng thái hiện tại chi tiết bằng TIẾNG ANH (Kiến trúc, Vật liệu, Ánh sáng, Không khí).
-     - **imagePrompt:** Phải bắt đầu bằng "${style}", sau đó mô tả một Establishing Shot (khung hình thiết lập) cho địa điểm này bằng TIẾNG ANH.
+     - **Derived prompt:** Không trả về prompt dựng sẵn cho địa điểm. App sẽ tự tạo establishing prompt từ profile địa điểm.
 
 TIỂU THUYẾT:
 ${script}
@@ -155,10 +152,10 @@ export const getStoryboardPrompt = (analysis: string, charLocAnalysis: string) =
 Bạn là chuyên gia họa sĩ minh họa và đạo diễn hình ảnh. Dựa trên kết quả phân tích nội dung và hồ sơ nhân vật/bối cảnh, hãy phác thảo storyboard chi tiết.
 
 YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
-- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "originalText": "...", "description": "...", "timeOfDay": "..." }]
+- Trả về một mảng các đối tượng: [{ "panelNumber": 1, "beatId": 1, "originalText": "...", "shotType": "...", "cameraAngle": "...", "framing": "...", "composition": "...", "lighting": "...", "visibleCharacters": ["..."], "locationName": "...", "actionInFrame": "...", "continuityNotes": "...", "timeOfDay": "..." }]
 - Tạo danh sách các khung hình tương ứng với từng Beat trong bản phân tích.
 - Giá trị "timeOfDay" phải được lấy chính xác từ phần "PHÂN TÍCH NHỊP TRUYỆN" bên dưới.
-- Mô tả chi tiết: Bố cục, Ánh sáng, Hành động.
+- **ANTI-DUPLICATION:** Không lặp lại full profile nhân vật/địa điểm. Không viết final image prompt. \`actionInFrame\` chỉ mô tả hành động nhìn thấy trong panel; camera/framing/composition/lighting nằm ở field riêng.
 
 PHÂN TÍCH NHỊP TRUYỆN:
 ${analysis}
@@ -376,12 +373,24 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
             items: {
               type: "object",
               properties: {
+                beatId: { type: "integer" },
                 originalText: { type: "string" },
-                analysis: { type: "string" },
-                atmosphere: { type: "string" },
+                actionAnalysis: { type: "string" },
+                charactersInvolved: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                locationName: { type: "string" },
+                interaction: { type: "string" },
                 posture: { type: "string" },
+                props: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                atmosphere: { type: "string" },
                 timeOfDay: { type: "string" }
-              }
+              },
+              required: ["originalText", "actionAnalysis", "posture", "atmosphere", "timeOfDay"]
             }
           },
           characterLocationAnalysis: {
@@ -399,10 +408,15 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
                     face: { type: "string" },
                     hair: { type: "string" },
                     eyes: { type: "string" },
+                    bodyType: { type: "string" },
+                    signatureFeatures: {
+                      type: "array",
+                      items: { type: "string" }
+                    },
                     outfit: { type: "string" },
-                    imagePrompt: { type: "string" }
+                    continuityNotes: { type: "string" }
                   },
-                  required: ["name", "age", "height", "gender", "face", "hair", "eyes", "outfit", "imagePrompt"]
+                  required: ["name", "age", "height", "gender", "face", "hair", "eyes", "outfit"]
                 }
               },
               locations: {
@@ -412,9 +426,15 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
                   properties: {
                     name: { type: "string" },
                     description: { type: "string" },
-                    imagePrompt: { type: "string" }
+                    keyObjects: {
+                      type: "array",
+                      items: { type: "string" }
+                    },
+                    lightingDefault: { type: "string" },
+                    atmosphereDefault: { type: "string" },
+                    continuityNotes: { type: "string" }
                   },
-                  required: ["name", "description", "imagePrompt"]
+                  required: ["name", "description"]
                 }
               }
             }
@@ -440,11 +460,23 @@ export const createStoryboard = async (analysis: string, charLocAnalysis: string
           type: "object",
           properties: {
             panelNumber: { type: "integer" },
+            beatId: { type: "integer" },
             originalText: { type: "string" },
-            description: { type: "string" },
+            shotType: { type: "string" },
+            cameraAngle: { type: "string" },
+            framing: { type: "string" },
+            composition: { type: "string" },
+            lighting: { type: "string" },
+            visibleCharacters: {
+              type: "array",
+              items: { type: "string" }
+            },
+            locationName: { type: "string" },
+            actionInFrame: { type: "string" },
+            continuityNotes: { type: "string" },
             timeOfDay: { type: "string" }
           },
-          required: ["panelNumber", "originalText", "description", "timeOfDay"]
+          required: ["panelNumber", "originalText", "actionInFrame", "timeOfDay"]
         }
       } as any
     }
