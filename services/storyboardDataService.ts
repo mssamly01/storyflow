@@ -1,4 +1,5 @@
 import type { StoryBeat, StoryboardPanel } from "../types";
+import { getPanelSourceBundle } from "./sourceOfTruthService";
 
 export function findBeatForPanel(
   panel: StoryboardPanel,
@@ -11,26 +12,12 @@ export function getPanelSourceFields(
   panel: StoryboardPanel,
   beats: StoryBeat[]
 ) {
-  const beat = findBeatForPanel(panel, beats);
-  const visibleCharacters = beat?.characters
-    || beat?.charactersInvolved
-    || panel.visibleCharacters
-    || [];
+  const bundle = getPanelSourceBundle(panel, beats);
+  const source = bundle.sourceFields;
 
   return {
-    originalText: beat?.originalText ?? panel.originalText ?? "",
-    summary: beat?.summary ?? "",
-    timeOfDay: beat?.timeOfDay ?? panel.timeOfDay ?? "Unknown",
-    location: beat?.location ?? beat?.locationName ?? panel.locationName ?? "Unknown",
-    locationId: beat?.locationId ?? panel.locationId,
-    locationState: beat?.locationState ?? panel.locationState,
-    visibleCharacters,
-    props: beat?.props ?? [],
-    action: beat?.action ?? beat?.actionAnalysis ?? panel.actionInFrame ?? panel.description ?? "",
-    interaction: beat?.interaction ?? "",
-    posture: beat?.posture ?? "",
-    atmosphere: beat?.atmosphere ?? "",
-    visualFocus: beat?.visualFocus ?? ""
+    ...source,
+    location: source.locationName
   };
 }
 

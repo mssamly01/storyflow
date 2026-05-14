@@ -6,7 +6,7 @@ import type {
   StoryboardPanel
 } from '../types';
 import { buildLocationContinuityBlock } from './locationContinuityService';
-import { getPanelSourceFields } from './storyboardDataService';
+import { getPanelSourceBundle } from './sourceOfTruthService';
 
 const compact = (parts: Array<string | undefined | null | false>) =>
   parts.filter(Boolean).join(', ');
@@ -77,28 +77,34 @@ export function buildFinalVisualPrompt(params: {
   beats?: StoryBeat[];
 }): string {
   const { style, beat, panel, characters, location, locations, beats } = params;
-  const source = getPanelSourceFields(panel, beats || [beat as StoryBeat]);
+  const allBeats = beats || [beat as StoryBeat];
+  const allLocations = locations || (location ? [location] : []);
+  const bundle = getPanelSourceBundle(panel, allBeats, characters, allLocations);
+  const source = bundle.sourceFields;
+  const effectiveLocation = location || bundle.location || undefined;
   const visibleNames = source.visibleCharacters;
-  const visibleCharacterPrompts = visibleNames
-    .map((name) => characters.find((character) => character.name === name))
-    .filter((character): character is CharacterProfile => Boolean(character))
+  const visibleCharacterPrompts = (bundle.characters.length
+    ? bundle.characters
+    : visibleNames
+      .map((name) => characters.find((character) => character.name === name || character.aliases?.includes(name)))
+      .filter((character): character is CharacterProfile => Boolean(character))
+  )
     .map(buildCharacterReferencePrompt);
-  const locationObjects = Array.isArray(location?.keyObjects) ? location?.keyObjects.join(', ') : '';
+  const locationObjects = Array.isArray(effectiveLocation?.keyObjects) ? effectiveLocation?.keyObjects.join(', ') : '';
   const props = Array.isArray(source.props) ? source.props.join(', ') : '';
-  const continuityLocations = locations || (location ? [location] : []);
   const locationContinuityBlock = buildLocationContinuityBlock({
     ...beat,
     beatId: beat.beatId || panel.beatId || panel.panelNumber,
-    location: source.location,
-    locationName: source.location,
+    location: source.locationName,
+    locationName: source.locationName,
     locationId: source.locationId,
     locationState: source.locationState
-  }, continuityLocations);
+  }, allLocations);
 
   return compact([
     style,
     `single vertical comic panel, panel ${panel.panelNumber}`,
-    location ? `location: ${location.name}, ${location.description || location.details || ''}` : '',
+    effectiveLocation ? `location: ${effectiveLocation.name}, ${effectiveLocation.description || effectiveLocation.details || ''}` : '',
     locationObjects ? `location key objects: ${locationObjects}` : '',
     locationContinuityBlock,
     source.atmosphere ? `atmosphere: ${source.atmosphere}` : '',

@@ -497,8 +497,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       case ProductionStage.STORYBOARD: 
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt, production.analysis || '');
-      case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
-      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '');
+      case ProductionStage.QA: return gemini.getQAPrompt(production.prompts || '', production.characterLocationAnalysis || '', stylePrompt, production.storyboard || '', production.analysis || '');
+      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '', production.analysis || '');
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
@@ -740,14 +740,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt(), production.analysis || '');
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
-        result = await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        result = await gemini.runQA(
+          production.prompts || '',
+          production.characterLocationAnalysis || '',
+          getSelectedStylePrompt(),
+          production.storyboard || '',
+          production.analysis || ''
+        );
         targetStage = ProductionStage.QA;
       } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
         result = await gemini.generateFinalResult(
           production.storyboard || '', 
           production.prompts || '', 
           production.qaReport || '',
-          production.characterLocationAnalysis || ''
+          production.characterLocationAnalysis || '',
+          production.analysis || ''
         );
         targetStage = ProductionStage.FINAL;
       }

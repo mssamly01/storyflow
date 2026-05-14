@@ -303,6 +303,7 @@ Create visual direction for each approved beat.
 
 You must NOT re-analyze story content.
 You must NOT rewrite originalText.
+You must NOT change timeOfDay.
 You must NOT change location.
 You must NOT change visible characters.
 You must NOT change props, action, posture, interaction, atmosphere, or visualFocus.
@@ -352,6 +353,8 @@ Required JSON schema:
 
 DO NOT OUTPUT these fields:
 - originalText
+- summary
+- timeOfDay
 - location
 - locationId
 - locationState
@@ -390,180 +393,172 @@ ${artStyleDescription || "No specific style selected."}
 `;
 };
 
-export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string, _analysis = "") => `
-Bạn là chuyên gia Prompt Engineering cấp cao. Hãy chuyển đổi Storyboard thành các prompt AI Image Generation (16:9) tuân thủ các quy tắc "NHẤT QUÁN CỰC ĐOAN".
+export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string, analysis = "") => `
+You are an expert image prompt engineer for an illustrated story pipeline.
 
-DỮ LIỆU:
-STORYBOARD: ${storyboard}
+Your ONLY task:
+Build final image-generation prompts by combining approved source data.
 
-PHONG CÁCH HÌNH ẢNH (VISUAL STYLE):
+SOURCE OF TRUTH RULES:
+- Do not re-analyze the story.
+- Do not infer or change location, characters, props, action, interaction, posture, atmosphere, or visualFocus.
+- Use APPROVED BEATS as the source of truth for story fields.
+- Use CHARACTER + LOCATION LIBRARY as the source of truth for identity and continuity.
+- Use STORYBOARD VISUAL DIRECTION only for camera, composition, blocking, lighting direction, depth, and visual emphasis.
+- Do not output source fields as separate fields unless the schema below requires them.
+- Do not output timeOfDay as a separate field.
+
+Return ONLY a valid JSON array. No markdown. No commentary.
+
+Required JSON schema:
+[
+  {
+    "panelNumber": 1,
+    "panelId": "panel_001",
+    "beatId": 1,
+    "visualPrompt": "string",
+    "negativePrompt": "text, speech bubbles, watermark, low quality",
+    "sourceUsage": {
+      "usedBeatId": 1,
+      "usedLocationId": "loc_001",
+      "usedCharacterIds": ["char_001"]
+    }
+  }
+]
+
+VISUAL PROMPT COMPOSITION:
+For each storyboard panel:
+1. Find the matching approved beat by panel.beatId.
+2. Reuse beat originalText, location, locationId, locationState, characters, props, action, interaction, posture, atmosphere, and visualFocus without changing their meaning.
+3. Reuse character profiles for identity, outfit, accessories, props, color palette, and continuity notes.
+4. Reuse location profiles for description, layout, key objects, lighting, color palette, continuity notes, and base state.
+5. Reuse storyboard visual direction only for shotType, cameraAngle, cameraDistance, lensFeel, composition, foreground, midground, background, characterBlocking, lightingDirection, depthAndPerspective, visualEmphasis, and cameraNotes.
+6. Produce one self-contained visualPrompt per panel.
+
+STYLE:
 ${style}
 
-QUY TẮC CẤU TRÚC PROMPT (PHẢI TUÂN THỦ THỨ TỰ):
-1. **STYLE FIRST (BẮT BUỘC):** Luôn bắt đầu prompt bằng tên phong cách kèm mô tả chi tiết của nó: "${style}".
-2. **LOCATION (BẮT BUỘC - CRITICAL FOR CONSISTENCY):** Tiếp theo là: "Location: [Tên địa điểm] ([Mô tả chi tiết địa điểm từ profile]), [Mô tả vật liệu/ánh sáng từ storyboard/profile]."
-   - **LÝ DO:** TUYỆT ĐỐI KHÔNG được chỉ nhắc tên địa điểm đơn độc. Nếu chỉ ghi tên, AI sẽ tự tạo ra bối cảnh ngẫu nhiên (hallucination), dẫn đến việc địa điểm không đồng nhất giữa các PANEL.
-   - **YÊU CẦU:** Phải sao chép đầy đủ mô tả từ Profile và Storyboard vào mỗi prompt.
-   - **VÍ DỤ ĐÚNG:** "Location: Finance Department Office (A spacious modern office with glass walls, rows of white desks, and blue ergonomic chairs), night time with moonlight through windows mixed with flickering overhead fluorescent lights."
-3. **SCENE & CHARACTERS (MANDATORY POSTURE & INTERACTION):** Sau đó là: "Scene: [Góc máy/Camera Angle], [Mô tả chi tiết TƯ THẾ (POSTURE), HÀNH ĐỘNG và TƯƠNG TÁC của từng nhân vật]. 
-   - **BẮT BUỘC** mô tả tư thế (đứng, ngồi, nằm, quỳ, v.v.) ngay cả khi nó không thay đổi so với panel trước.
-   - **BẮT BUỘC** xác định rõ đối tượng tương tác (nhìn ai, nói với ai, chạm vào ai). Sử dụng tên nhân vật cụ thể.
-   - **ĐÁM ĐÔNG/NHÂN VẬT PHỤ:** Phải mô tả cụ thể hành động và hướng nhìn của họ đối với sự kiện chính.
-4. **GLOBAL CHARACTER DESCRIPTION (CHARACTERS MUST HAVE PROFILES - CRITICAL):** 
-   - **BẤT KỲ** nhân vật nào được nhắc đến trong prompt (kể cả nhân vật chính, phụ, phản diện, người qua đường, hay nhân vật ở tiền cảnh/hậu cảnh) đều **BẮT BUỘC** phải có mô tả Profile chi tiết kèm theo ngay sau tên.
-   - **LƯU Ý QUAN TRỌNG:** Quy tắc này áp dụng cho cả các nhân vật được ghi chú là **(off-screen)**. Dù không xuất hiện trên khung hình, việc mô tả đầy đủ giúp AI hiểu rõ ngữ cảnh và tương tác.
-   - **LÝ DO:** Nếu chỉ ghi tên nhân vật mà không có mô tả, AI sẽ tự động tạo ra ngoại hình ngẫu nhiên, làm mất tính nhất quán (hallucination).
-   - **BẮT BUỰC** áp dụng cho cả khi chỉ mô tả một bộ phận cơ thể (tay, chân, vai).
-   - Định dạng: "CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hair], Eyes: [eyes], [Posture: [tư thế hiện tại]], [Mô tả 01 Outfit phù hợp nhất])".
-   - **VÍ DỤ ĐÚNG:** "Police Officer (Male, 30, 180cm, Square face, ..., Posture: Standing upright, ...) enters the frame... Behind him, Chị Trương (Female, 35, 160cm, Round face, ..., Posture: Sitting on a chair, ...) looks smug... To the side, Vương Việt (Male, 28, 175cm, Sharp features, ..., Outfit 1: Black suit) (off-screen) is shouting."
-   - **OUTFIT SELECTION (STRICT & SEQUENTIAL):** Nếu hồ sơ nhân vật có nhiều Outfit, AI phải phân tích nội dung Panel và đối chiếu với thứ tự trong danh sách \`outfit\` để chọn ra trang phục chính xác nhất theo diễn biến truyện. CHỈ đưa mô tả của outfit đó vào prompt.
-   - **OUTFIT FIDELITY (TRUNG THỰC TUYỆT ĐỐI):**
-     - Khi chèn mô tả Outfit vào prompt, bạn PHẢI sao chép **NGUYÊN VĂN 100%** từng từ trong mô tả Outfit từ Profile.
-     - **CẤM** rút gọn, tóm tắt, hoặc lược bỏ bất kỳ chi tiết nào (ví dụ: không được bỏ "traditional-style", "velvet", "leggings").
-     - **VÍ DỤ SAI:** Profile: "Bright purple velvet traditional-style coat and black leggings" -> Prompt: "Bright purple coat". (SAI - Rút gọn).
-     - **VÍ DỤ ĐÚNG:** Profile: "Bright purple velvet traditional-style coat and black leggings" -> Prompt: "Bright purple velvet traditional-style coat and black leggings". (ĐÚNG - Nguyên văn).
-5. **CẤM DANH TỪ TẬP HỢP:** Tuyệt đối không dùng "The trio", "The group", "Both of them".
-6. **QUY TẮC GÓC MÁY & TƯƠNG TÁC (CAMERA ANGLES & INTERACTION - CRITICAL):** 
-   - Hội thoại dùng Close-up, Tương tác dùng Medium/OTS, Hành động dùng Wide.
-   - **QUY TẮC OTS & POV (OTS & POV RULES - CRITICAL):**
-     - Trong góc máy **Over-the-shoulder (OTS)** hoặc **POV**, nhân vật đóng vai trò là "điểm nhìn" (người có vai/lưng ở tiền cảnh) PHẢI được mô tả Profile đầy đủ. 
-     - **CẤM** chỉ ghi "from Character's perspective" mà không có mô tả ngoại hình của Character.
-     - **CẤU TRÚC ĐÚNG:** "Over-the-shoulder shot, foreground: [Character A Profile]'s shoulder and back of head, background: [Character B's Profile] [Action]...".
-     - Điều này đảm bảo AI biết được màu tóc, trang phục của người ở tiền cảnh để duy trì tính nhất quán.
-   - **TƯƠNG TÁC VẬT DỤNG (OBJECT INTERACTION):** Khi nhân vật tương tác với vật dụng (điện thoại, sách, gương, đồ vật), TUYỆT ĐỐI KHÔNG được chỉ mô tả vật dụng đó đơn độc. 
-   - **BẮT BUỘC** phải sử dụng góc máy **Over-the-shoulder (OTS)** hoặc **Point of View (POV)** để thấy tay/vai của nhân vật đang cầm/nhìn vật dụng đó. 
-   - Ví dụ: Thay vì "A phone screen", phải là "Over-the-shoulder shot, CharacterName's hand holding a phone, looking at the screen showing...". Điều này giúp duy trì sự hiện diện của nhân vật ngay cả khi tập trung vào chi tiết.
-   - **QUY TẮC PHẢN CHIẾU (REFLECTION RULES):** Khi mô tả sự phản chiếu của nhân vật hoặc biểu cảm lên màn hình điện thoại, tivi, hoặc cửa kính:
-     - BẮT BUỘC mô tả sự phản chiếu là **"faint reflection"** hoặc **"low opacity reflection"**.
-     - Phải đảm bảo nội dung chính trên màn hình hoặc bối cảnh phía sau kính vẫn rõ nét (Ví dụ: "faint reflection of CharacterName's worried face on the glowing phone screen showing chat messages").
-   - **HIỂN THỊ MÀN HÌNH GIÁN TIẾP (INDIRECT SCREEN VISUALIZATION - CRITICAL):**
-     - Khi góc máy quay từ phía sau thiết bị (nhìn thấy lưng điện thoại/máy tính) hoặc màn hình không hướng trực diện vào camera, nhưng nội dung trên màn hình là quan trọng:
-     - **HÀNH ĐỘNG:** Yêu cầu tạo một khung hình nhỏ (inset panel/bubble) hoặc bố cục chia đôi (split screen) để hiển thị rõ nội dung đó.
-     - **PROMPT:** Thêm từ khóa "with an inset close-up of the phone screen showing [Content]" hoặc "split screen: one side shows [Character holding phone], other side shows [Phone Screen Content]".
-     - **CẤM:** Tuyệt đối không để AI vẽ nội dung màn hình đè lên mặt lưng điện thoại hoặc lơ lửng trong không gian.
-7. **TÍNH LIÊN TỤC & VẬT THỂ BẤT BIẾN (OBJECT PERMANENCE & STATE CONTINUITY - CRITICAL):** 
-   - AI phải ghi nhớ vị trí, **TƯ THẾ (POSTURE - nằm, ngồi, đứng, quỳ)**, TRẠNG THÁI HÀNH ĐỘNG và **CÁC VẬT DỤNG ĐANG CẦM/SỬ DỤNG** của nhân vật từ các panel trước đó. 
-   - **QUY TẮC TƯ THẾ (POSTURE):** Nếu ở panel trước nhân vật đang nằm hoặc ngồi, và văn bản tiếp theo không mô tả hành động đứng dậy, thì ở panel sau nhân vật PHẢI tiếp tục ở tư thế đó. 
-   - **QUY TẮC VẬT DỤNG (PROPS):** Nếu ở panel trước nhân vật đang cầm một vật dụng (ví dụ: cái thùng, túi xách, vũ khí, điện thoại), thì ở các panel tiếp theo vật dụng đó PHẢI XUẤT HIỆN TRONG PROMPT cho đến khi có hành động rõ ràng là nhân vật đã đặt xuống hoặc làm mất nó. 
-   - Tuyệt đối không được bỏ quên các trạng thái này giữa các khung hình. (Ví dụ: Nếu Panel 1 đang nằm trên sofa thì Panel 2 dù chỉ mô tả "looking at phone" vẫn PHẢI thêm "while still lying on the sofa" vào prompt).
-8. **CẤM VĂN BẢN & BÓNG (STRICT):** 
-   - Tuyệt đối KHÔNG bao gồm lời thoại, văn bản, bong bóng chat (speech bubbles) trong prompt. 
-   - Hạn chế tối đa các mô tả về bóng đổ (shadows) quá mạnh làm mất chi tiết nhân vật. Thêm "no text, no speech bubbles, no shadows" vào cuối mỗi prompt.
+APPROVED BEATS:
+${analysis || "No approved beat data provided. Use storyboard legacy source fields only as fallback."}
 
-VÍ DỤ CẤU TRÚC:
-"${style}, Location: Living Room, wooden floor, warm sunset light. Scene: John (Male, 25, 180cm, ...) sitting on the sofa, holding a cup of coffee..."
+STORYBOARD VISUAL DIRECTION:
+${storyboard}
 
-YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
-Trả về một mảng các đối tượng, mỗi đối tượng tương ứng với một panel:
-{
-  "panelNumber": number,
-  "visualPrompt": "string (định dạng Style-First + Location-First)"
-}
-
-HỒ SƠ NHÂN VẬT & ĐỊA ĐIỂM:
+CHARACTER + LOCATION LIBRARY:
 ${charLocAnalysis}
 `;
 
-export const getQAPrompt = (data: string, charLocAnalysis: string, style: string) => `
-Bạn là QA Director kiểm định tính nhất quán hình ảnh và logic không gian.
+export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "") => `
+You are a QA checker for an illustrated story prompt pipeline.
 
-PHONG CÁCH HÌNH ẢNH (VISUAL STYLE) CẦN KIỂM TRA:
+Your ONLY task:
+Check whether generated image prompts preserve approved source data.
+
+SOURCE OF TRUTH RULES:
+- Do not rewrite approved source fields.
+- Do not create new story fields.
+- Do not change location, characters, props, action, interaction, posture, atmosphere, or visualFocus.
+- Use APPROVED BEATS as the source of truth for story fields.
+- Use CHARACTER + LOCATION LIBRARY as the source of truth for identity and continuity.
+- Use STORYBOARD VISUAL DIRECTION only for camera, composition, blocking, and visual direction.
+- Only report mismatches and suggested visualPrompt fixes.
+
+Return ONLY a valid JSON array. No markdown. No commentary.
+
+Required JSON schema:
+[
+  {
+    "panelNumber": 1,
+    "panelId": "panel_001",
+    "beatId": 1,
+    "visualPrompt": "string, only if a prompt patch is needed",
+    "qaNotes": "string"
+  }
+]
+
+CHECK FOR:
+- location mismatch or missing location continuity
+- unapproved characters or missing approved characters
+- character outfit / identity inconsistency
+- location layout / key object inconsistency
+- missing approved props
+- action, interaction, or posture contradiction
+- atmosphere or visualFocus contradiction
+- storyboard camera/composition not reflected
+- text, captions, subtitles, speech bubbles, watermark, or unsafe wording
+
+STYLE:
 ${style}
 
-KIỂM TRA CÁC LỖI SAU (ĐẶC BIỆT CHÚ TRỌNG TÍNH NHẤT QUÁN):
-1. Prompt có bắt đầu bằng phong cách "${style}" kèm mô tả đầy đủ không?
-2. Prompt có Location kèm theo đầy đủ mô tả chi tiết địa điểm (từ profile) và mô tả vật liệu/ánh sáng (từ storyboard) không?
-   - **KIỂM TRA LỖI:** Nếu chỉ thấy "Location: [Tên]" mà thiếu phần mô tả chi tiết trong ngoặc đơn hoặc thiếu mô tả ánh sáng/vật liệu -> **LỖI NGHIÊM TRỌNG**. AI sẽ tự vẽ bối cảnh sai lệch. 
-   - **HÀNH ĐỘNG:** Phải chèn đầy đủ mô tả từ Profile và Storyboard vào để đảm bảo tất cả các PANEL có bối cảnh giống hệt nhau.
-3. TẤT CẢ các nhân vật xuất hiện (kể cả nhân vật chính, phụ, phản diện, hay người qua đường, và ngay cả khi chỉ nhắc đến bộ phận cơ thể) đã có mô tả Profile chi tiết đi kèm ngay sau tên chưa? 
-   - **CẤM TUYỆT ĐỐI** việc chỉ để tên nhân vật mà không có mô tả hình thể và trang phục trong ngoặc đơn.
-   - **QUY TẮC OFF-SCREEN:** Ngay cả khi nhân vật được ghi chú là **(off-screen)**, họ vẫn BẮT BUỘC phải có Profile chi tiết đi kèm.
-   - **LÝ DO KIỂM TRA:** Nếu thiếu mô tả, AI sẽ tự vẽ ngẫu nhiên (hallucination) làm sai lệch nhân vật.
-   - **KIỂM TRA LỖI:** Nếu thấy "CharacterName" hoặc "CharacterName's [body part]" mà không có ngoặc đơn mô tả profile -> BẮT BUỘC sửa lại bằng cách chèn Profile từ thư viện vào.
-4. Có xuất hiện "The group" hay "The trio" không?
-5. Trang phục (Outfit) của nhân vật có được chọn đúng theo diễn biến truyện không? (Phải chọn đúng 1 bộ trang phục phù hợp nhất từ danh sách \`outfit\` dựa trên thứ tự xuất hiện trong nội dung).
-   - **TÍNH LIÊN TỤC GIỮA CÁC CHƯƠNG (CROSS-CHAPTER CONTINUITY):** Đặc biệt lưu ý nếu đây là phần tiếp nối của chương trước, nhân vật PHẢI mặc đúng bộ trang phục đã mặc ở cuối chương trước trừ khi có tình tiết thay đồ rõ ràng.
-   - **KIỂM TRA GIỚI HẠN OUTFIT (MAX 2 PER CONTEXT):** Đảm bảo trong cùng một bối cảnh (Ví dụ: Công sở) không xuất hiện quá 2 bộ đồ khác nhau. 
-   - **KIỂM TRA TÍNH LUÂN PHIÊN (ROTATION LOGIC):** Nếu qua ngày mới trong cùng bối cảnh, hãy kiểm tra xem outfit có được luân phiên A-B-A-B hợp lý không. TUYỆT ĐỐI không để nhân vật mặc bộ thứ 3 nếu không có mô tả thay đồ đặc biệt trong tiểu thuyết.
-   - **KIỂM TRA ĐỘ ĐẦY ĐỦ CỦA OUTFIT (OUTFIT COMPLETENESS CHECK):**
-     - So sánh mô tả Outfit trong prompt với mô tả gốc trong Profile.
-     - Nếu thấy prompt bị rút gọn, lược bỏ từ khóa quan trọng (Ví dụ: Bỏ "leggings", bỏ "velvet", bỏ "traditional-style") -> **LỖI**.
-     - **HÀNH ĐỘNG:** Sửa lại bằng cách sao chép đầy đủ mô tả từ Profile vào.
-6. **TÍNH NHẤT QUÁN VẬT DỤNG (PROP CONSISTENCY - CỰC KỲ QUAN TRỌNG):** 
-   - So sánh giữa các panel liên tiếp: Nếu panel trước nhân vật đang cầm/mang theo một vật dụng (thùng, túi, đạo cụ), hãy kiểm tra xem panel sau có còn mô tả vật dụng đó không?
-   - Nếu bị mất vật dụng mà không có lý do trong văn bản -> PHẢI THÊM LẠI vật dụng đó vào prompt.
-7. **SỰ HIỆN DIỆN CỦA NHÂN VẬT TRONG CẢNH CHI TIẾT (CHARACTER PRESENCE):**
-   - Kiểm tra các cảnh tập trung vào vật dụng (như nhìn điện thoại, xem tài liệu). Nếu prompt chỉ mô tả vật dụng mà quên mất nhân vật -> PHẢI yêu cầu sửa lại thành góc máy **Over-the-shoulder (OTS)** hoặc thêm mô tả tay/vai nhân vật đang tương tác.
-   - **KIỂM TRA OTS/POV (CRITICAL):** Nếu cameraAngle là OTS hoặc POV, hãy kiểm tra xem trong prompt đã có mô tả Profile của nhân vật ở tiền cảnh (foreground character) chưa?
-     - Nếu chỉ có "from [Name]'s perspective" mà thiếu Profile của [Name] ở tiền cảnh -> **LỖI NGHIÊM TRỌNG**. Phải sửa lại bằng cách thêm: "foreground: [Character Profile]'s shoulder and back of head".
-   - **KIỂM TRA PHẢN CHIẾU (REFLECTION CHECK):** Nếu có mô tả phản chiếu (reflection), phải đảm bảo có các từ khóa như "faint", "low opacity", hoặc "translucent" để không làm mờ nội dung chính của màn hình/kính.
-   - **KIỂM TRA HIỂN THỊ MÀN HÌNH (SCREEN VISUALIZATION CHECK):**
-     - Nếu prompt mô tả nội dung trên màn hình (điện thoại, máy tính) nhưng góc máy không nhìn thấy màn hình (ví dụ: quay lưng, góc nghiêng khuất):
-     - **HÀNH ĐỘNG:** Kiểm tra xem đã có yêu cầu "inset panel", "close-up bubble" hoặc "split screen" chưa. Nếu chưa -> **LỖI**. Phải thêm vào để tránh lỗi AI vẽ nội dung lên lưng thiết bị.
-8. **TÍNH NHẤT QUÁN TƯ THẾ (POSTURE CONSISTENCY):** 
-   - Kiểm tra tư thế của nhân vật giữa các panel liên tiếp. 
-   - Nếu panel trước nhân vật đang ở một tư thế (nằm, ngồi, quỳ) và văn bản không có hành động thay đổi tư thế (đứng dậy, đi lại) -> PHẢI đảm bảo panel sau vẫn mô tả nhân vật ở tư thế đó, ngay cả trong các cảnh cận cảnh (Close-up).
-   - Ví dụ: Nếu nhân vật đang nằm, cảnh cận cảnh điện thoại phải mô tả "phone held by a character lying down".
-9. Kiểm tra văn bản/lời thoại: Prompt có chứa từ khóa về "speech bubbles", "text", "dialogue" không? (Phải loại bỏ).
-10. **KIỂM TRA TỪ CẤM & NHẠY CẢM (CONTENT SAFETY - CRITICAL):**
-   - Kiểm tra các từ ngữ có thể bị các công cụ tạo ảnh (như Midjourney, DALL-E) chặn do vi phạm chính sách (bạo lực, máu me, nhạy cảm, bộ phận cơ thể, từ lóng...).
-   - **HÀNH ĐỘNG:** Thay thế các từ này bằng các từ ngữ nghệ thuật, ẩn dụ hoặc mô tả gián tiếp nhưng vẫn giữ nguyên ý nghĩa của khung hình.
-   - **VÍ DỤ:** 
-     - Thay "blood" bằng "crimson liquid" hoặc "dark red splashes".
-     - Thay "killing/murder" bằng "defeated/neutralized".
-     - Thay các từ nhạy cảm về cơ thể bằng các mô tả về trang phục hoặc ánh sáng che khuất.
-     - Thay "gun/weapon" (nếu bị chặn) bằng "metallic tool" hoặc mô tả hình dáng cụ thể.
-11. Vị trí nhân vật có bị thay đổi vô lý giữa các screen không?
+APPROVED BEATS:
+${analysis || "No approved beat data provided."}
 
-YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ JSON):
-CHỈ trả về các panel có lỗi cần sửa hoặc có thay đổi. Các panel đạt yêu cầu (Pass) thì KHÔNG cần đưa vào danh sách kết quả này.
-{
-  "panelNumber": number,
-  "visualPrompt": "string (đã được fix)",
-  "qaNotes": "string (ghi chú lỗi đã sửa)"
-}
+STORYBOARD VISUAL DIRECTION:
+${storyboard || "No storyboard data provided."}
 
-HỒ SƠ GỐC:
+CHARACTER + LOCATION LIBRARY:
 ${charLocAnalysis}
 
-PROMPTS CẦN KIỂM TRA (JSON):
+GENERATED PROMPTS TO CHECK:
 ${data}
 `;
 
-export const getFinalResultPrompt = (storyboard: string, prompts: string, qaReport: string, charLocAnalysis: string) => `
-Bạn là Production Manager cho dự án minh họa tiểu thuyết. Tổng hợp dữ liệu thành JSON. 
+export const getFinalResultPrompt = (storyboard: string, prompts: string, qaReport: string, charLocAnalysis: string, analysis = "") => `
+You are assembling the final approved output for an illustrated story pipeline.
 
-QUY TẮC LẤY VISUAL PROMPT:
-1. Bản QA chỉ chứa các panel đã được sửa lỗi hoặc thay đổi.
-2. NẾU panelNumber có trong bản QA, PHẢI lấy visualPrompt từ bản QA đó.
-3. NẾU panelNumber KHÔNG có trong bản QA, hãy lấy visualPrompt từ bản PROMPTS gốc.
-4. Đảm bảo kết quả cuối cùng có đầy đủ tất cả các panel từ 1 đến hết.
+Your ONLY task:
+Create a clean final JSON by linking approved sources together.
 
-YÊU CẦU CẤU TRÚC JSON ĐẦU RA:
+SOURCE OF TRUTH RULES:
+- Do not re-analyze the story.
+- Do not rewrite originalText.
+- Do not infer new location or characters.
+- Do not modify visual prompts except applying explicit QA patches when provided.
+- Beat Analysis is the source of truth for story fields.
+- Character Library is the source of truth for character identity and continuity.
+- Location Library is the source of truth for location identity and continuity.
+- Storyboard is the source of truth only for camera and composition.
+- Engineer Prompts are the source of truth for visualPrompt.
+- QA is the source of truth for fixes and notes.
+
+Return ONLY valid JSON. No markdown. No commentary.
+
+Required JSON schema:
 {
-  "characterName": ["tong_mat", "vuong_viet", ...], // Danh sách tên nhân vật dạng snake_case, không dấu (ví dụ: "Tống Mật" thành "tong_mat") từ HỒ SƠ NHÂN VẬT bên dưới.
-  "panels": [ // Mảng chứa thông tin các khung hình
+  "characterName": ["character_snake_case"],
+  "panels": [
     {
-      "panelNumber": Số thứ tự khung hình,
-      "shotName": "Tiêu đề ngắn gọn cho khung hình",
-      "originalText": "Câu văn hoặc đoạn văn gốc được minh họa",
-      "cameraAngle": "Góc máy",
-      "framing": "Bố cục khung hình",
-      "subject": "Chủ thể chính",
-      "action": "Hành động diễn ra",
-      "location_cues": "Dấu hiệu bối cảnh",
-      "lighting": "Ánh sáng (theo quy tắc [Global Light] mixed with [Accent Light])",
-      "visualPrompt": "Prompt hình ảnh cuối cùng",
-      "negative_prompt": "text, speech bubbles, watermark, low quality, shadows, blurry"
+      "panelNumber": 1,
+      "beatId": 1,
+      "shotName": "short panel title",
+      "originalText": "copy from approved beat source",
+      "cameraAngle": "from storyboard visual direction",
+      "framing": "from storyboard visual direction",
+      "subject": "main approved subject",
+      "action": "copy from approved beat source",
+      "location_cues": "copy/reuse approved location source",
+      "lighting": "reuse approved location/storyboard lighting direction",
+      "visualPrompt": "final approved prompt",
+      "negative_prompt": "text, speech bubbles, watermark, low quality, blurry",
+      "qaNotes": "QA notes if any"
     }
   ]
 }
 
-DỮ LIỆU:
-HỒ SƠ NHÂN VẬT: ${charLocAnalysis}
-STORYBOARD: ${storyboard}
-PROMPTS: ${prompts}
-QA (Chỉ gồm các bản sửa lỗi): ${qaReport}
+APPROVED BEATS:
+${analysis || "No approved beat data provided. Use storyboard legacy fields only as fallback."}
+
+CHARACTER + LOCATION LIBRARY:
+${charLocAnalysis}
+
+STORYBOARD VISUAL DIRECTION:
+${storyboard}
+
+ENGINEER PROMPTS:
+${prompts}
+
+QA PATCHES / NOTES:
+${qaReport}
 `;
 
 // --- API SERVICES ---
@@ -833,7 +828,21 @@ export const engineerPrompts = async (storyboard: string, charLocAnalysis: strin
           type: "object",
           properties: {
             panelNumber: { type: "integer" },
-            visualPrompt: { type: "string" }
+            panelId: { type: "string" },
+            beatId: { type: "integer" },
+            visualPrompt: { type: "string" },
+            negativePrompt: { type: "string" },
+            sourceUsage: {
+              type: "object",
+              properties: {
+                usedBeatId: { type: "integer" },
+                usedLocationId: { type: "string" },
+                usedCharacterIds: {
+                  type: "array",
+                  items: { type: "string" }
+                }
+              }
+            }
           },
           required: ["panelNumber", "visualPrompt"]
         }
@@ -843,11 +852,17 @@ export const engineerPrompts = async (storyboard: string, charLocAnalysis: strin
   return response.text;
 };
 
-export const runQA = async (data: string, charLocAnalysis: string, style: string) => {
+export const runQA = async (
+  data: string,
+  charLocAnalysis: string,
+  style: string,
+  storyboard = "",
+  analysis = ""
+) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getQAPrompt(data, charLocAnalysis, style),
+    contents: getQAPrompt(data, charLocAnalysis, style, storyboard, analysis),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -856,6 +871,8 @@ export const runQA = async (data: string, charLocAnalysis: string, style: string
           type: "object",
           properties: {
             panelNumber: { type: "integer" },
+            panelId: { type: "string" },
+            beatId: { type: "integer" },
             visualPrompt: { type: "string" },
             qaNotes: { type: "string" }
           },
@@ -867,11 +884,17 @@ export const runQA = async (data: string, charLocAnalysis: string, style: string
   return response.text;
 };
 
-export const generateFinalResult = async (storyboard: string, prompts: string, qaReport: string, charLocAnalysis: string) => {
+export const generateFinalResult = async (
+  storyboard: string,
+  prompts: string,
+  qaReport: string,
+  charLocAnalysis: string,
+  analysis = ""
+) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getFinalResultPrompt(storyboard, prompts, qaReport, charLocAnalysis),
+    contents: getFinalResultPrompt(storyboard, prompts, qaReport, charLocAnalysis, analysis),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
