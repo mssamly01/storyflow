@@ -103,9 +103,16 @@ const Home: React.FC<HomeProps> = ({ onLaunchStoryFlow, onLaunchLitParser, onLau
               >
                 Bắt đầu sáng tạo ngay <ChevronRight className="w-5 h-5" />
               </button>
-              <button className="px-8 py-4 bg-white text-slate-700 border border-slate-200 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-50 transition-all">
+              <a 
+                href="#features" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.querySelector('.grid.grid-cols-1.md\\:grid-cols-2.lg\\:grid-cols-3')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-8 py-4 bg-white text-slate-700 border border-slate-200 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-50 transition-all inline-block"
+              >
                 Tìm hiểu thêm
-              </button>
+              </a>
             </div>
           </div>
 

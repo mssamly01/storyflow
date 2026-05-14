@@ -44,7 +44,9 @@ import {
   Plus,
   Edit2,
   Check,
-  X
+  X,
+  List,
+  AlertTriangle
 } from 'lucide-react';
 
 const STYLE_OPTIONS = [
@@ -550,14 +552,25 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return { ...beat, originalText: beat.originalText || startMarker || '' };
       }
       
-      const startIdx = script.indexOf(startMarker, searchFrom);
+      // Tìm startMarker từ vị trí searchFrom trở đi
+      let startIdx = script.indexOf(startMarker, searchFrom);
+      
+      // Nếu không tìm thấy từ searchFrom, thử tìm lại từ đầu (fallback)
+      if (startIdx === -1) {
+        startIdx = script.indexOf(startMarker);
+      }
+      
       if (startIdx === -1) {
         return { ...beat, originalText: beat.originalText || startMarker || '' };
       }
       
-      const endIdx = script.indexOf(endMarker, startIdx);
+      // Tìm endMarker sau startMarker
+      const endIdx = script.indexOf(endMarker, startIdx + startMarker.length);
       if (endIdx === -1) {
-        return { ...beat, originalText: script.substring(startIdx, startIdx + 200).trim() };
+        // Nếu không tìm thấy endMarker, lấy phần text từ startMarker với độ dài hợp lý
+        const nextBeatStart = script.indexOf('\n\n', startIdx + startMarker.length);
+        const endPos = nextBeatStart !== -1 ? nextBeatStart : Math.min(startIdx + 500, script.length);
+        return { ...beat, originalText: script.substring(startIdx, endPos).trim() };
       }
       
       const originalText = script.substring(startIdx, endIdx + endMarker.length).trim();
@@ -569,7 +582,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const runPhase1Analysis = async (): Promise<void> => {
     const existingLibrary = getMasterLibrary();
     const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-    const parsed = JSON.parse(result || '{}');
+    
+    let parsed;
+    try {
+      parsed = JSON.parse(result || '{}');
+    } catch (e) {
+      throw new Error("Kết quả AI trả về không phải JSON hợp lệ. Vui lòng thử lại hoặc dùng chế độ thủ công.");
+    }
     
     if (Array.isArray(parsed.analysis)) {
       parsed.analysis = resolveOriginalText(parsed.analysis, inputData.script);
@@ -609,7 +628,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const handleUpdateBeat = (index: number) => {
-    if (!production.analysis) return;
+    if (!production.analysis || !editingBeatData) return;
+    
+    if (!editingBeatData.originalText?.trim() && !editingBeatData.analysis?.trim()) {
+      showToast("Vui lòng nhập văn bản gốc hoặc phân tích cho beat.");
+      return;
+    }
+    
     try {
       const beats = JSON.parse(production.analysis);
       beats[index] = editingBeatData;
@@ -647,11 +672,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     try {
       const beats = JSON.parse(production.analysis);
       const newBeat = {
+        startMarker: "",
+        endMarker: "",
         originalText: "Nội dung văn bản mới...",
         analysis: "Mô tả bối cảnh và hành động mới...",
         atmosphere: "Cảm xúc chủ đạo",
         posture: "Tư thế",
-        timeOfDay: "Thời điểm"
+        timeOfDay: "Thời điểm",
+        keyActions: []
       };
       beats.splice(index + 1, 0, newBeat);
       updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
@@ -1207,6 +1235,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                               <span className="text-[10px] font-bold uppercase">{beat.timeOfDay}</span>
                             </div>
                           )}
+                          
+                          {editingBeatIndex !== i && beat.keyActions && beat.keyActions.length > 2 && (
+                            <div className="flex items-center gap-1.5 bg-rose-50 text-rose-600 px-3 py-1 rounded-lg border border-rose-100" title="Beat này có quá nhiều hành động, nên tách thành nhiều beat">
+                              <AlertTriangle className="w-3 h-3" />
+                              <span className="text-[10px] font-bold uppercase">{beat.keyActions.length} actions</span>
+                            </div>
+                          )}
                         </div>
                         
                         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1295,6 +1330,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                               />
                             </div>
                           </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Hành động chính (Key Actions) - phân cách bằng dấu phẩy</label>
+                            <input 
+                              type="text"
+                              value={Array.isArray(editingBeatData.keyActions) ? editingBeatData.keyActions.join(', ') : ''}
+                              onChange={(e) => setEditingBeatData({...editingBeatData, keyActions: e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)})}
+                              placeholder="VD: Nhân vật A nói, Nhân vật B phản ứng"
+                              className="w-full text-xs text-slate-600 px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none"
+                            />
+                            {Array.isArray(editingBeatData.keyActions) && editingBeatData.keyActions.length > 2 && (
+                              <p className="text-[10px] text-rose-500 font-bold mt-1 flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" /> Khuyến nghị tối đa 2 hành động/beat. Nên tách beat nếu có nhiều hơn.
+                              </p>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className="space-y-4">
@@ -1305,6 +1355,19 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                                 <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Bối cảnh & Hành động</span>
                                 {beat.analysis}
                               </p>
+                            </div>
+                          )}
+                          {beat.keyActions && Array.isArray(beat.keyActions) && beat.keyActions.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              <div className="flex items-center gap-1 text-slate-400">
+                                <List className="w-3 h-3" />
+                                <span className="text-[9px] font-black uppercase tracking-wider">Key Actions:</span>
+                              </div>
+                              {beat.keyActions.map((action: string, j: number) => (
+                                <span key={j} className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-100">
+                                  {action}
+                                </span>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -1543,7 +1606,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <p className="text-xs text-slate-500 font-medium">Chọn một dự án để nhập vào StoryFlow</p>
               </div>
             </div>
-            <button onClick={() => setShowLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><RefreshCw className="w-5 h-5" /></button>
+            <button onClick={() => setShowLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><X className="w-5 h-5" /></button>
           </div>
           
           <div className="flex-1 overflow-y-auto p-8">
@@ -1692,7 +1755,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <p className="text-xs text-slate-500 font-medium">Chọn một bản phân tích văn học để nhập nội dung vào StoryFlow</p>
               </div>
             </div>
-            <button onClick={() => setShowLitLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><RefreshCw className="w-5 h-5" /></button>
+            <button onClick={() => setShowLitLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><X className="w-5 h-5" /></button>
           </div>
           
           <div className="flex-1 overflow-y-auto p-8">
