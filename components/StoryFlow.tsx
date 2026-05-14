@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useToast } from '../hooks/useToast';
 import { ProductionStage, ScriptData, ProductionData } from '../types';
 import * as gemini from '../services/geminiService';
+import { fetchAllProjects, saveProjectToServer, deleteProjectFromServer } from '../services/projectService';
 import { 
   FileText, 
   BarChart2, 
@@ -112,7 +114,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
   const [showLibraryModal, setShowLibraryModal] = useState(false);
-  const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
+  const { toast, showToast } = useToast();
 
   const [inputData, setInputData] = useState<ScriptData>({
     script: '',
@@ -226,14 +228,10 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   }, [stage]);
 
   useEffect(() => {
-    fetch('/api/projects')
-      .then(res => res.json())
+    fetchAllProjects()
       .then(data => {
-        if (Array.isArray(data)) {
-          // Phân loại dự án
-          setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
-          setLitProjects(data.filter((p: any) => p.type === 'literary'));
-        }
+        setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
+        setLitProjects(data.filter((p: any) => p.type === 'literary'));
       })
       .catch(err => console.error("Failed to load projects:", err));
   }, []);
@@ -540,18 +538,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  const runPhase1Analysis = async (): Promise<void> => {
+    const existingLibrary = getMasterLibrary();
+    const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
+    const parsed = JSON.parse(result);
+    setProduction(prev => ({
+      ...prev,
+      analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
+      characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+    }));
+  };
+
   const handleAutoAnalysis = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const existingLibrary = getMasterLibrary();
-      const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-      const parsed = JSON.parse(result);
-      setProduction(prev => ({
-        ...prev,
-        analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
-        characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
-      }));
+      await runPhase1Analysis();
       setStage(ProductionStage.STORYBOARD);
     } catch (err: any) {
       setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
@@ -652,14 +654,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       let targetStage = stage;
 
       if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION) {
-        const existingLibrary = getMasterLibrary();
-        result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-        const parsed = JSON.parse(result);
-        setProduction(prev => ({
-          ...prev,
-          analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
-          characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
-        }));
+        await runPhase1Analysis();
         const nextIdx = steps.findIndex(s => s.id === stage) + 1;
         if (nextIdx < steps.length) {
           setStage(steps[nextIdx].id);
@@ -699,8 +694,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const saveProject = async () => {
     if (!inputData.title || !inputData.chapter) {
-      setToast({ message: "Vui lòng nhập Tên tiểu thuyết và Chương để lưu!", visible: true });
-      setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+      showToast("Vui lòng nhập Tên tiểu thuyết và Chương để lưu!");
       return;
     }
 
@@ -713,13 +707,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
 
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(projectData)
-      });
-
-      if (!response.ok) throw new Error("Failed to save to server");
+      await saveProjectToServer(projectData);
 
       const existingIndex = savedProjects.findIndex((p: any) => 
         p.inputData.title === inputData.title && p.inputData.chapter === inputData.chapter
@@ -730,13 +718,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         : [projectData, ...savedProjects];
 
       setSavedProjects(updatedProjects);
-      setToast({ message: "Đã lưu kết quả phân tích vào thư viện!", visible: true });
+      showToast("Đã lưu kết quả phân tích vào thư viện!");
     } catch (err) {
       console.error(err);
-      setToast({ message: "Lỗi khi lưu dự án vào server", visible: true });
+      showToast("Lỗi khi lưu dự án vào server");
     }
-    
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const deleteProject = (id: number) => {
@@ -747,18 +733,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       type: 'danger',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error("Failed to delete from server");
+          await deleteProjectFromServer(id);
 
           const updatedProjects = savedProjects.filter(p => p.id !== id);
           setSavedProjects(updatedProjects);
-          setToast({ message: "Đã xóa dự án khỏi thư viện", visible: true });
+          showToast("Đã xóa dự án khỏi thư viện");
         } catch (err) {
           console.error(err);
-          setToast({ message: "Lỗi khi xóa dự án", visible: true });
+          showToast("Lỗi khi xóa dự án");
         } finally {
           setConfirmModal(prev => ({ ...prev, show: false }));
-          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
         }
       }
     });
@@ -787,8 +771,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setStage(ProductionStage.INPUT);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     
-    setToast({ message: "Đã chuẩn bị cho chương mới!", visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    showToast("Đã chuẩn bị cho chương mới!");
   };
 
   const handleExportSRT = () => {
@@ -821,8 +804,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    setToast({ message: "Đã xuất file SRT thành công!", visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    showToast("Đã xuất file SRT thành công!");
   };
 
   const handleExportJSON = () => {
@@ -911,15 +893,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    setToast({ message: "Đã xuất file JSON thành công!", visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    showToast("Đã xuất file JSON thành công!");
   };
 
   const copyToClipboard = (text?: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
-    setToast({ message: "Đã sao chép vào bộ nhớ tạm!", visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    showToast("Đã sao chép vào bộ nhớ tạm!");
   };
 
   const renderToast = () => {
@@ -1652,7 +1632,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           script: scriptFromBlocks,
         }));
       }
-      setToast({ message: isNextChapterFlow ? "Đã nhập nội dung chương mới từ LitStruct!" : "Đã nhập dữ liệu từ LitStruct Parser!", visible: true });
+      showToast(isNextChapterFlow ? "Đã nhập nội dung chương mới từ LitStruct!" : "Đã nhập dữ liệu từ LitStruct Parser!");
     } else {
       if (isNextChapterFlow) {
         // Nếu là dự án StoryFlow và đang ở luồng chương tiếp theo, cũng chỉ lấy script
@@ -1661,19 +1641,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           ...prev,
           script: scriptToImport
         }));
-        setToast({ message: "Đã nhập nội dung chương mới từ thư viện!", visible: true });
+        showToast("Đã nhập nội dung chương mới từ thư viện!");
       } else {
         const nextInputData = project.inputData || { title: '', chapter: '', chapterTitle: '', script: '', selectedStyle: 'standard' };
         const nextProduction = project.production || {};
         setInputData(nextInputData);
         setProduction(nextProduction);
         setUnlockedStages(computeUnlockedStages(nextInputData, nextProduction, stage));
-        setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
+        showToast("Đã tải dự án StoryFlow!");
       }
     }
     setShowLibraryModal(false);
     setShowLitLibraryModal(false);
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const renderLitLibraryModal = () => {
@@ -1844,17 +1823,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       onConfirm: async () => {
         try {
           for (const project of chaptersToDelete) {
-            await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+            await deleteProjectFromServer(project.id);
           }
           const deletedIds = chaptersToDelete.map(p => p.id);
           setSavedProjects(prev => prev.filter(p => !deletedIds.includes(p.id)));
-          setToast({ message: `Đã xóa bộ truyện "${title}" khỏi thư viện`, visible: true });
+          showToast(`Đã xóa bộ truyện "${title}" khỏi thư viện`);
         } catch (err) {
           console.error(err);
-          setToast({ message: "Lỗi khi xóa bộ truyện", visible: true });
+          showToast("Lỗi khi xóa bộ truyện");
         } finally {
           setConfirmModal(prev => ({ ...prev, show: false }));
-          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
         }
       }
     });

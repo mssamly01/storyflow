@@ -3,7 +3,7 @@ import { GoogleGenAI, Part } from "@google/genai";
 import { getConfig } from "./configService";
 
 // Helper to get AI instance with current config
-const getAI = () => {
+export const getAI = () => {
   const config = getConfig();
   const apiKey = config.geminiApiKey || process.env.API_KEY || "";
   if (!apiKey) {
@@ -12,7 +12,7 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey });
 };
 
-const getModel = () => {
+export const getModel = () => {
   const config = getConfig();
   return config.geminiModel || "gemini-2.5-flash";
 };
