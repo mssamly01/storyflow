@@ -172,6 +172,11 @@ ${existingLibrary}
 Use this context to preserve established identity, outfit, location layout, and continuity. Update only when the current chapter provides new evidence.
 ` : ""}
 
+LOCKED FIELD RULES:
+If any input entity contains meta.locks.lockedFields, preserve those fields exactly.
+Do not rewrite, reinterpret, summarize, improve, or change locked fields.
+Only regenerate unlocked fields. Locked values are approved source-of-truth data.
+
 Return ONLY valid JSON with this schema:
 
 {
@@ -313,6 +318,11 @@ Character profiles and location profiles are also source of truth.
 Use them only to guide blocking and composition.
 Do not create new character identities or new locations.
 
+LOCKED FIELD RULES:
+If any beat, character, location, or panel input contains meta.locks.lockedFields, preserve those fields exactly.
+Do not rewrite, reinterpret, summarize, improve, or change locked fields.
+Only regenerate unlocked fields. Locked values are approved source-of-truth data.
+
 Your output should contain ONLY visual/camera fields.
 Return ONLY valid JSON. No markdown. No commentary.
 
@@ -407,6 +417,7 @@ SOURCE OF TRUTH RULES:
 - Use STORYBOARD VISUAL DIRECTION only for camera, composition, blocking, lighting direction, depth, and visual emphasis.
 - Do not output source fields as separate fields unless the schema below requires them.
 - Do not output timeOfDay as a separate field.
+- If any input entity contains meta.locks.lockedFields, preserve those fields exactly and only regenerate unlocked fields.
 
 Return ONLY a valid JSON array. No markdown. No commentary.
 

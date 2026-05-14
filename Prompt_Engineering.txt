@@ -6299,7 +6299,7 @@ QUY TẮC CẤU TRÚC PROMPT (PHẢI TUÂN THỦ THỨ TỰ):
    - **BẤT KỲ** nhân vật nào được nhắc đến trong prompt (kể cả nhân vật chính, phụ, phản diện, người qua đường, hay nhân vật ở tiền cảnh/hậu cảnh) đều **BẮT BUỘC** phải có mô tả Profile chi tiết kèm theo ngay sau tên.
    - **LƯU Ý QUAN TRỌNG:** Quy tắc này áp dụng cho cả các nhân vật được ghi chú là **(off-screen)**. Dù không xuất hiện trên khung hình, việc mô tả đầy đủ giúp AI hiểu rõ ngữ cảnh và tương tác.
    - **LÝ DO:** Nếu chỉ ghi tên nhân vật mà không có mô tả, AI sẽ tự động tạo ra ngoại hình ngẫu nhiên, làm mất tính nhất quán (hallucination).
-   - **BẮT BUỰC** áp dụng cho cả khi chỉ mô tả một bộ phận cơ thể (tay, chân, vai).
+   - **BẮT BUỘC** áp dụng cho cả khi chỉ mô tả một bộ phận cơ thể (tay, chân, vai).
    - Định dạng: "CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hair], Eyes: [eyes], [Posture: [tư thế hiện tại]], [Mô tả 01 Outfit phù hợp nhất])".
    - **VÍ DỤ ĐÚNG:** "Police Officer (Male, 30, 180cm, Square face, ..., Posture: Standing upright, ...) enters the frame... Behind him, Chị Trương (Female, 35, 160cm, Round face, ..., Posture: Sitting on a chair, ...) looks smug... To the side, Vương Việt (Male, 28, 175cm, Sharp features, ..., Outfit 1: Black suit) (off-screen) is shouting."
    - **OUTFIT SELECTION (STRICT & SEQUENTIAL):** Nếu hồ sơ nhân vật có nhiều Outfit, AI phải phân tích nội dung Panel và đối chiếu với thứ tự trong danh sách `outfit` để chọn ra trang phục chính xác nhất theo diễn biến truyện. CHỈ đưa mô tả của outfit đó vào prompt.

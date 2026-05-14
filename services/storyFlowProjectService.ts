@@ -30,8 +30,16 @@ import {
   markFinalResultStale,
   markStepNeedsReview
 } from "./workflowStateService";
+import {
+  approveAndLockField,
+  lockField,
+  lockFields,
+  mergeRespectingLocks,
+  unlockField
+} from "./fieldLockService";
 
 const nowIso = () => new Date().toISOString();
+const workflowStatuses = new Set(["not_started", "generating", "needs_review", "approved", "stale", "error"]);
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -42,6 +50,69 @@ function withTimestamp(project: StoryFlowProject): StoryFlowProject {
     ...project,
     updatedAt: nowIso()
   };
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function asArray<T>(value: unknown, fallback: T[]): T[] {
+  return Array.isArray(value) ? value as T[] : fallback;
+}
+
+function hydrateWorkflowStep(raw: unknown, fallback: StoryFlowProject["workflow"]["beatAnalysis"]) {
+  if (!isRecord(raw)) return fallback;
+  const status = workflowStatuses.has(raw.status) ? raw.status : fallback.status;
+  return {
+    ...fallback,
+    ...raw,
+    status
+  };
+}
+
+function normalizeText(value?: string): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function aliasesOverlap(currentAliases?: string[], incomingAliases?: string[]): boolean {
+  const incoming = new Set((incomingAliases || []).map(normalizeText).filter(Boolean));
+  return (currentAliases || []).some((alias) => incoming.has(normalizeText(alias)));
+}
+
+function findCharacterMatch(currentCharacters: CharacterProfile[], incomingCharacter: CharacterProfile): CharacterProfile | undefined {
+  const incomingId = incomingCharacter.characterId;
+  const incomingName = normalizeText(incomingCharacter.name);
+  return currentCharacters.find((character) => {
+    if (incomingId && character.characterId === incomingId) return true;
+    if (incomingName && normalizeText(character.name) === incomingName) return true;
+    return aliasesOverlap(character.aliases, incomingCharacter.aliases);
+  });
+}
+
+function findLocationMatch(currentLocations: LocationProfile[], incomingLocation: LocationProfile): LocationProfile | undefined {
+  const incomingId = incomingLocation.locationId;
+  const incomingName = normalizeText(incomingLocation.name);
+  return currentLocations.find((location) => {
+    if (incomingId && location.locationId === incomingId) return true;
+    if (incomingName && normalizeText(location.name) === incomingName) return true;
+    return aliasesOverlap(location.aliases, incomingLocation.aliases);
+  });
+}
+
+function findPanelMatch(currentPanels: StoryboardPanel[], incomingPanel: StoryboardPanel): StoryboardPanel | undefined {
+  return currentPanels.find((panel) => {
+    if (incomingPanel.panelId && panel.panelId === incomingPanel.panelId) return true;
+    if (incomingPanel.beatId && panel.beatId === incomingPanel.beatId) return true;
+    return Boolean(incomingPanel.panelNumber && panel.panelNumber === incomingPanel.panelNumber);
+  });
+}
+
+function findPromptMatch(currentPrompts: EngineerPrompt[], incomingPrompt: EngineerPrompt): EngineerPrompt | undefined {
+  return currentPrompts.find((prompt) => {
+    if (incomingPrompt.panelId && prompt.panelId === incomingPrompt.panelId) return true;
+    if (incomingPrompt.beatId && prompt.beatId === incomingPrompt.beatId) return true;
+    return Boolean(incomingPrompt.panelNumber && prompt.panelNumber === incomingPrompt.panelNumber);
+  });
 }
 
 export function createInitialProject(params?: {
@@ -105,6 +176,43 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
   });
 }
 
+export function hydrateStoryFlowProject(
+  inputData: ScriptData,
+  production: ProductionData,
+  rawProject: unknown
+): StoryFlowProject {
+  const fallback = normalizeLegacyProductionToProject(inputData, production);
+  if (!isRecord(rawProject)) return fallback;
+
+  const rawWorkflow = isRecord(rawProject.workflow) ? rawProject.workflow : {};
+
+  return withTimestamp({
+    ...fallback,
+    ...rawProject,
+    id: typeof rawProject.id === "string" ? rawProject.id : fallback.id,
+    title: typeof rawProject.title === "string" && rawProject.title ? rawProject.title : fallback.title,
+    sourceText: typeof rawProject.sourceText === "string" ? rawProject.sourceText : fallback.sourceText,
+    selectedStyleId: typeof rawProject.selectedStyleId === "string" ? rawProject.selectedStyleId : fallback.selectedStyleId,
+    beats: asArray<StoryBeat>(rawProject.beats, fallback.beats),
+    characters: asArray<CharacterProfile>(rawProject.characters, fallback.characters),
+    locations: asArray<LocationProfile>(rawProject.locations, fallback.locations),
+    storyboardPanels: asArray<StoryboardPanel>(rawProject.storyboardPanels, fallback.storyboardPanels),
+    engineerPrompts: asArray<EngineerPrompt>(rawProject.engineerPrompts, fallback.engineerPrompts),
+    qaResults: asArray<QAResult>(rawProject.qaResults, fallback.qaResults),
+    finalResult: isRecord(rawProject.finalResult) ? rawProject.finalResult as FinalResult : fallback.finalResult,
+    workflow: {
+      beatAnalysis: hydrateWorkflowStep(rawWorkflow.beatAnalysis, fallback.workflow.beatAnalysis),
+      characterLocation: hydrateWorkflowStep(rawWorkflow.characterLocation, fallback.workflow.characterLocation),
+      storyboard: hydrateWorkflowStep(rawWorkflow.storyboard, fallback.workflow.storyboard),
+      promptEngineering: hydrateWorkflowStep(rawWorkflow.promptEngineering, fallback.workflow.promptEngineering),
+      qa: hydrateWorkflowStep(rawWorkflow.qa, fallback.workflow.qa),
+      finalResult: hydrateWorkflowStep(rawWorkflow.finalResult, fallback.workflow.finalResult)
+    },
+    createdAt: typeof rawProject.createdAt === "string" ? rawProject.createdAt : fallback.createdAt,
+    updatedAt: typeof rawProject.updatedAt === "string" ? rawProject.updatedAt : fallback.updatedAt
+  });
+}
+
 export function syncProjectSource(project: StoryFlowProject, inputData: ScriptData): StoryFlowProject {
   if (
     project.title === inputData.title &&
@@ -115,12 +223,12 @@ export function syncProjectSource(project: StoryFlowProject, inputData: ScriptDa
   }
 
   const hasGeneratedData = Boolean(
-    project.beats.length ||
-    project.characters.length ||
-    project.locations.length ||
-    project.storyboardPanels.length ||
-    project.engineerPrompts.length ||
-    project.qaResults.length ||
+    (Array.isArray(project.beats) && project.beats.length) ||
+    (Array.isArray(project.characters) && project.characters.length) ||
+    (Array.isArray(project.locations) && project.locations.length) ||
+    (Array.isArray(project.storyboardPanels) && project.storyboardPanels.length) ||
+    (Array.isArray(project.engineerPrompts) && project.engineerPrompts.length) ||
+    (Array.isArray(project.qaResults) && project.qaResults.length) ||
     project.finalResult
   );
 
@@ -136,9 +244,14 @@ export function syncProjectSource(project: StoryFlowProject, inputData: ScriptDa
 }
 
 export function replaceBeats(project: StoryFlowProject, beats: StoryBeat[]): StoryFlowProject {
+  const mergedBeats = beats.map((incomingBeat) => {
+    const currentBeat = project.beats.find((beat) => beat.beatId === incomingBeat.beatId);
+    return currentBeat ? mergeRespectingLocks(currentBeat, incomingBeat) : incomingBeat;
+  });
+
   return withTimestamp({
     ...project,
-    beats,
+    beats: mergedBeats,
     workflow: {
       ...project.workflow,
       beatAnalysis: markStepNeedsReview(project.workflow.beatAnalysis)
@@ -169,10 +282,19 @@ export function replaceCharacterLocationLibrary(project: StoryFlowProject, libra
   characters: CharacterProfile[];
   locations: LocationProfile[];
 }): StoryFlowProject {
+  const characters = library.characters.map((incomingCharacter) => {
+    const currentCharacter = findCharacterMatch(project.characters, incomingCharacter);
+    return currentCharacter ? mergeRespectingLocks(currentCharacter, incomingCharacter) : incomingCharacter;
+  });
+  const locations = library.locations.map((incomingLocation) => {
+    const currentLocation = findLocationMatch(project.locations, incomingLocation);
+    return currentLocation ? mergeRespectingLocks(currentLocation, incomingLocation) : incomingLocation;
+  });
+
   return withTimestamp({
     ...project,
-    characters: library.characters,
-    locations: library.locations,
+    characters,
+    locations,
     workflow: {
       ...project.workflow,
       characterLocation: markStepNeedsReview(project.workflow.characterLocation)
@@ -181,9 +303,14 @@ export function replaceCharacterLocationLibrary(project: StoryFlowProject, libra
 }
 
 export function replaceStoryboardPanels(project: StoryFlowProject, storyboardPanels: StoryboardPanel[]): StoryFlowProject {
+  const mergedPanels = storyboardPanels.map((incomingPanel) => {
+    const currentPanel = findPanelMatch(project.storyboardPanels, incomingPanel);
+    return currentPanel ? mergeRespectingLocks(currentPanel, incomingPanel) : incomingPanel;
+  });
+
   return withTimestamp({
     ...project,
-    storyboardPanels,
+    storyboardPanels: mergedPanels,
     workflow: {
       ...project.workflow,
       storyboard: markStepNeedsReview(project.workflow.storyboard)
@@ -192,9 +319,14 @@ export function replaceStoryboardPanels(project: StoryFlowProject, storyboardPan
 }
 
 export function replaceEngineerPrompts(project: StoryFlowProject, engineerPrompts: EngineerPrompt[]): StoryFlowProject {
+  const mergedPrompts = engineerPrompts.map((incomingPrompt) => {
+    const currentPrompt = findPromptMatch(project.engineerPrompts, incomingPrompt);
+    return currentPrompt ? mergeRespectingLocks(currentPrompt, incomingPrompt) : incomingPrompt;
+  });
+
   return withTimestamp({
     ...project,
-    engineerPrompts,
+    engineerPrompts: mergedPrompts,
     workflow: {
       ...project.workflow,
       promptEngineering: markStepNeedsReview(project.workflow.promptEngineering)
@@ -341,6 +473,104 @@ export function updateQAResult(project: StoryFlowProject, panelId: string, patch
       ...markFinalResultStale(project.workflow, "QA changed; final result must be rebuilt."),
       qa: markStepNeedsReview(project.workflow.qa)
     }
+  });
+}
+
+export function lockBeatField(project: StoryFlowProject, beatId: number, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    beats: project.beats.map((beat) => beat.beatId === beatId ? lockField(beat, fieldName) : beat)
+  });
+}
+
+export function unlockBeatField(project: StoryFlowProject, beatId: number, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    beats: project.beats.map((beat) => beat.beatId === beatId ? unlockField(beat, fieldName) : beat)
+  });
+}
+
+export function approveAndLockBeatField(project: StoryFlowProject, beatId: number, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    beats: project.beats.map((beat) => beat.beatId === beatId ? approveAndLockField(beat, fieldName) : beat)
+  });
+}
+
+export function lockBeatFields(project: StoryFlowProject, beatId: number, fieldNames: string[]): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    beats: project.beats.map((beat) => beat.beatId === beatId ? lockFields(beat, fieldNames) : beat)
+  });
+}
+
+export function lockCharacterField(project: StoryFlowProject, characterId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    characters: project.characters.map((character) => character.characterId === characterId || character.name === characterId ? lockField(character, fieldName) : character)
+  });
+}
+
+export function unlockCharacterField(project: StoryFlowProject, characterId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    characters: project.characters.map((character) => character.characterId === characterId || character.name === characterId ? unlockField(character, fieldName) : character)
+  });
+}
+
+export function approveAndLockCharacterField(project: StoryFlowProject, characterId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    characters: project.characters.map((character) => character.characterId === characterId || character.name === characterId ? approveAndLockField(character, fieldName) : character)
+  });
+}
+
+export function lockCharacterFields(project: StoryFlowProject, characterId: string, fieldNames: string[]): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    characters: project.characters.map((character) => character.characterId === characterId || character.name === characterId ? lockFields(character, fieldNames) : character)
+  });
+}
+
+export function lockLocationField(project: StoryFlowProject, locationId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    locations: project.locations.map((location) => location.locationId === locationId || location.name === locationId ? lockField(location, fieldName) : location)
+  });
+}
+
+export function unlockLocationField(project: StoryFlowProject, locationId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    locations: project.locations.map((location) => location.locationId === locationId || location.name === locationId ? unlockField(location, fieldName) : location)
+  });
+}
+
+export function approveAndLockLocationField(project: StoryFlowProject, locationId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    locations: project.locations.map((location) => location.locationId === locationId || location.name === locationId ? approveAndLockField(location, fieldName) : location)
+  });
+}
+
+export function lockLocationFields(project: StoryFlowProject, locationId: string, fieldNames: string[]): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    locations: project.locations.map((location) => location.locationId === locationId || location.name === locationId ? lockFields(location, fieldNames) : location)
+  });
+}
+
+export function lockStoryboardPanelField(project: StoryFlowProject, panelId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    storyboardPanels: project.storyboardPanels.map((panel) => panel.panelId === panelId ? lockField(panel, fieldName) : panel)
+  });
+}
+
+export function lockEngineerPromptField(project: StoryFlowProject, panelId: string, fieldName: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    engineerPrompts: project.engineerPrompts.map((prompt) => prompt.panelId === panelId ? lockField(prompt, fieldName) : prompt)
   });
 }
 

@@ -291,6 +291,15 @@ export interface EditableMeta {
   updatedAt?: string;
   approvedAt?: string;
   staleReason?: string;
+  locks?: FieldLockState;
+}
+
+export interface FieldLockState {
+  lockedFields?: string[];
+  approvedFields?: string[];
+  lockedAt?: string;
+  approvedAt?: string;
+  lockedBy?: "user" | "system";
 }
 
 export interface StoryFlowProject {

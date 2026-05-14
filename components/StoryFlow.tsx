@@ -15,7 +15,10 @@ import {
 import {
   buildFinalResultFromProject,
   createInitialProject,
-  normalizeLegacyProductionToProject,
+  hydrateStoryFlowProject,
+  lockBeatFields,
+  lockCharacterFields,
+  lockLocationFields,
   replaceBeats,
   replaceBeatsFromUserEdit,
   replaceCharacterLocationLibrary,
@@ -26,6 +29,13 @@ import {
   serializeProjectForStorage,
   syncProjectSource
 } from '../services/storyFlowProjectService';
+import {
+  BEAT_SOURCE_FIELDS,
+  CHARACTER_APPEARANCE_FIELDS,
+  LOCATION_CONTINUITY_FIELDS,
+  getLockedFields,
+  isFieldLocked
+} from '../services/fieldLockService';
 import { 
   FileText, 
   BarChart2, 
@@ -64,7 +74,9 @@ import {
   Plus,
   Edit2,
   Check,
-  X
+  X,
+  Lock,
+  Unlock
 } from 'lucide-react';
 
 const STYLE_OPTIONS = [
@@ -222,7 +234,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
         setStage(initialStage);
         setInputData(initialInputData);
         setProduction(initialProduction);
-        setProject(savedProject || normalizeLegacyProductionToProject(initialInputData, initialProduction));
+        setProject(hydrateStoryFlowProject(initialInputData, initialProduction, savedProject));
         if (Array.isArray(savedUnlockedStages) && savedUnlockedStages.length > 0) {
           setUnlockedStages(savedUnlockedStages);
         } else {
@@ -502,6 +514,36 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     if (status === "needs_review") return "bg-sky-500/15 text-sky-300 border-sky-400/20";
     if (status === "generating") return "bg-indigo-500/15 text-indigo-300 border-indigo-400/20";
     return "bg-slate-700/40 text-slate-400 border-slate-600/40";
+  };
+
+  const getProjectBeat = (beat: any, index: number) => {
+    return project.beats.find(item => item.beatId === beat?.beatId)
+      || project.beats.find(item => item.beatId === index + 1)
+      || beat;
+  };
+
+  const getProjectCharacter = (character: any) => {
+    return project.characters.find(item =>
+      (character?.characterId && item.characterId === character.characterId) ||
+      (character?.name && item.name === character.name)
+    ) || character;
+  };
+
+  const getProjectLocation = (location: any) => {
+    return project.locations.find(item =>
+      (location?.locationId && item.locationId === location.locationId) ||
+      (location?.name && item.name === location.name)
+    ) || location;
+  };
+
+  const renderLockSummary = (entity: any) => {
+    const lockedCount = getLockedFields(entity).length;
+    if (!lockedCount) return null;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-amber-700">
+        <Lock className="w-3 h-3" /> {lockedCount} locked
+      </span>
+    );
   };
 
   const normalizeBeatForUi = (beat: any, index: number) => {
@@ -1437,12 +1479,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
             {analysisBeats ? (
               <>
-                {analysisBeats.map((beat: any, i: number) => (
+                {analysisBeats.map((beat: any, i: number) => {
+                  const projectBeat = getProjectBeat(beat, i);
+                  const beatId = projectBeat.beatId || beat.beatId || i + 1;
+                  const hasLockedSource = isFieldLocked(projectBeat, "originalText");
+
+                  return (
                   <div key={i} className="relative group">
                     <div className={`bg-white border ${editingBeatIndex === i ? 'border-indigo-500 ring-2 ring-indigo-50 shadow-lg' : 'border-slate-200'} rounded-2xl p-6 transition-all duration-300`}>
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
                           <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-lg uppercase shadow-sm">Beat {i + 1}</span>
+                          {renderLockSummary(projectBeat)}
                           {editingBeatIndex === i ? (
                             <input 
                               type="text"
@@ -1513,6 +1561,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                                 title="Thêm Beat sau"
                               >
                                 <Plus className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setProject(prev => lockBeatFields(prev, beatId, BEAT_SOURCE_FIELDS))}
+                                className={`p-2 rounded-xl transition-all shadow-sm ${hasLockedSource ? 'bg-amber-100 text-amber-700' : 'bg-slate-50 text-slate-500 hover:bg-amber-500 hover:text-white'}`}
+                                title="Lock all source fields for this beat"
+                              >
+                                {hasLockedSource ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
                               </button>
                             </>
                           )}
@@ -1628,7 +1683,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       </button>
                     </div>
                   </div>
-                ))}
+                );
+                })}
                 
                 {analysisBeats.length === 0 && (
                   <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
@@ -1670,9 +1726,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             {parsed.characters && (
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Users className="w-4 h-4" /> Characters</h3>
-                {parsed.characters.map((char: any, i: number) => (
+                {parsed.characters.map((char: any, i: number) => {
+                  const projectChar = getProjectCharacter(char);
+                  const characterKey = projectChar.characterId || char.characterId || char.name;
+
+                  return (
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-                    <h4 className="font-bold text-indigo-600 mb-2">{char.name}</h4>
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="font-bold text-indigo-600">{char.name}</h4>
+                        <div className="mt-1">{renderLockSummary(projectChar)}</div>
+                      </div>
+                      {characterKey && (
+                        <button
+                          onClick={() => setProject(prev => lockCharacterFields(prev, characterKey, CHARACTER_APPEARANCE_FIELDS))}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-widest text-indigo-600 hover:bg-indigo-600 hover:text-white transition-colors"
+                          title="Lock character appearance fields"
+                        >
+                          <Lock className="w-3 h-3" /> Lock appearance
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
                       <div className="text-slate-400 uppercase">Gender</div>
                       <div className="text-slate-700 font-medium">{char.gender || 'N/A'}</div>
@@ -1734,15 +1808,34 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       </button>
                     </div>
                   </div>
-                ))}
+                );
+                })}
               </div>
             )}
             {parsed.locations && (
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Layout className="w-4 h-4" /> Locations</h3>
-                {parsed.locations.map((loc: any, i: number) => (
+                {parsed.locations.map((loc: any, i: number) => {
+                  const projectLoc = getProjectLocation(loc);
+                  const locationKey = projectLoc.locationId || loc.locationId || loc.name;
+
+                  return (
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-                    <h4 className="font-bold text-emerald-600 mb-2">{loc.name}</h4>
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="font-bold text-emerald-600">{loc.name}</h4>
+                        <div className="mt-1">{renderLockSummary(projectLoc)}</div>
+                      </div>
+                      {locationKey && (
+                        <button
+                          onClick={() => setProject(prev => lockLocationFields(prev, locationKey, LOCATION_CONTINUITY_FIELDS))}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-600 hover:bg-emerald-600 hover:text-white transition-colors"
+                          title="Lock location continuity fields"
+                        >
+                          <Lock className="w-3 h-3" /> Lock continuity
+                        </button>
+                      )}
+                    </div>
                     <p className="text-[11px] text-slate-600 leading-relaxed mb-3">{loc.description || loc.details || JSON.stringify(loc)}</p>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] mb-4">
                       {loc.layout && (
@@ -1807,7 +1900,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       </button>
                     </div>
                   </div>
-                ))}
+                );
+                })}
               </div>
             )}
           </div>
@@ -2118,7 +2212,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       } else {
         const nextInputData = project.inputData || { title: '', chapter: '', chapterTitle: '', script: '', selectedStyle: 'standard' };
         const nextProduction = project.production || {};
-        const nextProject = project.storyFlowProject || normalizeLegacyProductionToProject(nextInputData, nextProduction);
+        const nextProject = hydrateStoryFlowProject(nextInputData, nextProduction, project.storyFlowProject);
         setInputData(nextInputData);
         setProduction(nextProduction);
         setProject(nextProject);
