@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast } from '../hooks/useToast';
+import Toast from './Toast';
 import { 
   ArrowLeft, 
   Send, 
@@ -27,6 +29,7 @@ import {
 } from 'lucide-react';
 import { ParsedBlock, ParsingStatus, LiteraryProject } from '../types/literary';
 import { parseLiteraryText } from '../services/literaryService';
+import { fetchAllProjects, saveProjectToServer, deleteProjectFromServer } from '../services/projectService';
 
 interface LiteraryParserProps {
   onBack: () => void;
@@ -51,7 +54,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
   const [viewMode, setViewMode] = useState<'editor' | 'library'>('editor');
   const [savedProjects, setSavedProjects] = useState<LiteraryProject[]>([]);
-  const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
+  const { toast, showToast } = useToast();
   const [isLoaded, setIsLoaded] = useState(false);
   const [editingBlockIndex, setEditingBlockIndex] = useState<number | null>(null);
   const [editValues, setEditValues] = useState<ParsedBlock | null>(null);
@@ -99,20 +102,11 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
 
   const fetchProjects = async () => {
     try {
-      const res = await fetch('/api/projects');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        // Filter for literary projects
-        setSavedProjects(data.filter((p: any) => p.type === 'literary'));
-      }
+      const data = await fetchAllProjects();
+      setSavedProjects(data.filter((p: any) => p.type === 'literary'));
     } catch (err) {
       console.error("Failed to load projects:", err);
     }
-  };
-
-  const showToast = (message: string) => {
-    setToast({ message, visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const handleAnalyze = async () => {
@@ -161,14 +155,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
     };
 
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(projectData)
-      });
-
-      if (!response.ok) throw new Error("Failed to save to server");
-      
+      await saveProjectToServer(projectData);
       showToast(`Đã lưu chương ${chapterNumber} vào bộ truyện ${novelName}!`);
       fetchProjects();
     } catch (err) {
@@ -180,9 +167,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
   const deleteProject = async (id: number) => {
     if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ bộ truyện này không?")) return;
     try {
-      const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error("Failed to delete from server");
-
+      await deleteProjectFromServer(id);
       setSavedProjects(prev => prev.filter(p => p.id !== id));
       showToast("Đã xóa bộ truyện khỏi thư viện");
     } catch (err) {
@@ -806,16 +791,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
       </main>
 
       {/* Toast Notification */}
-      {toast.visible && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-2">
-          <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/10">
-            <div className="bg-emerald-500 p-1 rounded-full">
-              <CheckCircle2 className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-sm font-bold">{toast.message}</span>
-          </div>
-        </div>
-      )}
+      <Toast message={toast.message} visible={toast.visible} />
     </div>
   );
 };
