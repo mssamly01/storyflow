@@ -1,7 +1,7 @@
 
-import { Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { ParsedBlock } from "../types/literary";
-import { getAI, getModel } from "./geminiService";
+import { getConfig } from "./configService";
 
 const SYSTEM_INSTRUCTION = `
 Bạn là một Công cụ Phân tích Cấu trúc Văn học Chuyên nghiệp (Expert Literary Parser). Nhiệm vụ của bạn là xử lý văn bản tiểu thuyết đầu vào và tái cấu trúc nó bằng cách xác định lời thoại (dialogue), suy nghĩ (thoughts) và hành động (action), sau đó gộp các yếu tố liên tiếp thuộc về CÙNG MỘT nhân vật thành một khối duy nhất, **luôn đảm bảo giữ đúng trình tự gốc của văn bản**.
@@ -118,8 +118,14 @@ const RESPONSE_SCHEMA: Schema = {
 };
 
 export const parseLiteraryText = async (text: string): Promise<ParsedBlock[]> => {
-  const ai = getAI();
-  const modelName = getModel();
+  const config = getConfig();
+  const apiKey = config.geminiApiKey || process.env.API_KEY || '';
+  if (!apiKey) {
+    throw new Error("API Key not found. Please configure it in Settings.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const modelName = config.geminiModel || "gemini-1.5-flash";
 
   try {
     const result = await ai.models.generateContent({

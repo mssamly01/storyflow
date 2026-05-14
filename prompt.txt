@@ -1,0 +1,119 @@
+
+Bạn là chuyên gia biên tập sách và thiết kế nhân vật. Hãy thực hiện phân tích TOÀN DIỆN tiểu thuyết dưới đây.
+
+
+
+PHONG CÁCH HÌNH ẢNH (VISUAL STYLE):
+Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired.
+
+YÊU CẦU ĐẦU RA (PHẢI TRẢ VỀ ĐỊNH DẠNG JSON):
+
+1. **analysis (Phân tích nhịp truyện):** 
+   - Trả về một mảng các đối tượng: [{ "originalText": "...", "analysis": "...", "atmosphere": "..." }]
+   - Chia TOÀN BỘ văn bản thành các nhịp truyện (beats) liên tục, KHÔNG BỎ SÓT bất kỳ nội dung nào.
+   - **QUY TẮC CẮT CẢNH (SCENE-CUTTING RULES - CRITICAL):**
+     - **Giới hạn độ dài:** Lý tưởng 50-60 từ/Beat. Giữ trọn vẹn câu văn, KHÔNG bao giờ cắt ngang câu.
+     - **TÁCH CẢNH NGAY LẬP TỨC KHI:**
+       - **Thay đổi nhân vật:** Khi có một nhân vật mới bắt đầu thực hiện hành động, lời thoại hoặc suy nghĩ.
+       - **Dẫn chuyện xen ngang (Narration Interruption):** Bất kỳ đoạn dẫn chuyện nào (mô tả khách quan, bối cảnh, thời gian trôi qua) xuất hiện giữa các hành động/lời thoại của cùng một nhân vật đều PHẢI TÁCH thành khối riêng. Không gộp hành động trước và sau lời dẫn chuyện đó vào cùng một Beat.
+       - **Thay đổi bối cảnh/địa điểm:** Nếu có hành động di chuyển từ A sang B, phải TÁCH RIÊNG hành động di chuyển và hành động tại đích đến.
+       - **Thay đổi đối tượng tương tác:** Nếu cùng một nhân vật thực hiện các hành động liên tiếp nhưng hướng tới các đối tượng khác nhau (Ví dụ: Nói với A xong quay sang cười với B) -> PHẢI TÁCH thành các Beat riêng biệt.
+       - **Thay đổi cảm xúc/Biểu cảm/Hành động TRONG lời thoại dài:** Nếu một nhân vật đang nói nhưng có sự thay đổi trạng thái (Ví dụ: Đang nói bình thường bỗng cười lớn, hoặc đang ngồi bỗng đứng dậy) -> PHẢI TÁCH thành Beat mới ngay tại điểm thay đổi đó.
+       - **Lời thoại quá dài:** Nếu lời thoại của một nhân vật dài hơn 3 câu hoặc chứa nhiều thông tin quan trọng khác nhau -> PHẢI TÁCH thành các khối nhỏ để đảm bảo mỗi khung hình chỉ tập trung vào một ý chính/biểu cảm chính.
+     - **GỘP CẢNH KHI:**
+       - Các nhân vật đang tương tác trực tiếp trong cùng một không gian (Two-shot, Over-the-shoulder) và không bị ngăn cách bởi lời dẫn chuyện.
+       - Lời thoại ngắn và hành động đi kèm đơn giản của cùng một người.
+       - **DẤU HAI CHẤM GIỚI THIỆU (COLON INTRODUCTION - CRITICAL):** Nếu một hành động/lời dẫn kết thúc bằng dấu hai chấm (:) để giới thiệu lời thoại ngay sau đó -> BẮT BUỘC gộp hành động đó và lời thoại vào cùng một Beat. KHÔNG bao giờ tách chúng ra.
+   - **NỘI DUNG PHÂN TÍCH:**
+       - Phân tích bối cảnh chi tiết cho mỗi Beat.
+        XÁC ĐỊNH THỜI ĐIỂM (TIME OF DAY): Xác định chính xác thời gian diễn ra (Ví dụ: Early Morning, Mid-day, Golden Hour, Late Night). Thời điểm này PHẢI đồng nhất cho các Beat thuộc cùng một phân đoạn.
+       - Xác định Cảm xúc/Không khí (Atmosphere) chủ đạo.
+
+2. **characterLocationAnalysis (Hồ sơ Nhân vật & Bối cảnh):**
+   - Trả về đối tượng: { "characters": [...], "locations": [...] }
+   - **QUY TẮC CHỌN NHÂN VẬT (CHARACTER SELECTION - CRITICAL):**
+    - **BAO GỒM:** 
+      - Nhân vật chính.
+      - Các nhân vật phụ có xuất hiện thực tế (có hành động hoặc lời thoại).
+      - **QUY TẮC ĐỒNG BỘ (CONSISTENCY RULE):** Nếu một nhân vật xuất hiện (hoặc được nhắc đến và cần minh họa hình ảnh) ở **nhiều Beat (từ 2 lần trở lên)** -> BẮT BUỘC tạo hồ sơ để đảm bảo tính đồng bộ hình ảnh giữa các panel.
+    - **LOẠI BỎ:** Chỉ KHÔNG tạo hồ sơ cho nhân vật chỉ được nhắc tên thoáng qua trong lời kể/lời thoại mà **hoàn toàn không** xuất hiện trong bất kỳ khung hình nào (Ví dụ: "Mẹ tôi thường nói..." nhưng người mẹ không bao giờ xuất hiện).
+   - **CẤU TRÚC JSON NHÂN VẬT:** Mỗi nhân vật trong mảng `characters` phải có ĐÚNG các trường sau:
+     - `name`: Tên nhân vật.
+     - `gender`: Giới tính (Tiếng Anh).
+     - `age`: Tuổi cụ thể (Ví dụ: "18").
+     - `height`: Chiều cao cụ thể (Ví dụ: "172cm").
+     - `face`: Mô tả chi tiết cấu trúc khuôn mặt (Tiếng Anh).
+     - `hair`: Kiểu tóc và màu sắc (Tiếng Anh).
+     - `eyes`: Đặc điểm đôi mắt (Tiếng Anh).
+     - `outfit`: Trang phục (Theo quy tắc bên dưới).
+     - `imagePrompt`: Prompt tạo ảnh nhân vật (Tiếng Anh, theo quy tắc bên dưới).
+   - **CẤU TRÚC JSON ĐỊA ĐIỂM:** Mỗi địa điểm trong mảng `locations` phải có:
+     - `name`: Tên địa điểm.
+     - `description`: Mô tả chi tiết (Tiếng Anh).
+     - `imagePrompt`: Prompt Establishing Shot (Tiếng Anh).
+   
+   **QUY TẮC CHI TIẾT NHÂN VẬT (CHARACTERS):**
+   - **Thư viện:** Kiểm tra kỹ Master Library (nếu có thông tin từ trước). Nếu nhân vật đã tồn tại, hãy COPY LẠI Profile cũ và CẬP NHẬT/BỔ SUNG thêm các chi tiết mới (như Outfit mới, đặc điểm mới) nếu chương này có nhắc tới.
+   - **Mới:** Nếu nhân vật mới, hãy tạo Profile cực kỳ chi tiết bằng **TIẾNG ANH**.
+   - **QUY TẮC CHI TIẾT (STRICT ENGLISH):**
+     - **Face:** KHÔNG dùng từ cảm tính (handsome, beautiful). Phải mô tả cấu trúc vật lý (Jawline, cheekbones, nose shape, chin shape). **TUYỆT ĐỐI KHÔNG** mô tả các trạng thái nhất thời, cảm xúc hoặc dấu hiệu mệt mỏi (Ví dụ: KHÔNG dùng "tired", "angry", "sweaty", "crying", "dark circles", "stern look", "exhausted", "frowning"). Hồ sơ phải mô tả diện mạo ở trạng thái trung tính, bền vững suốt cả câu chuyện.
+     - **Tuổi/Chiều cao:** Phải là SỐ CỤ THỂ (Ví dụ: "18", "172cm"). KHÔNG dùng khoảng ("18-20").
+     - **Gender, Hair, Eyes:** Mô tả bằng TIẾNG ANH (Ví dụ: "Oval face", "Short black hair", "Deep blue eyes").
+     - **Trang phục (Outfit):** Phải mô tả CỤ THỂ bằng TIẾNG ANH về màu sắc, layer, loại vải. KHÔNG dùng từ chung chung (như "casual clothes").
+     - **QUY TẮC OUTFIT (CRITICAL):** 
+       - Nếu chỉ có MỘT trang phục: Mô tả trực tiếp (Ví dụ: "Short-sleeved white shirt, blue jeans"). 
+       - Nếu có NHIỀU trang phục: Phân chia cụ thể trong cùng một chuỗi (Ví dụ: "Outfit 1: [Mô tả], Outfit 2: [Mô tả]").
+     - **QUY TẮC IMAGE PROMPT (CRITICAL):** 
+       - Image Prompt phải được tổng hợp từ Profile bằng TIẾNG ANH.
+       - **BẮT BUỘC:** Phải bắt đầu prompt bằng tên phong cách hình ảnh: "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired.".
+       - **KHÔNG** bao gồm các cảm xúc hay biểu cảm phân tích được từ văn bản.
+       - **BIỂU CẢM MẶC ĐỊNH:** Luôn sử dụng "Neutral and calm expression" để đảm bảo tính nhất quán cho thiết kế nhân vật.
+       - Cấu trúc: "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired., [Name], [Gender], [Age], [Height], [Face details], [Hair], [Eyes], [Outfit]. Front view, full body, standing pose with upright posture, arms relaxed at sides. Neutral and calm expression. Character design, clean white background. NO text, NO labels, clean artwork only."
+     - **QUY TẮC VISUAL DISTINCTIVENESS:** Mỗi nhân vật phải có màu sắc chủ đạo khác nhau hoặc đặc điểm nhận dạng riêng biệt (Silhouette) để không bị nhầm lẫn khi tạo ảnh.
+
+   **ĐỊA ĐIỂM (LOCATIONS) - TRÍCH XUẤT TRIỆT ĐỂ (EXHAUSTIVE):**
+   - **KIỂM TRA THƯ VIỆN:** Luôn kiểm tra Master Library trước. Nếu địa điểm đã tồn tại, hãy giữ nguyên thông tin cũ và CẬP NHẬT thêm chi tiết mới nếu có. 
+   - **PHẢI TRÍCH XUẤT TẤT CẢ:** Đối chiếu với từng Beat trong phần `analysis` ở trên. Bất kỳ địa điểm nào được nhắc đến hoặc ngụ ý trong các Beat đều PHẢI có một Profile riêng trong mảng `locations`. 
+   - **Không bỏ sót:** Bao gồm cả những bối cảnh nhỏ nhất hoặc thoáng qua (hành lang, góc tối, bậc thềm, cổng trường, bên trong xe, v.v.).
+   - **KIỂM TRA TRẠNG THÁI (STATE CHECK):**
+     - Nếu địa điểm ĐÃ CÓ nhưng trạng thái thị giác thay đổi đáng kể trong chương này (Ví dụ: "Messy Room" -> "Cleaned Room", "Intact Building" -> "Ruined Building"), hãy tạo một **PROFILE MỚI** với tên kèm hậu tố trạng thái.
+     - Ví dụ: `My_Bedroom (Cleaned)`, `CitySquare (Ruined)`.
+     - **Description:** Mô tả trạng thái hiện tại chi tiết bằng TIẾNG ANH (Kiến trúc, Vật liệu, Ánh sáng).
+     - **imagePrompt:** Phải bắt đầu bằng "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired.", sau đó mô tả một Establishing Shot (khung hình thiết lập) cho địa điểm này bằng TIẾNG ANH.
+
+TIỂU THUYẾT:
+Xé đôi, rồi ném vào thùng rác bên cạnh. "Tôi không làm! Cái loại công việc rác rưởi này, đến chó cũng không thèm làm!"
+
+Tiếng hít khí lạnh vang vọng ngoài hành lang. Trong đống giấy tờ đó còn có vài trăm vạn phiếu khấu trừ đầu vào, giờ thì không thể khấu trừ được nữa.
+
+Tôi lập tức rút điện thoại ra, chụp một loạt ảnh đống giấy vụn.
+
+"Chụp cái gì chụp? Đồ biến thái!" Tống Mật lao tới cản tôi, ly Americano trên tay cô ta đổ thẳng lên tập báo cáo tôi vừa hoàn tất. "Á! Trượt tay mất rồi." Cô ta che miệng, trong mắt toàn là ác ý.
+
+Tôi nhìn đống hỗn loạn trước mắt. "Tống Mật, đây là tài sản công ty, cô đang phá hoại sản xuất kinh doanh."
+
+Tống Mật cười như hoa nở, ghé sát vào tai tôi. "Chị làm việc liều mạng vậy làm gì? Công ty này mang họ Trương, chị cố làm gì cho mệt?" Cô ta rút điện thoại, dí sát mặt tôi quay phim. "Tôi sẽ đăng Douyin ngay bây giờ, cho thiên hạ thấy bộ mặt thật của chị! Cả nhà ơi, mau vào xem, đây chính là cái bà giám đốc biến thái vì ba hào mà ép chết thực tập sinh đó! Giờ còn định đánh người ta nữa! Kinh quá đi!" Cô ta cắt ghép đoạn video vừa rồi, đăng ngay vào group nội bộ công ty, đồng thời tung lên TikTok.
+
+Video chỉ có đoạn tôi khóa cửa, mặt lạnh lùng mắng cô ta. Chú thích: 《Cảnh báo! Giám đốc tài vụ biến thái vì ba hào mà ép chết thực tập sinh, còn đổ cà phê của tôi!》 《00 hậu dọn dẹp chốn công sở: Tôi không khuất phục trước sự đố kỵ của bà già!》 Video bị tăng tốc, ghép nhạc nền u ám. Phần bình luận toàn là người ngoài cuộc không hiểu sự tình: Bà này nhìn hung dữ thật, chắc ghen tị em gái trẻ đẹp quá. Vì ba hào mà làm lớn vậy à? Chắc mãn kinh nên cáu gắt. Tội nghiệp em gái, công ty kiểu này trốn được thì trốn lẹ đi!
+
+Chiều hôm đó, trong cuộc họp thường kỳ, Trương Kiến Quốc trước mặt toàn bộ ban giám đốc mở đoạn video kia ra. Vừa xem vừa lắc đầu, khóe miệng lại hiện ý cười. "Vương Việt à, tôi không muốn nói đâu. Chị nhìn xem, hình tượng của chị trên mạng tệ cỡ nào? Công ty mình sắp niêm yết rồi, hình tượng quan trọng lắm. Tiểu Tống tuy trẻ, nhưng là ‘cá trê’ của công ty, có thể khuấy động vũng nước đọng này. Các người phải học hỏi Tiểu Tống, dám thách thức quy tắc cũ, dám lên tiếng."
+
+Cá trê? Ha. Tôi cúi đầu, giấu đi sự khinh thường trong mắt. "Biết rồi, Trương tổng."
+
+Về đến nhà.
+
+Tôi bày những mảnh giấy vụn nhặt được lên bàn trà, Ráp lại từng chút một. Lại lấy ra bản sao của tờ đơn thanh toán có dấu mộc sai quy định do Tống Mật gửi. Cả đêm không ngủ.
+
+Sáng hôm sau vừa đến công ty, thư yêu cầu điều tra của Cục Thuế đã được gửi vào hòm thư công ty. Nghiệp báo của ba hào cuối cùng cũng tới. Do khoản thu vào và xuất ra chênh lệch nghiêm trọng, hệ thống tự động kích hoạt cảnh báo.
+
+Trương Kiến Quốc ném xấp tài liệu vào mặt tôi. "Vương Việt! Cô làm ăn kiểu gì thế hả! Tôi bảo cô cân đối sổ sách, đâu bảo cô rước cả Cục Thuế tới? Cô ăn lương cao thế để làm gì? Cả cái khai báo thuế mà cũng không biết làm cho rõ ràng?"
+
+Rèm cửa văn phòng chưa kéo, nhân viên ngoài hành lang đang rướn cổ nhìn vào.
+
+Tống Mật đứng sau lưng Trương Kiến Quốc, tỏ vẻ đáng thương. "Trương tổng, chắc chắn là do giám đốc Vương cố ý. Hôm đó chị ta đã dọa đưa em vào tù. Chị ta đang trả thù em đấy, cố tình làm sai sổ sách nộp cho thuế vụ để kéo công ty chết chung. Người như vậy thật đáng sợ, em đề nghị lập tức báo công an bắt chị ta!"
+
+Nghe xong, Trương Kiến Quốc sầm mặt, bước thẳng đến trước mặt tôi: "Cô lập tức đến Cục Thuế gánh hết chuyện này cho tôi. Nói là do cô thao tác sai, là hành vi cá nhân, không liên quan đến công ty."
+
+Tôi cúi xuống nhặt đống tài liệu rơi dưới đất. "Trương tổng, log hệ thống vẫn còn. Thời điểm xảy ra sự cố, tôi không có quyền thao tác. Tài khoản đăng nhập là của Tống Mật. Đây là trách nhiệm của cô ta, tôi không gánh nổi."
+
+Trương Kiến Quốc đập mạnh tay xuống bàn, ly trà cũng rung lên. "Trách nhiệm cô ta hay trách nhiệm cô, tôi là ông chủ, tôi nói của ai thì là của người đó! Log? Log là cái quái gì? Phòng kỹ thuật! Xoá hết log mấy ngày đó cho tôi!" Ông ta trừng mắt nhìn tôi: "Nếu cô không xử lý ổn chuyện này, tôi sẽ khiến cô không thể trụ nổi trong ngành này nữa. Tôi sẽ cho tất cả các công ty săn đầu người biết, cô Vương Việt làm giả sổ sách, bán đứng công ty, còn hãm hại thực tập sinh! Để xem ai dám thuê cô nữa!"
