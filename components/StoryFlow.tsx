@@ -1,18 +1,31 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ProductionStage, ScriptData, ProductionData, CharacterProfile, LocationProfile } from '../types';
+import { ProductionStage, ScriptData, ProductionData, CharacterProfile, LocationProfile, StoryFlowProject, StepStatus, FinalResult } from '../types';
 import * as gemini from '../services/geminiService';
 import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptService';
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
 import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
 import {
-  buildFinalResult,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
   normalizeEngineerPrompts,
   normalizeQAResults,
   parseJsonSafe
 } from '../services/finalResultBuilderService';
+import {
+  buildFinalResultFromProject,
+  createInitialProject,
+  normalizeLegacyProductionToProject,
+  replaceBeats,
+  replaceBeatsFromUserEdit,
+  replaceCharacterLocationLibrary,
+  replaceEngineerPrompts,
+  replaceFinalResult,
+  replaceQAResults,
+  replaceStoryboardPanels,
+  serializeProjectForStorage,
+  syncProjectSource
+} from '../services/storyFlowProjectService';
 import { 
   FileText, 
   BarChart2, 
@@ -139,6 +152,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     chapterTitle: ''
   });
   const [production, setProduction] = useState<ProductionData>({});
+  const [project, setProject] = useState<StoryFlowProject>(() => createInitialProject());
   const [unlockedStages, setUnlockedStages] = useState<ProductionStage[]>([ProductionStage.INPUT]);
   const [savedProjects, setSavedProjects] = useState<any[]>([]);
   const [litProjects, setLitProjects] = useState<any[]>([]);
@@ -201,13 +215,14 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     const savedState = localStorage.getItem('storyflow_temp_state');
     if (savedState) {
       try {
-        const { stage: savedStage, inputData: savedInputData, production: savedProduction, unlockedStages: savedUnlockedStages, isManualMode: savedManual, isGlobalManualMode: savedGlobalManual } = JSON.parse(savedState);
+        const { stage: savedStage, inputData: savedInputData, production: savedProduction, project: savedProject, unlockedStages: savedUnlockedStages, isManualMode: savedManual, isGlobalManualMode: savedGlobalManual } = JSON.parse(savedState);
         const initialStage = savedStage || ProductionStage.INPUT;
         const initialInputData = savedInputData || { script: '', selectedStyle: 'manhua', title: '', chapter: '', chapterTitle: '' };
         const initialProduction = savedProduction || {};
         setStage(initialStage);
         setInputData(initialInputData);
         setProduction(initialProduction);
+        setProject(savedProject || normalizeLegacyProductionToProject(initialInputData, initialProduction));
         if (Array.isArray(savedUnlockedStages) && savedUnlockedStages.length > 0) {
           setUnlockedStages(savedUnlockedStages);
         } else {
@@ -230,12 +245,18 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
       stage,
       inputData,
       production,
+      project: serializeProjectForStorage(project),
       unlockedStages,
       isManualMode,
       isGlobalManualMode
     };
     localStorage.setItem('storyflow_temp_state', JSON.stringify(stateToSave));
-  }, [isLoaded, stage, inputData, production, unlockedStages, isManualMode, isGlobalManualMode]);
+  }, [isLoaded, stage, inputData, production, project, unlockedStages, isManualMode, isGlobalManualMode]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    setProject(prev => syncProjectSource(prev, inputData));
+  }, [isLoaded, inputData.title, inputData.script, inputData.selectedStyle]);
 
   useEffect(() => {
     if (stage === ProductionStage.LIBRARY) return;
@@ -465,6 +486,24 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return false;
   };
 
+  const getWorkflowStatusForStage = (s: ProductionStage): StepStatus | null => {
+    if (s === ProductionStage.ANALYSIS) return project.workflow.beatAnalysis.status;
+    if (s === ProductionStage.CHARACTER_LOCATION) return project.workflow.characterLocation.status;
+    if (s === ProductionStage.STORYBOARD) return project.workflow.storyboard.status;
+    if (s === ProductionStage.PROMPTS) return project.workflow.promptEngineering.status;
+    if (s === ProductionStage.QA) return project.workflow.qa.status;
+    if (s === ProductionStage.FINAL) return project.workflow.finalResult.status;
+    return null;
+  };
+
+  const getWorkflowStatusClass = (status: StepStatus) => {
+    if (status === "stale" || status === "error") return "bg-amber-500/15 text-amber-300 border-amber-400/20";
+    if (status === "approved") return "bg-emerald-500/15 text-emerald-300 border-emerald-400/20";
+    if (status === "needs_review") return "bg-sky-500/15 text-sky-300 border-sky-400/20";
+    if (status === "generating") return "bg-indigo-500/15 text-indigo-300 border-indigo-400/20";
+    return "bg-slate-700/40 text-slate-400 border-slate-600/40";
+  };
+
   const normalizeBeatForUi = (beat: any, index: number) => {
     if (!beat || typeof beat !== 'object' || Array.isArray(beat)) return beat;
 
@@ -545,6 +584,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           ...prev,
           analysis: JSON.stringify(analysisPayload, null, 2)
         }));
+        setProject(prev => replaceBeats(prev, normalizeBeats(analysisPayload)));
         setManualInputValue('');
         setIsManualMode(false);
         setStage(ProductionStage.CHARACTER_LOCATION);
@@ -560,11 +600,17 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           return JSON.stringify(val, null, 2);
         };
 
+        const analysisValue = parsedJson.analysis ? formatValue(parsedJson.analysis) : production.analysis || '';
+        const characterLocationValue = parsedJson.characterLocationAnalysis ? formatValue(parsedJson.characterLocationAnalysis) : production.characterLocationAnalysis || '';
+
         setProduction(prev => ({
           ...prev,
-          analysis: parsedJson.analysis ? formatValue(parsedJson.analysis) : prev.analysis,
-          characterLocationAnalysis: parsedJson.characterLocationAnalysis ? formatValue(parsedJson.characterLocationAnalysis) : prev.characterLocationAnalysis
+          analysis: parsedJson.analysis ? analysisValue : prev.analysis,
+          characterLocationAnalysis: parsedJson.characterLocationAnalysis ? characterLocationValue : prev.characterLocationAnalysis
         }));
+        if (analysisValue || characterLocationValue) {
+          syncPhaseOneProjectData(analysisValue, characterLocationValue);
+        }
         setManualInputValue('');
         setIsManualMode(false);
         
@@ -605,6 +651,47 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  const syncPhaseOneProjectData = (analysisValue: string, characterLocationValue: string) => {
+    const beats = normalizeBeats(parseJsonSafe<unknown>(analysisValue, []));
+    const library = normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(characterLocationValue, {}));
+    setProject(prev => replaceCharacterLocationLibrary(
+      replaceBeats(prev, beats),
+      library
+    ));
+  };
+
+  const updateProjectDataByStage = (result: string, targetStage: ProductionStage) => {
+    setProject(prev => {
+      try {
+        if (targetStage === ProductionStage.ANALYSIS) {
+          return replaceBeats(prev, normalizeBeats(parseJsonSafe<unknown>(result, [])));
+        }
+        if (targetStage === ProductionStage.CHARACTER_LOCATION) {
+          return replaceCharacterLocationLibrary(
+            prev,
+            normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(result, {}))
+          );
+        }
+        if (targetStage === ProductionStage.STORYBOARD) {
+          return replaceStoryboardPanels(prev, normalizeStoryboardPanels(parseJsonSafe<unknown>(result, { panels: [] })));
+        }
+        if (targetStage === ProductionStage.PROMPTS) {
+          return replaceEngineerPrompts(prev, normalizeEngineerPrompts(parseJsonSafe<unknown>(result, [])));
+        }
+        if (targetStage === ProductionStage.QA) {
+          return replaceQAResults(prev, normalizeQAResults(parseJsonSafe<unknown>(result, [])));
+        }
+        if (targetStage === ProductionStage.FINAL) {
+          const finalResult = parseJsonSafe<FinalResult | null>(result, null);
+          return finalResult ? replaceFinalResult(prev, finalResult) : prev;
+        }
+      } catch (err) {
+        console.error("Failed to sync project data:", err);
+      }
+      return prev;
+    });
+  };
+
   const handleAutoAnalysis = async () => {
     setIsLoading(true);
     setError(null);
@@ -612,11 +699,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       const existingLibrary = getMasterLibrary();
       const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
       const parsed = JSON.parse(result);
+      const analysisValue = typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2);
+      const characterLocationValue = typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2);
       setProduction(prev => ({
         ...prev,
-        analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
-        characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+        analysis: analysisValue,
+        characterLocationAnalysis: characterLocationValue
       }));
+      syncPhaseOneProjectData(analysisValue, characterLocationValue);
       setStage(ProductionStage.STORYBOARD);
     } catch (err: any) {
       setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
@@ -636,6 +726,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       else if (targetStage === ProductionStage.FINAL) updated.finalResult = result;
       return updated;
     });
+    updateProjectDataByStage(result, targetStage);
   };
 
   const handleUpdateBeat = (index: number) => {
@@ -645,6 +736,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       const beats = getAnalysisBeatsFromParsed(parsed) || [];
       beats[index] = normalizeBeatForUi(editingBeatData, index);
       updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+      setProject(prev => replaceBeatsFromUserEdit(prev, normalizeBeats(beats)));
       setEditingBeatIndex(null);
       setEditingBeatData(null);
     } catch (e) {
@@ -666,6 +758,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           const beats = getAnalysisBeatsFromParsed(parsed) || [];
           beats.splice(index, 1);
           updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+          setProject(prev => replaceBeatsFromUserEdit(prev, normalizeBeats(beats)));
           setConfirmModal(prev => ({ ...prev, show: false }));
         } catch (e) {
           console.error("Failed to delete beat:", e);
@@ -696,6 +789,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       };
       beats.splice(index + 1, 0, newBeat);
       updateProductionDataByStage(JSON.stringify(beats, null, 2), ProductionStage.ANALYSIS);
+      setProject(prev => replaceBeatsFromUserEdit(prev, normalizeBeats(beats.map((beat: any, beatIndex: number) => normalizeBeatForUi(beat, beatIndex)))));
       setEditingBeatIndex(index + 1);
       setEditingBeatData(newBeat);
     } catch (e) {
@@ -731,11 +825,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         const existingLibrary = getMasterLibrary();
         result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
         const parsed = JSON.parse(result);
+        const analysisValue = typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2);
+        const characterLocationValue = typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2);
         setProduction(prev => ({
           ...prev,
-          analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
-          characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+          analysis: analysisValue,
+          characterLocationAnalysis: characterLocationValue
         }));
+        syncPhaseOneProjectData(analysisValue, characterLocationValue);
         const nextIdx = steps.findIndex(s => s.id === stage) + 1;
         if (nextIdx < steps.length) {
           setStage(steps[nextIdx].id);
@@ -765,14 +862,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         const libraryData = normalizeCharacterLocationLibrary(
           parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
         );
-        const finalResult = buildFinalResult({
-          beats: normalizeBeats(analysisData),
-          panels: normalizeStoryboardPanels(storyboardData),
-          engineerPrompts: normalizeEngineerPrompts(promptData),
-          qaResults: normalizeQAResults(qaData),
-          characters: libraryData.characters,
-          locations: libraryData.locations
-        });
+        const projectForFinal = {
+          ...project,
+          beats: project.beats.length ? project.beats : normalizeBeats(analysisData),
+          storyboardPanels: project.storyboardPanels.length ? project.storyboardPanels : normalizeStoryboardPanels(storyboardData),
+          engineerPrompts: project.engineerPrompts.length ? project.engineerPrompts : normalizeEngineerPrompts(promptData),
+          qaResults: project.qaResults.length ? project.qaResults : normalizeQAResults(qaData),
+          characters: project.characters.length ? project.characters : libraryData.characters,
+          locations: project.locations.length ? project.locations : libraryData.locations
+        };
+        const finalResult = buildFinalResultFromProject(projectForFinal);
         result = JSON.stringify(finalResult, null, 2);
         targetStage = ProductionStage.FINAL;
       }
@@ -801,6 +900,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       type: 'storyflow',
       inputData,
       production,
+      storyFlowProject: serializeProjectForStorage(project),
       timestamp: new Date().toISOString()
     };
 
@@ -2018,8 +2118,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       } else {
         const nextInputData = project.inputData || { title: '', chapter: '', chapterTitle: '', script: '', selectedStyle: 'standard' };
         const nextProduction = project.production || {};
+        const nextProject = project.storyFlowProject || normalizeLegacyProductionToProject(nextInputData, nextProduction);
         setInputData(nextInputData);
         setProduction(nextProduction);
+        setProject(nextProject);
         setUnlockedStages(computeUnlockedStages(nextInputData, nextProduction, stage));
         setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
       }
@@ -2429,6 +2531,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             <div className="py-2"><div className="h-px bg-white/5 mx-4"></div></div>
             {steps.map((s, i) => {
               const isUnlocked = s.id === ProductionStage.INPUT || hasData(s.id) || stage === s.id || unlockedStages.includes(s.id);
+              const workflowStatus = getWorkflowStatusForStage(s.id);
               
               return (
                 <button 
@@ -2439,7 +2542,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 >
                   <div className={`p-1.5 rounded-lg transition-colors ${stage === s.id ? "bg-white/20" : "bg-slate-800 group-hover:bg-slate-700"}`}><s.icon className="w-4 h-4" /></div>
                   <span className="truncate">{s.label}</span>
-                  {hasData(s.id) && stage !== s.id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto text-emerald-500" />}
+                  {workflowStatus && workflowStatus !== "not_started" && (
+                    <span className={`ml-auto px-2 py-0.5 rounded-full border text-[8px] uppercase tracking-wide ${getWorkflowStatusClass(workflowStatus)}`}>
+                      {workflowStatus.replace("_", " ")}
+                    </span>
+                  )}
+                  {hasData(s.id) && stage !== s.id && <CheckCircle2 className={`w-3.5 h-3.5 text-emerald-500 ${workflowStatus && workflowStatus !== "not_started" ? "" : "ml-auto"}`} />}
                 </button>
               );
             })}

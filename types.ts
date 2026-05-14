@@ -27,6 +27,7 @@ export interface ProductionData {
 }
 
 export interface BeatAnalysis {
+  meta?: EditableMeta;
   beatId?: number;
   originalText: string;
   actionAnalysis?: string;
@@ -69,6 +70,7 @@ export interface CharacterLocationLibraryResult {
 }
 
 export interface CharacterProfile {
+  meta?: EditableMeta;
   characterId?: string;
   name: string;
   role?: string;
@@ -94,6 +96,7 @@ export interface CharacterProfile {
 }
 
 export interface LocationProfile {
+  meta?: EditableMeta;
   locationId?: string;
   name: string;
   aliases?: string[];
@@ -124,6 +127,7 @@ export interface CharacterBlocking {
 }
 
 export interface StoryboardPanel {
+  meta?: EditableMeta;
   panelId?: string;
   panelNumber?: number;
   beatId?: number;
@@ -161,6 +165,7 @@ export interface StoryboardPanel {
 }
 
 export interface EngineerPrompt {
+  meta?: EditableMeta;
   panelNumber?: number;
   panelId?: string;
   beatId?: number;
@@ -177,6 +182,7 @@ export interface EngineerPrompt {
 }
 
 export interface QAResult {
+  meta?: EditableMeta;
   panelNumber?: number;
   panelId?: string;
   beatId?: number;
@@ -253,4 +259,53 @@ export interface FinalResult {
     generatedAt: string;
     source: "code-builder";
   };
+}
+
+export type StepStatus =
+  | "not_started"
+  | "generating"
+  | "needs_review"
+  | "approved"
+  | "stale"
+  | "error";
+
+export interface WorkflowStepState {
+  status: StepStatus;
+  updatedAt?: string;
+  approvedAt?: string;
+  errorMessage?: string;
+}
+
+export interface WorkflowState {
+  beatAnalysis: WorkflowStepState;
+  characterLocation: WorkflowStepState;
+  storyboard: WorkflowStepState;
+  promptEngineering: WorkflowStepState;
+  qa: WorkflowStepState;
+  finalResult: WorkflowStepState;
+}
+
+export interface EditableMeta {
+  status?: StepStatus;
+  source?: "ai" | "user" | "code";
+  updatedAt?: string;
+  approvedAt?: string;
+  staleReason?: string;
+}
+
+export interface StoryFlowProject {
+  id: string;
+  title: string;
+  sourceText: string;
+  selectedStyleId?: string;
+  beats: StoryBeat[];
+  characters: CharacterProfile[];
+  locations: LocationProfile[];
+  storyboardPanels: StoryboardPanel[];
+  engineerPrompts: EngineerPrompt[];
+  qaResults: QAResult[];
+  finalResult: FinalResult | null;
+  workflow: WorkflowState;
+  createdAt: string;
+  updatedAt: string;
 }
