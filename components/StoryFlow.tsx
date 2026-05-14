@@ -1,11 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useToast } from '../hooks/useToast';
-import Toast from './Toast';
-import ConfirmModal from './ConfirmModal';
 import { ProductionStage, ScriptData, ProductionData } from '../types';
 import * as gemini from '../services/geminiService';
-import { fetchAllProjects, saveProjectToServer, deleteProjectFromServer } from '../services/projectService';
 import { 
   FileText, 
   BarChart2, 
@@ -116,7 +112,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
   const [showLibraryModal, setShowLibraryModal] = useState(false);
-  const { toast, showToast } = useToast();
+  const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
 
   const [inputData, setInputData] = useState<ScriptData>({
     script: '',
@@ -230,10 +226,14 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   }, [stage]);
 
   useEffect(() => {
-    fetchAllProjects()
+    fetch('/api/projects')
+      .then(res => res.json())
       .then(data => {
-        setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
-        setLitProjects(data.filter((p: any) => p.type === 'literary'));
+        if (Array.isArray(data)) {
+          // Phân loại dự án
+          setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
+          setLitProjects(data.filter((p: any) => p.type === 'literary'));
+        }
       })
       .catch(err => console.error("Failed to load projects:", err));
   }, []);
@@ -324,7 +324,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
                     const profileOutfitsText = profile.outfit || "";
                     // Phân tách các outfit trong profile
                     const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
-                      .map((s: string) => s.trim())
+                      .map(s => s.trim())
                       .filter(Boolean);
                     
                     if (outfitParts.length > 0) {
@@ -342,7 +342,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
 
                       // ƯU TIÊN 2: Nếu không có nhãn hoặc nhãn không khớp, tìm theo nội dung tương đồng
                       if (matchedIndex === -1) {
-                        outfitParts.forEach((part: string, index: number) => {
+                        outfitParts.forEach((part, index) => {
                           if (promptContent.includes(part.toLowerCase()) || 
                               part.toLowerCase().includes(promptContent)) {
                             matchedIndex = index;
@@ -370,7 +370,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
               if (profile && profile.outfit) {
                 const profileOutfitsText = profile.outfit || "";
                 const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
-                  .map((s: string) => s.trim())
+                  .map(s => s.trim())
                   .filter(Boolean);
                 
                 if (outfitParts.length > 0) {
@@ -459,7 +459,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
-      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '');
+      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '');
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
@@ -540,53 +540,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
-  const resolveOriginalText = (beats: Record<string, any>[], script: string): Record<string, any>[] => {
-    let searchFrom = 0;
-    return beats.map((beat: Record<string, any>) => {
-      const startMarker = beat.startMarker || '';
-      const endMarker = beat.endMarker || '';
-      
-      if (!startMarker || !endMarker) {
-        return { ...beat, originalText: beat.originalText || startMarker || '' };
-      }
-      
-      const startIdx = script.indexOf(startMarker, searchFrom);
-      if (startIdx === -1) {
-        return { ...beat, originalText: beat.originalText || startMarker || '' };
-      }
-      
-      const endIdx = script.indexOf(endMarker, startIdx);
-      if (endIdx === -1) {
-        return { ...beat, originalText: script.substring(startIdx, startIdx + 200).trim() };
-      }
-      
-      const originalText = script.substring(startIdx, endIdx + endMarker.length).trim();
-      searchFrom = endIdx + endMarker.length;
-      return { ...beat, originalText };
-    });
-  };
-
-  const runPhase1Analysis = async (): Promise<void> => {
-    const existingLibrary = getMasterLibrary();
-    const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-    const parsed = JSON.parse(result || '{}');
-    
-    if (Array.isArray(parsed.analysis)) {
-      parsed.analysis = resolveOriginalText(parsed.analysis, inputData.script);
-    }
-    
-    setProduction(prev => ({
-      ...prev,
-      analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
-      characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
-    }));
-  };
-
   const handleAutoAnalysis = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      await runPhase1Analysis();
+      const existingLibrary = getMasterLibrary();
+      const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
+      const parsed = JSON.parse(result);
+      setProduction(prev => ({
+        ...prev,
+        analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
+        characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+      }));
       setStage(ProductionStage.STORYBOARD);
     } catch (err: any) {
       setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
@@ -687,7 +652,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       let targetStage = stage;
 
       if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION) {
-        await runPhase1Analysis();
+        const existingLibrary = getMasterLibrary();
+        result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
+        const parsed = JSON.parse(result);
+        setProduction(prev => ({
+          ...prev,
+          analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
+          characterLocationAnalysis: typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2)
+        }));
         const nextIdx = steps.findIndex(s => s.id === stage) + 1;
         if (nextIdx < steps.length) {
           setStage(steps[nextIdx].id);
@@ -695,21 +667,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         setIsLoading(false);
         return;
       } else if (stage === ProductionStage.STORYBOARD) {
-        result = (await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '')) || '';
+        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '');
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
-        result = (await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt())) || '';
+        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
-        result = (await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt())) || '';
+        result = await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
         targetStage = ProductionStage.QA;
-      } else if (stage === ProductionStage.FINAL) {
-        result = (await gemini.generateFinalResult(
+      } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
+        result = await gemini.generateFinalResult(
           production.storyboard || '', 
           production.prompts || '', 
           production.qaReport || '',
           production.characterLocationAnalysis || ''
-        )) || '';
+        );
         targetStage = ProductionStage.FINAL;
       }
       
@@ -727,7 +699,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const saveProject = async () => {
     if (!inputData.title || !inputData.chapter) {
-      showToast("Vui lòng nhập Tên tiểu thuyết và Chương để lưu!");
+      setToast({ message: "Vui lòng nhập Tên tiểu thuyết và Chương để lưu!", visible: true });
+      setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
       return;
     }
 
@@ -740,7 +713,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
 
     try {
-      await saveProjectToServer(projectData);
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+      });
+
+      if (!response.ok) throw new Error("Failed to save to server");
 
       const existingIndex = savedProjects.findIndex((p: any) => 
         p.inputData.title === inputData.title && p.inputData.chapter === inputData.chapter
@@ -751,11 +730,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         : [projectData, ...savedProjects];
 
       setSavedProjects(updatedProjects);
-      showToast("Đã lưu kết quả phân tích vào thư viện!");
+      setToast({ message: "Đã lưu kết quả phân tích vào thư viện!", visible: true });
     } catch (err) {
       console.error(err);
-      showToast("Lỗi khi lưu dự án vào server");
+      setToast({ message: "Lỗi khi lưu dự án vào server", visible: true });
     }
+    
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const deleteProject = (id: number) => {
@@ -766,16 +747,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       type: 'danger',
       onConfirm: async () => {
         try {
-          await deleteProjectFromServer(id);
+          const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error("Failed to delete from server");
 
           const updatedProjects = savedProjects.filter(p => p.id !== id);
           setSavedProjects(updatedProjects);
-          showToast("Đã xóa dự án khỏi thư viện");
+          setToast({ message: "Đã xóa dự án khỏi thư viện", visible: true });
         } catch (err) {
           console.error(err);
-          showToast("Lỗi khi xóa dự án");
+          setToast({ message: "Lỗi khi xóa dự án", visible: true });
         } finally {
           setConfirmModal(prev => ({ ...prev, show: false }));
+          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
         }
       }
     });
@@ -786,12 +769,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const nextChapter = !isNaN(currentChapter) ? (currentChapter + 1).toString() : "";
     
     setProduction({
-      analysis: undefined,
-      characterLocationAnalysis: undefined,
-      storyboard: undefined,
-      prompts: undefined,
-      qaReport: undefined,
-      finalResult: undefined
+      analysis: null,
+      characterLocationAnalysis: null,
+      storyboard: null,
+      prompts: null,
+      qaReport: null,
+      finalResult: null
     });
     setUnlockedStages([ProductionStage.INPUT]);
 
@@ -804,7 +787,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setStage(ProductionStage.INPUT);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     
-    showToast("Đã chuẩn bị cho chương mới!");
+    setToast({ message: "Đã chuẩn bị cho chương mới!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const handleExportSRT = () => {
@@ -818,7 +802,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
 
     let srtContent = '';
-    finalJsonData.forEach((item: Record<string, any>, index: number) => {
+    finalJsonData.forEach((item, index) => {
       const startTime = index * 5;
       const endTime = (index + 1) * 5;
       
@@ -837,7 +821,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    showToast("Đã xuất file SRT thành công!");
+    setToast({ message: "Đã xuất file SRT thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const handleExportJSON = () => {
@@ -884,7 +869,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     // Bỏ trường originalText và thêm trường character
     const allFoundCharacters = new Set<string>();
     
-    const panelsData = finalJsonData.map(({ originalText, ...rest }: Record<string, any>) => {
+    const panelsData = finalJsonData.map(({ originalText, ...rest }) => {
       const visualPrompt = rest.visualPrompt || "";
       
       // Tìm các nhân vật xuất hiện trong visualPrompt
@@ -926,16 +911,30 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     
-    showToast("Đã xuất file JSON thành công!");
+    setToast({ message: "Đã xuất file JSON thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const copyToClipboard = (text?: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
-    showToast("Đã sao chép vào bộ nhớ tạm!");
+    setToast({ message: "Đã sao chép vào bộ nhớ tạm!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
-  const renderToast = () => <Toast message={toast.message} visible={toast.visible} />;
+  const renderToast = () => {
+    if (!toast.visible) return null;
+    return (
+      <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/10">
+          <div className="bg-emerald-500 p-1 rounded-lg">
+            <CheckCircle2 className="w-4 h-4 text-white" />
+          </div>
+          <span className="text-sm font-bold tracking-wide">{toast.message}</span>
+        </div>
+      </div>
+    );
+  };
 
   const renderManualView = () => (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -1166,9 +1165,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     switch (stage) {
       case ProductionStage.ANALYSIS:
-        if (Array.isArray(parsed)) {
-          parsed = resolveOriginalText(parsed, inputData.script);
-        }
         return (
           <div className="space-y-6">
             {Array.isArray(parsed) ? (
@@ -1298,7 +1294,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                         </div>
                       ) : (
                         <div className="space-y-4">
-                          <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || (typeof beat === 'string' ? beat : '')}</p>
+                          <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || beat}</p>
                           {beat.analysis && (
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                               <p className="text-slate-500 text-xs leading-relaxed">
@@ -1656,7 +1652,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           script: scriptFromBlocks,
         }));
       }
-      showToast(isNextChapterFlow ? "Đã nhập nội dung chương mới từ LitStruct!" : "Đã nhập dữ liệu từ LitStruct Parser!");
+      setToast({ message: isNextChapterFlow ? "Đã nhập nội dung chương mới từ LitStruct!" : "Đã nhập dữ liệu từ LitStruct Parser!", visible: true });
     } else {
       if (isNextChapterFlow) {
         // Nếu là dự án StoryFlow và đang ở luồng chương tiếp theo, cũng chỉ lấy script
@@ -1665,18 +1661,19 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           ...prev,
           script: scriptToImport
         }));
-        showToast("Đã nhập nội dung chương mới từ thư viện!");
+        setToast({ message: "Đã nhập nội dung chương mới từ thư viện!", visible: true });
       } else {
         const nextInputData = project.inputData || { title: '', chapter: '', chapterTitle: '', script: '', selectedStyle: 'standard' };
         const nextProduction = project.production || {};
         setInputData(nextInputData);
         setProduction(nextProduction);
         setUnlockedStages(computeUnlockedStages(nextInputData, nextProduction, stage));
-        showToast("Đã tải dự án StoryFlow!");
+        setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
       }
     }
     setShowLibraryModal(false);
     setShowLitLibraryModal(false);
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
   const renderLitLibraryModal = () => {
@@ -1777,16 +1774,38 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     );
   };
 
-  const renderConfirmModal = () => (
-    <ConfirmModal
-      show={confirmModal.show}
-      title={confirmModal.title}
-      message={confirmModal.message}
-      type={confirmModal.type}
-      onConfirm={confirmModal.onConfirm}
-      onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-    />
-  );
+  const renderConfirmModal = () => {
+    if (!confirmModal.show) return null;
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full p-8 border border-slate-100 animate-in zoom-in duration-300">
+          <div className="text-center">
+            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 ${confirmModal.type === 'danger' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>
+              {confirmModal.type === 'danger' ? <Trash2 className="w-10 h-10" /> : <ShieldCheck className="w-10 h-10" />}
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-3 tracking-tight">{confirmModal.title}</h3>
+            <p className="text-slate-500 text-sm leading-relaxed mb-8 px-2 font-medium">
+              {confirmModal.message}
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                className="flex-1 py-4 px-6 rounded-2xl bg-slate-50 text-slate-500 font-black text-[11px] uppercase tracking-widest hover:bg-slate-100 transition-all border border-slate-100"
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                onClick={confirmModal.onConfirm}
+                className={`flex-1 py-4 px-6 rounded-2xl text-white font-black text-[11px] uppercase tracking-widest shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-rose-500 shadow-rose-200 hover:bg-rose-600' : 'bg-indigo-600 shadow-indigo-200 hover:bg-indigo-700'}`}
+              >
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderAnalysisModeModal = () => {
     if (!showAnalysisModeModal) return null;
@@ -1825,16 +1844,17 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       onConfirm: async () => {
         try {
           for (const project of chaptersToDelete) {
-            await deleteProjectFromServer(project.id);
+            await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
           }
           const deletedIds = chaptersToDelete.map(p => p.id);
           setSavedProjects(prev => prev.filter(p => !deletedIds.includes(p.id)));
-          showToast(`Đã xóa bộ truyện "${title}" khỏi thư viện`);
+          setToast({ message: `Đã xóa bộ truyện "${title}" khỏi thư viện`, visible: true });
         } catch (err) {
           console.error(err);
-          showToast("Lỗi khi xóa bộ truyện");
+          setToast({ message: "Lỗi khi xóa bộ truyện", visible: true });
         } finally {
           setConfirmModal(prev => ({ ...prev, show: false }));
+          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
         }
       }
     });
