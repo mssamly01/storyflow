@@ -506,7 +506,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt, production.analysis || '');
       case ProductionStage.QA: return gemini.getQAPrompt(production.prompts || '', production.characterLocationAnalysis || '', stylePrompt, production.storyboard || '', production.analysis || '');
-      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '', production.analysis || '');
+      case ProductionStage.FINAL:
+        return 'Final Result is built locally with finalResultBuilderService. No Gemini call is used in the main Final flow.';
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
