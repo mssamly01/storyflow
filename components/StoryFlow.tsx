@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useToast } from '../hooks/useToast';
+import Toast from './Toast';
+import ConfirmModal from './ConfirmModal';
 import { ProductionStage, ScriptData, ProductionData } from '../types';
 import * as gemini from '../services/geminiService';
 import { fetchAllProjects, saveProjectToServer, deleteProjectFromServer } from '../services/projectService';
@@ -322,7 +324,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
                     const profileOutfitsText = profile.outfit || "";
                     // Phân tách các outfit trong profile
                     const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
-                      .map(s => s.trim())
+                      .map((s: string) => s.trim())
                       .filter(Boolean);
                     
                     if (outfitParts.length > 0) {
@@ -340,7 +342,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
 
                       // ƯU TIÊN 2: Nếu không có nhãn hoặc nhãn không khớp, tìm theo nội dung tương đồng
                       if (matchedIndex === -1) {
-                        outfitParts.forEach((part, index) => {
+                        outfitParts.forEach((part: string, index: number) => {
                           if (promptContent.includes(part.toLowerCase()) || 
                               part.toLowerCase().includes(promptContent)) {
                             matchedIndex = index;
@@ -368,7 +370,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
               if (profile && profile.outfit) {
                 const profileOutfitsText = profile.outfit || "";
                 const outfitParts = profileOutfitsText.split(/Outfit\s*\d+\s*[:\-]\s*/i)
-                  .map(s => s.trim())
+                  .map((s: string) => s.trim())
                   .filter(Boolean);
                 
                 if (outfitParts.length > 0) {
@@ -457,7 +459,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '');
       case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt);
       case ProductionStage.QA: return gemini.getQAPrompt(`${production.storyboard}\n${production.prompts}`, production.characterLocationAnalysis || '', stylePrompt);
-      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '');
+      case ProductionStage.FINAL: return gemini.getFinalResultPrompt(production.storyboard || '', production.prompts || '', production.qaReport || '', production.characterLocationAnalysis || '');
       default: return '';
     }
   }, [stage, inputData, production, savedProjects]);
@@ -541,7 +543,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const runPhase1Analysis = async (): Promise<void> => {
     const existingLibrary = getMasterLibrary();
     const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-    const parsed = JSON.parse(result);
+    const parsed = JSON.parse(result || '{}');
     setProduction(prev => ({
       ...prev,
       analysis: typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2),
@@ -662,21 +664,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         setIsLoading(false);
         return;
       } else if (stage === ProductionStage.STORYBOARD) {
-        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '');
+        result = (await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '')) || '';
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
-        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        result = (await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt())) || '';
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
-        result = await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        result = (await gemini.runQA(production.prompts || '', production.characterLocationAnalysis || '', getSelectedStylePrompt())) || '';
         targetStage = ProductionStage.QA;
-      } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
-        result = await gemini.generateFinalResult(
+      } else if (stage === ProductionStage.FINAL) {
+        result = (await gemini.generateFinalResult(
           production.storyboard || '', 
           production.prompts || '', 
           production.qaReport || '',
           production.characterLocationAnalysis || ''
-        );
+        )) || '';
         targetStage = ProductionStage.FINAL;
       }
       
@@ -753,12 +755,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const nextChapter = !isNaN(currentChapter) ? (currentChapter + 1).toString() : "";
     
     setProduction({
-      analysis: null,
-      characterLocationAnalysis: null,
-      storyboard: null,
-      prompts: null,
-      qaReport: null,
-      finalResult: null
+      analysis: undefined,
+      characterLocationAnalysis: undefined,
+      storyboard: undefined,
+      prompts: undefined,
+      qaReport: undefined,
+      finalResult: undefined
     });
     setUnlockedStages([ProductionStage.INPUT]);
 
@@ -785,7 +787,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
 
     let srtContent = '';
-    finalJsonData.forEach((item, index) => {
+    finalJsonData.forEach((item: Record<string, any>, index: number) => {
       const startTime = index * 5;
       const endTime = (index + 1) * 5;
       
@@ -851,7 +853,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     // Bỏ trường originalText và thêm trường character
     const allFoundCharacters = new Set<string>();
     
-    const panelsData = finalJsonData.map(({ originalText, ...rest }) => {
+    const panelsData = finalJsonData.map(({ originalText, ...rest }: Record<string, any>) => {
       const visualPrompt = rest.visualPrompt || "";
       
       // Tìm các nhân vật xuất hiện trong visualPrompt
@@ -902,19 +904,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     showToast("Đã sao chép vào bộ nhớ tạm!");
   };
 
-  const renderToast = () => {
-    if (!toast.visible) return null;
-    return (
-      <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
-        <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/10">
-          <div className="bg-emerald-500 p-1 rounded-lg">
-            <CheckCircle2 className="w-4 h-4 text-white" />
-          </div>
-          <span className="text-sm font-bold tracking-wide">{toast.message}</span>
-        </div>
-      </div>
-    );
-  };
+  const renderToast = () => <Toast message={toast.message} visible={toast.visible} />;
 
   const renderManualView = () => (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -1753,38 +1743,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     );
   };
 
-  const renderConfirmModal = () => {
-    if (!confirmModal.show) return null;
-    return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-        <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full p-8 border border-slate-100 animate-in zoom-in duration-300">
-          <div className="text-center">
-            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 ${confirmModal.type === 'danger' ? 'bg-rose-50 text-rose-500' : 'bg-indigo-50 text-indigo-500'}`}>
-              {confirmModal.type === 'danger' ? <Trash2 className="w-10 h-10" /> : <ShieldCheck className="w-10 h-10" />}
-            </div>
-            <h3 className="text-2xl font-black text-slate-900 mb-3 tracking-tight">{confirmModal.title}</h3>
-            <p className="text-slate-500 text-sm leading-relaxed mb-8 px-2 font-medium">
-              {confirmModal.message}
-            </p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                className="flex-1 py-4 px-6 rounded-2xl bg-slate-50 text-slate-500 font-black text-[11px] uppercase tracking-widest hover:bg-slate-100 transition-all border border-slate-100"
-              >
-                Hủy bỏ
-              </button>
-              <button 
-                onClick={confirmModal.onConfirm}
-                className={`flex-1 py-4 px-6 rounded-2xl text-white font-black text-[11px] uppercase tracking-widest shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-rose-500 shadow-rose-200 hover:bg-rose-600' : 'bg-indigo-600 shadow-indigo-200 hover:bg-indigo-700'}`}
-              >
-                Xác nhận
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const renderConfirmModal = () => (
+    <ConfirmModal
+      show={confirmModal.show}
+      title={confirmModal.title}
+      message={confirmModal.message}
+      type={confirmModal.type}
+      onConfirm={confirmModal.onConfirm}
+      onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+    />
+  );
 
   const renderAnalysisModeModal = () => {
     if (!showAnalysisModeModal) return null;

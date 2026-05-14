@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useToast } from '../hooks/useToast';
+import Toast from './Toast';
 import { 
   ArrowLeft, 
   Send, 
@@ -790,16 +791,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
       </main>
 
       {/* Toast Notification */}
-      {toast.visible && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-2">
-          <div className="bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-white/10">
-            <div className="bg-emerald-500 p-1 rounded-full">
-              <CheckCircle2 className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-sm font-bold">{toast.message}</span>
-          </div>
-        </div>
-      )}
+      <Toast message={toast.message} visible={toast.visible} />
     </div>
   );
 };
