@@ -17,15 +17,21 @@ const App: React.FC = () => {
   });
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
 
-  // Add keyboard listener for F5 and Ctrl+F5 reset
+  // Add keyboard listener for F5 and Ctrl+F5 reset with confirmation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Bấm F5 hoặc Ctrl+F5 đều reset
       if (e.key === 'F5' || (e.ctrlKey && e.key === 'F5')) {
-        e.preventDefault(); // Ngăn trình duyệt reload mặc định để thực hiện xóa dữ liệu trước
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.reload(); // Stay on current page and reload
+        e.preventDefault();
+        const confirmed = window.confirm(
+          'Bạn có muốn xóa toàn bộ dữ liệu tạm và tải lại trang không?\n\n' +
+          '• Nhấn OK để xóa và tải lại\n' +
+          '• Nhấn Cancel để chỉ tải lại (giữ dữ liệu)'
+        );
+        if (confirmed) {
+          localStorage.clear();
+          sessionStorage.clear();
+        }
+        window.location.reload();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
