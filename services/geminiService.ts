@@ -401,7 +401,9 @@ export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: st
 You are a senior Prompt Engineering specialist. Convert the Storyboard into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
 
 TASK:
-Create one copy-ready visualPrompt for each panel. Each visualPrompt must contain both the positive prompt and a final "Negative prompt:" section.
+Create one copy-ready visualPrompt for each panel.
+Each visualPrompt must be detailed enough to paste directly into an AI image generator.
+Each visualPrompt must contain both the positive prompt and a final "Negative prompt:" section.
 
 SOURCE-OF-TRUTH RULES:
 - Do not re-analyze story fields.
@@ -412,40 +414,17 @@ SOURCE-OF-TRUTH RULES:
 - Location Library is the source of truth for description, layout, keyObjects, lighting, colorPalette, continuityNotes, and baseState.
 - If data conflicts, prioritize APPROVED BEAT SOURCE plus Character/Location Library.
 - If any input entity contains meta.locks.lockedFields, preserve those fields exactly and only regenerate unlocked fields.
-
-OUTPUT RULES:
-- Return ONLY valid JSON. No markdown. No commentary.
-- Output may be a JSON array or an object with "engineerPrompts".
-- Each item must only contain panelNumber, panelId, beatId, and visualPrompt.
-- All source linking is handled by the app through beatId.
-- Do NOT output sourceUsage.
-- Do NOT output usedBeatId.
-- Do NOT output usedLocationId.
-- Do NOT output usedCharacterIds.
-- Never return a negativePrompt field.
-- Never return a negative_prompt field.
-- visualPrompt must include "Negative prompt:" at the end.
-
-REQUIRED JSON SHAPE:
-{
-  "engineerPrompts": [
-    {
-      "panelNumber": 1,
-      "panelId": "panel_001",
-      "beatId": 1,
-      "visualPrompt": "string ending with Negative prompt:"
-    }
-  ]
-}
+- All source linking is handled by the app through beatId. Do not output extra source mapping metadata.
 
 VISUAL STYLE:
 ${style}
 
-VISUAL PROMPT TEMPLATE - MUST FOLLOW ORDER:
+VISUAL PROMPT CONSTRUCTION RULES - MUST FOLLOW ORDER:
 
 1. STYLE FIRST:
 Start every visualPrompt exactly with the selected visual style:
 "${style}"
+Do not start with action, character, camera, or location before the style.
 
 2. LOCATION FIRST:
 Immediately after style, write:
@@ -461,7 +440,7 @@ After Location Continuity, write:
 "Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from APPROVED BEAT SOURCE + Storyboard blocking]."
 Always describe posture for each visible character. Always describe action and interaction: who looks at whom, speaks to whom, touches whom. For side/background characters, describe concrete action and gaze direction. Avoid vague group nouns such as "the group", "the trio", "both of them", or ambiguous "they"; use specific character names.
 
-5. GLOBAL CHARACTER DESCRIPTION:
+5. FULL CHARACTER PROFILE:
 Every named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground/background/off-screen characters and body parts.
 Required format:
 "CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hair], Eyes: [eyes], Posture: [current posture], Outfit: [copy outfit exactly])"
@@ -489,6 +468,20 @@ End the positive part with:
 11. NEGATIVE PROMPT INSIDE visualPrompt:
 Every visualPrompt must end with:
 "Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
+Do not put negativePrompt in a separate field.
+
+VISUAL PROMPT EXAMPLE - FORMAT ONLY, DO NOT COPY CONTENT:
+The example below is only a format example.
+Do not copy its character names, location names, location details, or scene content unless they exist in the input data.
+Never use the example names Linh An, Tong Mat, or CEO Office unless those exact names exist in the input data.
+Use this example only to understand the required level of detail, ordering, and structure.
+
+Example visualPrompt:
+"Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired. Location: CEO Office (a modern luxury CEO office with a dark walnut executive desk, black leather chair, floor-to-ceiling city window, glass bookshelves on the left wall, abstract painting behind the desk, and a black sofa area on the right), evening, cool city light from the window mixed with soft interior office lighting. Location Continuity: use location loc_001: CEO Office; base description: a modern luxury CEO office with dark walnut desk, black leather chair, floor-to-ceiling city window, glass bookshelves, abstract wall painting, and black sofa area; spatial layout: desk centered near the window, chair behind desk, guest chairs in front, bookshelf on left wall, sofa area on right side; key objects to preserve: dark walnut executive desk, black leather office chair, silver laptop, white coffee cup, glass bookshelf, abstract wall painting, black sofa; lighting: cool daylight/city light from the large window combined with soft interior lighting; color palette: dark walnut brown, black leather, cool gray, glass blue, white accent; current beat state: clean office, coffee cup near the laptop; keep the same room layout, furniture placement, architectural features, and object relationships across panels. Camera angle may change, but object positions and room structure must remain consistent. Scene: medium close-up, eye-level camera angle, main character positioned on the left side of the frame, tense conversation across the desk. Linh An (Female, 24, 165cm, oval face, long black hair, dark brown eyes, Posture: standing stiffly with tense shoulders, Outfit: white silk blouse, black pencil skirt, small pearl earrings) grips the edge of the desk while looking directly at Tong Mat. Tong Mat (Male, 31, 182cm, sharp face, neatly styled black hair, cold dark eyes, Posture: seated behind the desk, Outfit: tailored black business suit, white dress shirt, silver wristwatch) leans back in the black leather office chair, staring back at Linh An with a controlled expression. Foreground: edge of the dark walnut desk and white coffee cup. Midground: Linh An and Tong Mat facing each other. Background: floor-to-ceiling city window and glass bookshelves. no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
+
+Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
+
+DATA INPUTS:
 
 APPROVED BEAT SOURCE:
 ${analysis || "No approved beat data provided. Use storyboard legacy source fields only as fallback."}
@@ -498,6 +491,53 @@ ${storyboard}
 
 CHARACTER + LOCATION LIBRARY:
 ${charLocAnalysis}
+
+OUTPUT FIELD RULES:
+- Return ONLY valid JSON.
+- Do not use markdown.
+- Do not add commentary.
+- Output may be a JSON array or an object with "engineerPrompts".
+- Each engineerPrompts item must contain ONLY:
+  panelNumber
+  panelId
+  beatId
+  visualPrompt
+- Do NOT output sourceUsage.
+- Do NOT output usedBeatId.
+- Do NOT output usedLocationId.
+- Do NOT output usedCharacterIds.
+- Do NOT output negativePrompt.
+- Do NOT output negative_prompt.
+
+REQUIRED JSON SHAPE:
+{
+  "engineerPrompts": [
+    {
+      "panelNumber": 1,
+      "panelId": "panel_001",
+      "beatId": 1,
+      "visualPrompt": "string ending with Negative prompt:"
+    }
+  ]
+}
+
+FINAL CHECK BEFORE OUTPUT:
+- Return ONLY valid JSON.
+- Do not use markdown code fences.
+- Do not add commentary outside JSON.
+- Did every item include panelNumber, panelId, beatId, and visualPrompt?
+- Did you avoid sourceUsage, usedBeatId, usedLocationId, usedCharacterIds?
+- Did you avoid negativePrompt and negative_prompt fields?
+- Does every visualPrompt start with the selected style?
+- Does every visualPrompt contain Location?
+- Does every visualPrompt contain Location Continuity?
+- Does every visualPrompt use timeOfDay from APPROVED BEAT SOURCE?
+- Does every named character include full profile details?
+- Is every outfit copied exactly from Character Library?
+- Does every visualPrompt include posture, action, and interaction?
+- Does every visualPrompt include foreground, midground, and background when available?
+- Does every visualPrompt include no text, no speech bubbles, no captions, no subtitles?
+- Does every visualPrompt include a final "Negative prompt:" section?
 `;
 
 export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "") => `
