@@ -161,11 +161,96 @@ export interface StoryboardPanel {
 }
 
 export interface EngineerPrompt {
-  panelNumber: number;
+  panelNumber?: number;
+  panelId?: string;
   beatId?: number;
   visualPrompt: string;
   negativePrompt?: string;
   negative_prompt?: string;
   notes?: string;
   timeOfDay?: string;
+  sourceUsage?: {
+    usedBeatId?: number;
+    usedLocationId?: string;
+    usedCharacterIds?: string[];
+  };
+}
+
+export interface QAResult {
+  panelNumber?: number;
+  panelId?: string;
+  beatId?: number;
+  status?: "pass" | "warning" | "fail" | "unchecked";
+  issues?: string[];
+  suggestedPromptPatch?: string;
+  visualPrompt?: string;
+  qaNotes?: string;
+}
+
+export interface FinalResultPanel {
+  panelId: string;
+  panelNumber: number;
+  beatId: number;
+  source: {
+    originalText: string;
+    summary: string;
+    timeOfDay: string;
+    location: string;
+    locationId?: string;
+    locationState?: string;
+    visibleCharacters: string[];
+    props: string[];
+    action: string;
+    interaction: string;
+    posture: string;
+    atmosphere: string;
+    visualFocus: string;
+  };
+  storyboard: {
+    shotType: string;
+    cameraAngle: string;
+    cameraDistance?: string;
+    lensFeel?: string;
+    composition: string;
+    foreground: string;
+    midground: string;
+    background: string;
+    characterBlocking: CharacterBlocking[];
+    lightingDirection: string;
+    depthAndPerspective: string;
+    visualEmphasis: string;
+    cameraNotes: string;
+  };
+  prompt: {
+    visualPrompt: string;
+    negativePrompt: string;
+  };
+  qa: {
+    status: "pass" | "warning" | "fail" | "unchecked";
+    issues: string[];
+    suggestedPromptPatch: string;
+  };
+  refs: {
+    characterIds: string[];
+    locationId?: string;
+  };
+  originalText: string;
+  cameraAngle: string;
+  framing: string;
+  subject: string;
+  action: string;
+  location_cues: string;
+  lighting: string;
+  visualPrompt: string;
+  negative_prompt: string;
+  qaNotes?: string;
+}
+
+export interface FinalResult {
+  panels: FinalResultPanel[];
+  metadata: {
+    totalPanels: number;
+    generatedAt: string;
+    source: "code-builder";
+  };
 }

@@ -503,6 +503,10 @@ GENERATED PROMPTS TO CHECK:
 ${data}
 `;
 
+/**
+ * @deprecated Prefer buildFinalResult() from finalResultBuilderService.
+ * This prompt is only a fallback formatter and must not re-analyze source fields.
+ */
 export const getFinalResultPrompt = (storyboard: string, prompts: string, qaReport: string, charLocAnalysis: string, analysis = "") => `
 You are assembling the final approved output for an illustrated story pipeline.
 
@@ -884,6 +888,10 @@ export const runQA = async (
   return response.text;
 };
 
+/**
+ * @deprecated Main StoryFlow now builds Final Result with code via finalResultBuilderService.
+ * Keep this only as a legacy AI fallback.
+ */
 export const generateFinalResult = async (
   storyboard: string,
   prompts: string,

@@ -5,6 +5,14 @@ import * as gemini from '../services/geminiService';
 import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptService';
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
 import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
+import {
+  buildFinalResult,
+  normalizeBeats,
+  normalizeCharacterLocationLibrary,
+  normalizeEngineerPrompts,
+  normalizeQAResults,
+  parseJsonSafe
+} from '../services/finalResultBuilderService';
 import { 
   FileText, 
   BarChart2, 
@@ -749,13 +757,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         );
         targetStage = ProductionStage.QA;
       } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
-        result = await gemini.generateFinalResult(
-          production.storyboard || '', 
-          production.prompts || '', 
-          production.qaReport || '',
-          production.characterLocationAnalysis || '',
-          production.analysis || ''
+        const analysisData = parseJsonSafe<unknown>(production.analysis, []);
+        const storyboardData = parseJsonSafe<unknown>(production.storyboard, { panels: [] });
+        const promptData = parseJsonSafe<unknown>(production.prompts, []);
+        const qaData = parseJsonSafe<unknown>(production.qaReport, []);
+        const libraryData = normalizeCharacterLocationLibrary(
+          parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
         );
+        const finalResult = buildFinalResult({
+          beats: normalizeBeats(analysisData),
+          panels: normalizeStoryboardPanels(storyboardData),
+          engineerPrompts: normalizeEngineerPrompts(promptData),
+          qaResults: normalizeQAResults(qaData),
+          characters: libraryData.characters,
+          locations: libraryData.locations
+        });
+        result = JSON.stringify(finalResult, null, 2);
         targetStage = ProductionStage.FINAL;
       }
       
@@ -2383,7 +2400,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
              : isShowingManual ? { label: "Xác nhận dữ liệu", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
              : stage === ProductionStage.INPUT ? { label: "Bắt đầu phân tích", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
              : stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL) ? { label: "Dự án hoàn tất", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
-             : stage === ProductionStage.FINAL ? { label: "Phân tích kết quả", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
+             : stage === ProductionStage.FINAL ? { label: "Tổng hợp kết quả", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
              : { label: isGlobalManualMode ? "Tiếp tục" : "Tiếp tục với AI", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" };
 
   return (
