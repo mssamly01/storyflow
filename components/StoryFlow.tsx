@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ProductionStage, ScriptData, ProductionData, CharacterProfile, LocationProfile, StoryFlowProject, StepStatus, FinalResult } from '../types';
+import { ProductionStage, ScriptData, ProductionData, CharacterProfile, LocationProfile, StoryFlowProject, StepStatus, FinalResult, FinalResultPanel } from '../types';
 import * as gemini from '../services/geminiService';
 import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptService';
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
@@ -31,6 +31,13 @@ import {
   serializeProjectForStorage,
   syncProjectSource
 } from '../services/storyFlowProjectService';
+import {
+  buildSrtFromItems,
+  buildTxtFromItems,
+  downloadTextFile,
+  extractSubtitleItemsFromBeats,
+  extractSubtitleItemsFromFinalResult,
+} from '../services/subtitleExportService';
 import {
   BEAT_SOURCE_FIELDS,
   CHARACTER_APPEARANCE_FIELDS,
@@ -146,6 +153,7 @@ interface StoryFlowProps {
 const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [stage, setStage] = useState<ProductionStage>(ProductionStage.INPUT);
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
+  const [finalResultViewMode, setFinalResultViewMode] = useState<'panels' | 'json'>('panels');
   const [isManualMode, setIsManualMode] = useState(false);
   const [isGlobalManualMode, setIsGlobalManualMode] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
@@ -611,6 +619,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return null;
   }, [stage, production.finalResult]);
 
+  const parsedFinalResult = useMemo<FinalResult | null>(() => {
+    const parsed = parseJsonSafe<FinalResult | null>(production.finalResult, null);
+    return parsed && Array.isArray(parsed.panels) ? parsed : null;
+  }, [production.finalResult]);
+
+  const finalResultParseError = useMemo(() => {
+    if (!production.finalResult?.trim()) return false;
+    return !parsedFinalResult;
+  }, [production.finalResult, parsedFinalResult]);
+
   const finalBuildData = useMemo(() => {
     const analysisData = parseJsonSafe<unknown>(production.analysis, {});
     const storyboardData = parseJsonSafe<unknown>(production.storyboard, {});
@@ -1064,39 +1082,64 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
+  const getSubtitleItems = () => {
+    const finalResult = parseJsonSafe<FinalResult | null>(
+      production.finalResult,
+      null
+    );
+
+    const finalResultItems = extractSubtitleItemsFromFinalResult(finalResult);
+    if (finalResultItems.length > 0) {
+      return finalResultItems;
+    }
+
+    if (project?.beats && project.beats.length > 0) {
+      return extractSubtitleItemsFromBeats(project.beats);
+    }
+
+    const analysisData = parseJsonSafe<unknown>(production.analysis, {});
+    const beats = normalizeBeats(analysisData);
+
+    return extractSubtitleItemsFromBeats(beats);
+  };
+
   const handleExportSRT = () => {
-    if (!finalJsonData || finalJsonData.length === 0) return;
+    const subtitleItems = getSubtitleItems();
 
-    const formatSRTTime = (seconds: number) => {
-      const hh = Math.floor(seconds / 3600).toString().padStart(2, '0');
-      const mm = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-      const ss = Math.floor(seconds % 60).toString().padStart(2, '0');
-      return `${hh}:${mm}:${ss},000`;
-    };
+    if (subtitleItems.length === 0) {
+      setError("Không có dữ liệu để xuất SRT. Hãy chạy Beat Analysis hoặc Build Final Result trước.");
+      return;
+    }
 
-    let srtContent = '';
-    finalJsonData.forEach((item, index) => {
-      const startTime = index * 5;
-      const endTime = (index + 1) * 5;
-      
-      srtContent += `${index + 1}\n`;
-      srtContent += `${formatSRTTime(startTime)} --> ${formatSRTTime(endTime)}\n`;
-      srtContent += `${item.originalText || ''}\n\n`;
+    const srtContent = buildSrtFromItems(subtitleItems, {
+      durationPerItemSeconds: 5,
     });
 
-    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}.srt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const fileName = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}.srt`;
+    downloadTextFile(fileName, srtContent, "application/x-subrip;charset=utf-8");
     
     setToast({ message: "Đã xuất file SRT thành công!", visible: true });
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
+
+  const handleExportTXT = () => {
+    const subtitleItems = getSubtitleItems();
+
+    if (subtitleItems.length === 0) {
+      setError("Không có dữ liệu để xuất TXT. Hãy chạy Beat Analysis hoặc Build Final Result trước.");
+      return;
+    }
+
+    const txtContent = buildTxtFromItems(subtitleItems);
+
+    const fileName = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}.txt`;
+    downloadTextFile(fileName, txtContent, "text/plain;charset=utf-8");
+
+    setToast({ message: "Đã xuất file TXT thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+
 
   const handleExportJSON = () => {
     if (!finalJsonData || finalJsonData.length === 0) return;
@@ -1255,6 +1298,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     });
   };
 
+  const formatFinalList = (items?: string[]) => {
+    if (!items || items.length === 0) return 'None';
+    return items.join(', ');
+  };
+
+  const getFinalQaBadgeClass = (status?: string) => {
+    if (status === 'pass') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    if (status === 'warning') return 'bg-amber-100 text-amber-700 border-amber-200';
+    if (status === 'fail') return 'bg-rose-100 text-rose-700 border-rose-200';
+    return 'bg-slate-100 text-slate-600 border-slate-200';
+  };
+
+  const getPanelVisualPrompt = (panel: FinalResultPanel) => {
+    return panel.prompt?.visualPrompt || (panel as unknown as { visualPrompt?: string }).visualPrompt || '';
+  };
+
+  const getPanelNegativePrompt = (panel: FinalResultPanel) => {
+    return panel.prompt?.negativePrompt || (panel as unknown as { negative_prompt?: string }).negative_prompt || '';
+  };
+
   const renderToast = () => {
     if (!toast.visible) return null;
     return (
@@ -1351,6 +1414,164 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     </div>
   );
 
+  const renderFinalPanelCard = (panel: FinalResultPanel) => {
+    const source = panel.source;
+    const storyboard = panel.storyboard;
+    const qa = panel.qa;
+    const visualPrompt = getPanelVisualPrompt(panel);
+    const negativePrompt = getPanelNegativePrompt(panel);
+
+    return (
+      <article key={`${panel.panelId}-${panel.beatId}-${panel.panelNumber}`} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Panel {panel.panelId || panel.panelNumber}</p>
+            <h4 className="mt-1 text-xl font-black text-slate-900">Beat #{panel.beatId || 'N/A'}</h4>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${getFinalQaBadgeClass(qa?.status)}`}>
+            QA: {qa?.status || 'unchecked'}
+          </span>
+        </div>
+
+        <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+          <h5 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Source Beat</h5>
+          <div className="space-y-2 text-sm text-slate-700">
+            <p className="italic leading-relaxed text-slate-800">{source?.originalText || panel.originalText || 'Missing original text.'}</p>
+            <div className="grid grid-cols-1 gap-2 pt-2 text-xs md:grid-cols-2">
+              <p><span className="font-black text-slate-500">Time:</span> {source?.timeOfDay || 'Unknown'}</p>
+              <p><span className="font-black text-slate-500">Location:</span> {source?.location || panel.location_cues || 'Unknown'}</p>
+              <p><span className="font-black text-slate-500">Characters:</span> {formatFinalList(source?.visibleCharacters)}</p>
+              <p><span className="font-black text-slate-500">Props:</span> {formatFinalList(source?.props)}</p>
+            </div>
+          </div>
+        </section>
+
+        <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="rounded-2xl border border-slate-200 p-4">
+            <h5 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Story Action</h5>
+            <div className="space-y-2 text-xs text-slate-700">
+              <p><span className="font-black text-slate-500">Action:</span> {source?.action || panel.action || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Interaction:</span> {source?.interaction || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Posture:</span> {source?.posture || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Atmosphere:</span> {source?.atmosphere || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Visual Focus:</span> {source?.visualFocus || panel.subject || 'Missing'}</p>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 p-4">
+            <h5 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">Storyboard</h5>
+            <div className="space-y-2 text-xs text-slate-700">
+              <p><span className="font-black text-slate-500">Shot:</span> {storyboard?.shotType || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Camera:</span> {storyboard?.cameraAngle || panel.cameraAngle || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Composition:</span> {storyboard?.composition || panel.framing || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Foreground:</span> {storyboard?.foreground || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Midground:</span> {storyboard?.midground || 'Missing'}</p>
+              <p><span className="font-black text-slate-500">Background:</span> {storyboard?.background || 'Missing'}</p>
+            </div>
+          </section>
+        </div>
+
+        <section className="mb-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h5 className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Visual Prompt</h5>
+            <button
+              onClick={() => copyToClipboard(visualPrompt)}
+              disabled={!visualPrompt}
+              className="rounded-xl bg-indigo-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Copy Prompt
+            </button>
+          </div>
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-4 text-xs leading-relaxed text-slate-800">
+            {visualPrompt || 'No visual prompt found.'}
+          </pre>
+        </section>
+
+        {negativePrompt && (
+          <section className="mb-4 rounded-2xl border border-slate-200 p-4">
+            <h5 className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-500">Negative Prompt</h5>
+            <p className="text-xs leading-relaxed text-slate-700">{negativePrompt}</p>
+          </section>
+        )}
+
+        {qa?.issues?.length > 0 && (
+          <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <h5 className="mb-2 text-[10px] font-black uppercase tracking-widest text-amber-700">QA Issues</h5>
+            <ul className="list-inside list-disc space-y-1 text-xs text-amber-800">
+              {qa.issues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          </section>
+        )}
+
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+          <button
+            onClick={() => copyToClipboard(visualPrompt)}
+            disabled={!visualPrompt}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 hover:border-indigo-500 hover:text-indigo-600 disabled:opacity-50"
+          >
+            Copy Visual Prompt
+          </button>
+          <button
+            onClick={() => copyToClipboard(JSON.stringify(panel, null, 2))}
+            className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 hover:border-indigo-500 hover:text-indigo-600"
+          >
+            Copy Panel JSON
+          </button>
+        </div>
+      </article>
+    );
+  };
+
+  const renderFinalPanelView = () => {
+    if (!production.finalResult?.trim()) {
+      return (
+        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-10 text-center">
+          <FileJson className="mx-auto mb-4 h-10 w-10 text-slate-300" />
+          <h3 className="text-lg font-black text-slate-900">Chưa có Final Result</h3>
+          <p className="mt-2 text-sm text-slate-500">Bấm Build Final Result để tạo kết quả cuối cùng.</p>
+        </div>
+      );
+    }
+
+    if (finalResultParseError) {
+      return (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <AlertCircle className="mx-auto mb-4 h-10 w-10 text-amber-500" />
+          <h3 className="text-lg font-black text-amber-900">Không đọc được Final Result JSON</h3>
+          <p className="mt-2 text-sm text-amber-800">Hãy chuyển sang Raw JSON để kiểm tra dữ liệu gốc.</p>
+        </div>
+      );
+    }
+
+    if (!parsedFinalResult?.panels.length) {
+      return (
+        <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 p-10 text-center">
+          <h3 className="text-lg font-black text-slate-900">Final Result rỗng</h3>
+          <p className="mt-2 text-sm text-slate-500">Không tìm thấy panel nào trong kết quả cuối.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5">
+          <div>
+            <h3 className="text-lg font-black text-slate-900">Final Result Panels</h3>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
+              {parsedFinalResult.panels.length} panels · Source: {parsedFinalResult.metadata?.source || 'unknown'}
+            </p>
+          </div>
+          {parsedFinalResult.metadata?.generatedAt && (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+              {new Date(parsedFinalResult.metadata.generatedAt).toLocaleString()}
+            </span>
+          )}
+        </div>
+        {parsedFinalResult.panels.map(renderFinalPanelCard)}
+      </div>
+    );
+  };
+
   const renderFinalBuilderView = () => {
     const checklist = [
       { label: 'Beat Analysis', ok: finalBuildData.beats.length > 0, count: finalBuildData.beats.length, required: true },
@@ -1446,6 +1667,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <Download className="w-4 h-4" /> Export JSON
               </button>
               <button
+                onClick={handleExportSRT}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600"
+              >
+                <Download className="w-4 h-4" /> Export SRT
+              </button>
+              <button
+                onClick={handleExportTXT}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600"
+              >
+                <Download className="w-4 h-4" /> Export TXT
+              </button>
+              <button
                 onClick={saveProject}
                 className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600"
               >
@@ -1455,22 +1688,35 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </div>
 
           <div className="xl:col-span-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Final Result Preview</h3>
-                <p className="mt-1 text-xs text-slate-500">Readonly JSON output từ local builder.</p>
+                <p className="mt-1 text-xs text-slate-500">Xem theo từng panel hoặc raw JSON.</p>
               </div>
-              {production.finalResult && (
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700">
-                  Built
-                </span>
-              )}
+              <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  onClick={() => setFinalResultViewMode('panels')}
+                  className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${finalResultViewMode === 'panels' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Panel View
+                </button>
+                <button
+                  onClick={() => setFinalResultViewMode('json')}
+                  className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${finalResultViewMode === 'json' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Raw JSON
+                </button>
+              </div>
             </div>
-            <textarea
-              value={production.finalResult || 'Chưa có Final Result. Bấm "Build Final Result" để tạo JSON cuối cùng.'}
-              readOnly
-              className="h-[620px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-950 p-5 font-mono text-xs leading-relaxed text-slate-100 outline-none"
-            />
+            {finalResultViewMode === 'panels' ? (
+              renderFinalPanelView()
+            ) : (
+              <textarea
+                value={production.finalResult || 'Chưa có Final Result. Bấm "Build Final Result" để tạo JSON cuối cùng.'}
+                readOnly
+                className="h-[620px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-950 p-5 font-mono text-xs leading-relaxed text-slate-100 outline-none"
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1521,6 +1767,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             >
               <Download className="w-3.5 h-3.5" /> Xuất JSON
             </button>
+            <button 
+              onClick={handleExportTXT}
+              className="px-4 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-slate-700 transition-all shadow-md shadow-slate-100"
+            >
+              <Download className="w-3.5 h-3.5" /> Xuất TXT
+            </button>
             <div className="w-px h-4 bg-slate-300 mx-1"></div>
             <button 
               onClick={handleNextChapter}
@@ -1528,7 +1780,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             >
               <ArrowRight className="w-3.5 h-3.5" /> Phân tích chương tiếp theo
             </button>
-            <div className="w-px h-4 bg-slate-300 mx-1"></div>
             <button onClick={() => setViewMode('table')} className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'table' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><Layout className="w-3.5 h-3.5" /> Thẻ</button>
             <button onClick={() => setViewMode('json')} className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'json' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><Code2 className="w-3.5 h-3.5" /> JSON</button>
           </div>
@@ -1561,7 +1812,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
                 <div className="flex-1 p-8 space-y-8">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    <div className="space-y-6">
+                    <div class="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Beat Analysis Export</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleExportSRT}
+                  className="px-4 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-emerald-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export SRT
+                </button>
+                <button 
+                  onClick={handleExportTXT}
+                  className="px-4 py-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export TXT
+                </button>
+              </div>
+            </div>
                       <div className="space-y-4">
                         <div className="flex items-center gap-2">
                           <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
@@ -1620,7 +1891,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       </div>
                     </div>
 
-                    <div className="space-y-6">
+                    <div class="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Beat Analysis Export</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleExportSRT}
+                  className="px-4 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-emerald-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export SRT
+                </button>
+                <button 
+                  onClick={handleExportTXT}
+                  className="px-4 py-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export TXT
+                </button>
+              </div>
+            </div>
                       <div className="space-y-4">
                         <div className="flex items-center gap-2">
                           <div className="w-1 h-4 bg-emerald-500 rounded-full"></div>
@@ -1666,6 +1957,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         const analysisBeats = getAnalysisBeatsFromParsed(parsed);
         return (
           <div className="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Beat Analysis Export</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleExportSRT}
+                  className="px-4 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-emerald-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export SRT
+                </button>
+                <button 
+                  onClick={handleExportTXT}
+                  className="px-4 py-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export TXT
+                </button>
+              </div>
+            </div>
             {parsed?.coverageCheck && (
               <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -2119,7 +2430,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           sourceBeats = production.analysis ? (getAnalysisBeatsFromParsed(JSON.parse(production.analysis)) || []) : [];
         } catch {}
         return (
-          <div className="space-y-6">
+          <div class="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Beat Analysis Export</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleExportSRT}
+                  className="px-4 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-emerald-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export SRT
+                </button>
+                <button 
+                  onClick={handleExportTXT}
+                  className="px-4 py-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-100 shadow-sm flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export TXT
+                </button>
+              </div>
+            </div>
             {panels.length ? panels.map((panel: any, i: number) => {
               const source = getPanelSourceFields(panel, sourceBeats);
               return (
@@ -2904,3 +3235,4 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 };
 
 export default StoryFlow;
+
