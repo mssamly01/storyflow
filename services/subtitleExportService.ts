@@ -83,6 +83,23 @@ export function extractSubtitleItemsFromBeats(beats: StoryBeat[]): SubtitleItem[
   }));
 }
 
+export function buildImagePromptTxtFromFinalResult(
+  finalResult: FinalResult | null | undefined
+): string {
+  if (!finalResult?.panels || !Array.isArray(finalResult.panels)) {
+    return "";
+  }
+
+  return finalResult.panels
+    .map((panel) => {
+      const visualPrompt = panel.prompt?.visualPrompt ?? "";
+      // Normalize to single line: replace all whitespace (including newlines) with single space
+      return visualPrompt.replace(/\s+/g, " ").trim();
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function downloadTextFile(
   filename: string,
   content: string,

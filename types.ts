@@ -41,10 +41,32 @@ export interface BeatAnalysis {
   timeOfDay?: string;
 }
 
+export interface StoryScreen {
+  meta?: EditableMeta;
+  screenId: string;
+  screenNumber: number;
+  screenName: string;
+  location: string;
+  locationId?: string;
+  timeOfDay: string;
+  screenState: string;
+  screenCharacters: string[];
+  screenProps: string[];
+  startBeatId: number;
+  endBeatId: number;
+  summary: string;
+  continuityNotes?: string;
+}
+
 export interface StoryBeat extends BeatAnalysis {
   beatId: number;
+  screenId?: string;
   summary?: string;
+  /** @deprecated Use focusCharacters / visibleCharacters / offscreenPresentCharacters. */
   characters?: string[];
+  focusCharacters?: string[];
+  visibleCharacters?: string[];
+  offscreenPresentCharacters?: string[];
   location?: string;
   locationId?: string;
   locationState?: string;
@@ -60,6 +82,7 @@ export interface CoverageCheck {
 }
 
 export interface BeatAnalysisResult {
+  screens?: StoryScreen[];
   beats: StoryBeat[];
   coverageCheck?: CoverageCheck;
 }
@@ -128,9 +151,11 @@ export interface CharacterBlocking {
 
 export interface StoryboardPanel {
   meta?: EditableMeta;
-  panelId?: string;
-  panelNumber?: number;
   beatId?: number;
+  /** @deprecated Use beatId only. */
+  panelId?: string;
+  /** @deprecated Use beatId only. */
+  panelNumber?: number;
   shotType?: string;
   cameraAngle?: string;
   cameraDistance?: string;
@@ -166,28 +191,42 @@ export interface StoryboardPanel {
 
 export interface EngineerPrompt {
   meta?: EditableMeta;
-  panelNumber?: number;
-  panelId: string;
   beatId: number;
   visualPrompt: string;
+  /** @deprecated Use beatId only. */
+  panelNumber?: number;
+  /** @deprecated Use beatId only. */
+  panelId?: string;
 }
 
 export interface QAResult {
   meta?: EditableMeta;
-  panelNumber?: number;
-  panelId?: string;
-  beatId?: number;
+  beatId: number;
   status?: "pass" | "warning" | "fail" | "unchecked";
   issues?: string[];
   suggestedPromptPatch?: string;
   visualPrompt?: string;
   qaNotes?: string;
+  /** @deprecated Use beatId only. */
+  panelNumber?: number;
+  /** @deprecated Use beatId only. */
+  panelId?: string;
 }
 
 export interface FinalResultPanel {
-  panelId: string;
-  panelNumber: number;
   beatId: number;
+  screenId?: string;
+  screen?: {
+    screenId: string;
+    screenName: string;
+    location: string;
+    locationId?: string;
+    timeOfDay: string;
+    screenCharacters: string[];
+    screenProps: string[];
+    screenState: string;
+    continuityNotes?: string;
+  };
   source: {
     originalText: string;
     summary: string;
@@ -195,7 +234,9 @@ export interface FinalResultPanel {
     location: string;
     locationId?: string;
     locationState?: string;
+    focusCharacters: string[];
     visibleCharacters: string[];
+    offscreenPresentCharacters: string[];
     props: string[];
     action: string;
     interaction: string;
@@ -229,7 +270,12 @@ export interface FinalResultPanel {
   refs: {
     characterIds: string[];
     locationId?: string;
+    screenId?: string;
   };
+  /** @deprecated Use beatId only. */
+  panelId?: string;
+  /** @deprecated Use beatId only. */
+  panelNumber?: number;
   originalText: string;
   cameraAngle: string;
   framing: string;
@@ -238,8 +284,6 @@ export interface FinalResultPanel {
   location_cues: string;
   lighting: string;
   visualPrompt: string;
-  /** @deprecated Negative text is now embedded at the end of visualPrompt. */
-  negative_prompt?: string;
   qaNotes?: string;
 }
 
@@ -298,6 +342,7 @@ export interface StoryFlowProject {
   title: string;
   sourceText: string;
   selectedStyleId?: string;
+  screens: StoryScreen[];
   beats: StoryBeat[];
   characters: CharacterProfile[];
   locations: LocationProfile[];

@@ -31,9 +31,7 @@ export function normalizeStoryboardPanels(data: unknown): StoryboardPanel[] {
 
 export function sanitizeStoryboardPanels(panels: StoryboardPanel[]): StoryboardPanel[] {
   return panels.map((panel, index) => ({
-    panelId: panel.panelId || `panel_${String(index + 1).padStart(3, "0")}`,
-    panelNumber: panel.panelNumber || index + 1,
-    beatId: panel.beatId || index + 1,
+    beatId: panel.beatId || panel.panelNumber || index + 1,
     shotType: panel.shotType || "",
     cameraAngle: panel.cameraAngle || "",
     cameraDistance: panel.cameraDistance || "",

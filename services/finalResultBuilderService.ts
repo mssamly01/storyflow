@@ -6,10 +6,12 @@ import type {
   LocationProfile,
   QAResult,
   StoryBeat,
+  StoryScreen,
   StoryboardPanel
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import { cleanVisualPrompt } from "./visualPromptCleanupService";
 
 type UnknownRecord = Record<string, any>;
 
@@ -50,6 +52,10 @@ const asNumber = (value: unknown, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const asString = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
+const asStringArray = (value: unknown): string[] => Array.isArray(value)
+  ? value.map((item) => String(item)).filter(Boolean)
+  : [];
 
 function getItems(raw: unknown, keys: string[]): UnknownRecord[] {
   if (Array.isArray(raw)) return raw as UnknownRecord[];
@@ -66,13 +72,10 @@ export function normalizeEngineerPrompts(raw: unknown): EngineerPrompt[] {
   return getItems(raw, ["engineerPrompts", "prompts", "panels", "results"]).map((item, index) => {
     const visualPrompt = item.visualPrompt ?? item.visual_prompt ?? "";
     const legacyNegativePrompt = item.negativePrompt ?? item.negative_prompt ?? "";
-    const panelNumber = asNumber(item.panelNumber ?? item.panel_number, index + 1);
 
     return {
-      panelNumber,
-      panelId: String(item.panelId ?? item.panel_id ?? `panel_${String(panelNumber).padStart(3, "0")}`),
-      beatId: asNumber(item.beatId ?? item.beat_id, panelNumber),
-      visualPrompt: ensureVisualPromptHasNegativePrompt(visualPrompt, legacyNegativePrompt),
+      beatId: asNumber(item.beatId ?? item.beat_id ?? item.panelNumber ?? item.panel_number, index + 1),
+      visualPrompt: ensureVisualPromptHasNegativePrompt(cleanVisualPrompt(visualPrompt), legacyNegativePrompt),
       meta: item.meta
     };
   });
@@ -91,9 +94,7 @@ export function normalizeQAResults(raw: unknown): QAResult[] {
     );
 
     return {
-      panelNumber: asNumber(item.panelNumber ?? item.panel_number, index + 1),
-      panelId: item.panelId ?? item.panel_id,
-      beatId: asNumber(item.beatId ?? item.beat_id, 0) || undefined,
+      beatId: asNumber(item.beatId ?? item.beat_id ?? item.panelNumber ?? item.panel_number, index + 1),
       status: rawStatus ?? "unchecked",
       issues,
       suggestedPromptPatch: item.suggestedPromptPatch ?? item.suggested_prompt_patch ?? "",
@@ -103,12 +104,101 @@ export function normalizeQAResults(raw: unknown): QAResult[] {
   });
 }
 
+export function normalizeScreens(raw: unknown): StoryScreen[] {
+  return getItems(raw, ["screens", "storyScreens"]).map((item, index) => {
+    const screenNumber = asNumber(item.screenNumber ?? item.screen_number, index + 1);
+    return {
+      screenId: asString(item.screenId ?? item.screen_id, `screen_${String(screenNumber).padStart(3, "0")}`),
+      screenNumber,
+      screenName: asString(item.screenName ?? item.screen_name, `Screen ${screenNumber}`),
+      location: asString(item.location),
+      locationId: asString(item.locationId ?? item.location_id, undefined as unknown as string),
+      timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
+      screenState: asString(item.screenState ?? item.screen_state),
+      screenCharacters: asStringArray(item.screenCharacters ?? item.screen_characters),
+      screenProps: asStringArray(item.screenProps ?? item.screen_props),
+      startBeatId: asNumber(item.startBeatId ?? item.start_beat_id, 0),
+      endBeatId: asNumber(item.endBeatId ?? item.end_beat_id, 0),
+      summary: asString(item.summary),
+      continuityNotes: asString(item.continuityNotes ?? item.continuity_notes),
+      meta: item.meta
+    };
+  });
+}
+
 export function normalizeBeats(raw: unknown): StoryBeat[] {
-  if (Array.isArray(raw)) return raw as StoryBeat[];
-  if (raw && typeof raw === "object" && Array.isArray((raw as { beats?: unknown }).beats)) {
-    return (raw as { beats: StoryBeat[] }).beats;
+  const items = getItems(raw, ["beats"]);
+  return items.map((item, index) => {
+    const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
+    const legacyCharacters = asStringArray(item.characters ?? item.charactersInvolved ?? item.characters_involved);
+    const focusCharacters = asStringArray(item.focusCharacters ?? item.focus_characters);
+    const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
+    const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
+
+    return {
+      ...item,
+      beatId,
+      screenId: asString(item.screenId ?? item.screen_id, "screen_001"),
+      originalText: asString(item.originalText ?? item.original_text),
+      summary: asString(item.summary),
+      characters: legacyCharacters,
+      focusCharacters: focusCharacters.length ? focusCharacters : legacyCharacters,
+      visibleCharacters: visibleCharacters.length ? visibleCharacters : (focusCharacters.length ? focusCharacters : legacyCharacters),
+      offscreenPresentCharacters,
+      location: asString(item.location ?? item.locationName ?? item.location_name),
+      locationId: asString(item.locationId ?? item.location_id),
+      locationState: asString(item.locationState ?? item.location_state),
+      action: asString(item.action ?? item.actionAnalysis ?? item.action_analysis),
+      interaction: asString(item.interaction),
+      posture: asString(item.posture),
+      props: asStringArray(item.props),
+      visualFocus: asString(item.visualFocus ?? item.visual_focus),
+      atmosphere: asString(item.atmosphere),
+      timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
+      meta: item.meta
+    } as StoryBeat;
+  });
+}
+
+export function createFallbackScreensFromBeats(beats: StoryBeat[]): StoryScreen[] {
+  if (!beats.length) return [];
+
+  const grouped = new Map<string, StoryBeat[]>();
+  for (const beat of beats) {
+    const key = beat.screenId && beat.screenId !== "screen_001"
+      ? beat.screenId
+      : `${beat.locationId || beat.location || beat.locationName || "Unknown"}|${beat.timeOfDay || "Unknown"}`;
+    grouped.set(key, [...(grouped.get(key) || []), beat]);
   }
-  return [];
+
+  return Array.from(grouped.values()).map((group, index) => {
+    const first = group[0];
+    const screenNumber = index + 1;
+    const screenId = first.screenId && first.screenId !== "screen_001"
+      ? first.screenId
+      : `screen_${String(screenNumber).padStart(3, "0")}`;
+    return {
+      screenId,
+      screenNumber,
+      screenName: `${first.location || first.locationName || "Unknown Location"} - ${first.timeOfDay || "Unknown Time"}`,
+      location: first.location || first.locationName || "",
+      locationId: first.locationId,
+      timeOfDay: first.timeOfDay || "",
+      screenState: first.locationState || "",
+      screenCharacters: Array.from(new Set(group.flatMap((beat) => [
+        ...(beat.focusCharacters || []),
+        ...(beat.visibleCharacters || []),
+        ...(beat.offscreenPresentCharacters || []),
+        ...(beat.characters || []),
+        ...(beat.charactersInvolved || [])
+      ]).filter(Boolean))),
+      screenProps: Array.from(new Set(group.flatMap((beat) => beat.props || []).filter(Boolean))),
+      startBeatId: group[0].beatId,
+      endBeatId: group[group.length - 1].beatId,
+      summary: `Fallback screen from beats ${group[0].beatId}-${group[group.length - 1].beatId}`,
+      continuityNotes: "Generated fallback screen from legacy beat data."
+    };
+  });
 }
 
 export function normalizeCharacterLocationLibrary(raw: unknown): {
@@ -127,9 +217,9 @@ function findEngineerPromptForPanel(
   panel: StoryboardPanel,
   prompts: EngineerPrompt[]
 ): EngineerPrompt | null {
-  return prompts.find((item) => item.panelId && item.panelId === panel.panelId)
-    ?? prompts.find((item) => item.beatId && item.beatId === panel.beatId)
-    ?? prompts.find((item) => item.panelNumber && item.panelNumber === panel.panelNumber)
+  return prompts.find((item) => item.beatId && item.beatId === panel.beatId)
+    ?? prompts.find((item) => item.panelId && panel.panelId && item.panelId === panel.panelId)
+    ?? prompts.find((item) => item.panelNumber && panel.panelNumber && item.panelNumber === panel.panelNumber)
     ?? null;
 }
 
@@ -137,9 +227,9 @@ function findQAResultForPanel(
   panel: StoryboardPanel,
   qaResults: QAResult[]
 ): QAResult | null {
-  return qaResults.find((item) => item.panelId && item.panelId === panel.panelId)
-    ?? qaResults.find((item) => item.beatId && item.beatId === panel.beatId)
-    ?? qaResults.find((item) => item.panelNumber && item.panelNumber === panel.panelNumber)
+  return qaResults.find((item) => item.beatId && item.beatId === panel.beatId)
+    ?? qaResults.find((item) => item.panelId && panel.panelId && item.panelId === panel.panelId)
+    ?? qaResults.find((item) => item.panelNumber && panel.panelNumber && item.panelNumber === panel.panelNumber)
     ?? null;
 }
 
@@ -163,33 +253,50 @@ function getCharacterIds(
 
 export function buildFinalResultPanel(params: {
   panel: StoryboardPanel;
+  screens?: StoryScreen[];
   beats: StoryBeat[];
   engineerPrompts: EngineerPrompt[];
   qaResults: QAResult[];
   characters: CharacterProfile[];
   locations: LocationProfile[];
 }): FinalResultPanel {
-  const { panel, beats, engineerPrompts, qaResults, characters, locations } = params;
+  const { panel, screens = [], beats, engineerPrompts, qaResults, characters, locations } = params;
   const bundle = getPanelSourceBundle(panel, beats, characters, locations);
   const source = bundle.sourceFields;
   const prompt = findEngineerPromptForPanel(panel, engineerPrompts);
   const qa = findQAResultForPanel(panel, qaResults);
-  const finalVisualPrompt = ensureVisualPromptHasNegativePrompt(
+  const finalVisualPrompt = ensureVisualPromptHasNegativePrompt(cleanVisualPrompt(
     qa?.visualPrompt || prompt?.visualPrompt || ""
-  );
+  ));
   const qaStatus = qa?.status || "unchecked";
   const qaIssues = qa?.issues || [];
   const qaPatch = qa?.suggestedPromptPatch || "";
-  const panelNumber = panel.panelNumber || prompt?.panelNumber || qa?.panelNumber || 0;
-  const beatId = panel.beatId || prompt?.beatId || qa?.beatId || panelNumber;
+  const beatId = panel.beatId || prompt?.beatId || qa?.beatId || panel.panelNumber || 0;
   const subject = source.visibleCharacters.length
     ? source.visibleCharacters.join(", ")
     : source.visualFocus || source.summary || "N/A";
+  const screen = screens.find((item) => item.screenId && item.screenId === bundle.beat?.screenId);
+  const characterRefNames = Array.from(new Set([
+    ...(screen?.screenCharacters || []),
+    ...source.focusCharacters,
+    ...source.visibleCharacters,
+    ...source.offscreenPresentCharacters
+  ].filter(Boolean)));
 
   return {
-    panelId: panel.panelId || `panel_${String(panelNumber || 1).padStart(3, "0")}`,
-    panelNumber,
     beatId,
+    screenId: bundle.beat?.screenId,
+    screen: screen ? {
+      screenId: screen.screenId,
+      screenName: screen.screenName,
+      location: screen.location,
+      locationId: screen.locationId,
+      timeOfDay: screen.timeOfDay,
+      screenCharacters: screen.screenCharacters,
+      screenProps: screen.screenProps,
+      screenState: screen.screenState,
+      continuityNotes: screen.continuityNotes
+    } : undefined,
     source: {
       originalText: source.originalText,
       summary: source.summary,
@@ -197,7 +304,9 @@ export function buildFinalResultPanel(params: {
       location: source.locationName,
       locationId: source.locationId,
       locationState: source.locationState,
+      focusCharacters: source.focusCharacters,
       visibleCharacters: source.visibleCharacters,
+      offscreenPresentCharacters: source.offscreenPresentCharacters,
       props: source.props,
       action: source.action,
       interaction: source.interaction,
@@ -229,8 +338,9 @@ export function buildFinalResultPanel(params: {
       suggestedPromptPatch: qaPatch
     },
     refs: {
-      characterIds: getCharacterIds(source.visibleCharacters, bundle.characters, characters),
-      locationId: source.locationId || bundle.location?.locationId
+      characterIds: getCharacterIds(characterRefNames, bundle.characters, characters),
+      locationId: source.locationId || bundle.location?.locationId,
+      screenId: bundle.beat?.screenId
     },
     originalText: source.originalText,
     cameraAngle: panel.cameraAngle || "",
@@ -245,6 +355,7 @@ export function buildFinalResultPanel(params: {
 }
 
 export function buildFinalResult(params: {
+  screens?: StoryScreen[];
   beats: StoryBeat[];
   panels: StoryboardPanel[];
   engineerPrompts: EngineerPrompt[];
@@ -255,6 +366,7 @@ export function buildFinalResult(params: {
   const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(params.panels));
   const finalPanels = panels.map((panel) => buildFinalResultPanel({
     panel,
+    screens: params.screens,
     beats: params.beats,
     engineerPrompts: params.engineerPrompts,
     qaResults: params.qaResults,

@@ -17,7 +17,9 @@ export interface PanelSourceBundle {
     locationName: string;
     locationId?: string;
     locationState?: string;
+    focusCharacters: string[];
     visibleCharacters: string[];
+    offscreenPresentCharacters: string[];
     props: string[];
     action: string;
     interaction: string;
@@ -61,7 +63,13 @@ export function getCharactersForBeat(
   if (!beat) return [];
 
   const names = new Set(
-    [...(beat.characters || []), ...(beat.charactersInvolved || [])]
+    [
+      ...(beat.focusCharacters || []),
+      ...(beat.visibleCharacters || []),
+      ...(beat.offscreenPresentCharacters || []),
+      ...(beat.characters || []),
+      ...(beat.charactersInvolved || [])
+    ]
       .map((name) => normalize(name))
       .filter(Boolean)
   );
@@ -81,10 +89,15 @@ export function getPanelSourceBundle(
   const beat = getBeatById(beats, panel.beatId || panel.panelNumber);
   const location = getLocationForBeat(beat, locations);
   const matchedCharacters = getCharactersForBeat(beat, characters);
-  const visibleCharacters = beat?.characters
-    || beat?.charactersInvolved
-    || panel.visibleCharacters
-    || [];
+  const focusCharacters = beat?.focusCharacters?.length
+    ? beat.focusCharacters
+    : beat?.characters || beat?.charactersInvolved || [];
+  const visibleCharacters = beat?.visibleCharacters?.length
+    ? beat.visibleCharacters
+    : focusCharacters.length
+      ? focusCharacters
+      : panel.visibleCharacters || [];
+  const offscreenPresentCharacters = beat?.offscreenPresentCharacters || [];
 
   return {
     panel,
@@ -98,7 +111,9 @@ export function getPanelSourceBundle(
       locationName: beat?.location ?? beat?.locationName ?? location?.name ?? panel.locationName ?? "Unknown",
       locationId: beat?.locationId ?? location?.locationId ?? panel.locationId,
       locationState: beat?.locationState ?? panel.locationState,
+      focusCharacters,
       visibleCharacters,
+      offscreenPresentCharacters,
       props: beat?.props ?? [],
       action: beat?.action ?? beat?.actionAnalysis ?? panel.actionInFrame ?? panel.description ?? "",
       interaction: beat?.interaction ?? "",

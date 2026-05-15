@@ -103,7 +103,7 @@ export function buildFinalVisualPrompt(params: {
 
   return compact([
     style,
-    `single vertical comic panel, panel ${panel.panelNumber}`,
+    `single vertical comic panel for beat ${beat.beatId || panel.beatId || panel.panelNumber || 1}`,
     effectiveLocation ? `location: ${effectiveLocation.name}, ${effectiveLocation.description || effectiveLocation.details || ''}` : '',
     locationObjects ? `location key objects: ${locationObjects}` : '',
     locationContinuityBlock,

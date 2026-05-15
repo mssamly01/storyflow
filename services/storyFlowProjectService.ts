@@ -7,18 +7,21 @@ import type {
   QAResult,
   ScriptData,
   StoryBeat,
+  StoryScreen,
   StoryboardPanel,
   StoryFlowProject
 } from "../types";
 import {
   buildFinalResult,
+  createFallbackScreensFromBeats,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
   normalizeEngineerPrompts,
   normalizeQAResults,
+  normalizeScreens,
   parseJsonSafe
 } from "./finalResultBuilderService";
-import { normalizeStoryboardPanels } from "./storyboardDataService";
+import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import {
   createEmptyWorkflow,
   markDownstreamStaleAfterBeatEdit,
@@ -101,16 +104,16 @@ function findLocationMatch(currentLocations: LocationProfile[], incomingLocation
 
 function findPanelMatch(currentPanels: StoryboardPanel[], incomingPanel: StoryboardPanel): StoryboardPanel | undefined {
   return currentPanels.find((panel) => {
-    if (incomingPanel.panelId && panel.panelId === incomingPanel.panelId) return true;
     if (incomingPanel.beatId && panel.beatId === incomingPanel.beatId) return true;
+    if (incomingPanel.panelId && panel.panelId === incomingPanel.panelId) return true;
     return Boolean(incomingPanel.panelNumber && panel.panelNumber === incomingPanel.panelNumber);
   });
 }
 
 function findPromptMatch(currentPrompts: EngineerPrompt[], incomingPrompt: EngineerPrompt): EngineerPrompt | undefined {
   return currentPrompts.find((prompt) => {
-    if (incomingPrompt.panelId && prompt.panelId === incomingPrompt.panelId) return true;
     if (incomingPrompt.beatId && prompt.beatId === incomingPrompt.beatId) return true;
+    if (incomingPrompt.panelId && prompt.panelId === incomingPrompt.panelId) return true;
     return Boolean(incomingPrompt.panelNumber && prompt.panelNumber === incomingPrompt.panelNumber);
   });
 }
@@ -126,6 +129,7 @@ export function createInitialProject(params?: {
     title: params?.title || "Untitled StoryFlow Project",
     sourceText: params?.sourceText || "",
     selectedStyleId: params?.selectedStyleId,
+    screens: [],
     beats: [],
     characters: [],
     locations: [],
@@ -154,13 +158,17 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
   });
   const library = normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(production.characterLocationAnalysis, {}));
   const finalResult = parseJsonSafe<FinalResult | null>(production.finalResult, null);
+  const analysisData = parseJsonSafe<unknown>(production.analysis, []);
+  const beats = normalizeBeats(analysisData);
+  const screens = normalizeScreens(analysisData);
 
   return withTimestamp({
     ...project,
-    beats: normalizeBeats(parseJsonSafe<unknown>(production.analysis, [])),
+    screens: screens.length ? screens : createFallbackScreensFromBeats(beats),
+    beats,
     characters: library.characters,
     locations: library.locations,
-    storyboardPanels: normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] })),
+    storyboardPanels: sanitizeStoryboardPanels(normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }))),
     engineerPrompts: normalizeEngineerPrompts(parseJsonSafe<unknown>(production.prompts, [])),
     qaResults: normalizeQAResults(parseJsonSafe<unknown>(production.qaReport, [])),
     finalResult,
@@ -193,6 +201,7 @@ export function hydrateStoryFlowProject(
     title: typeof rawProject.title === "string" && rawProject.title ? rawProject.title : fallback.title,
     sourceText: typeof rawProject.sourceText === "string" ? rawProject.sourceText : fallback.sourceText,
     selectedStyleId: typeof rawProject.selectedStyleId === "string" ? rawProject.selectedStyleId : fallback.selectedStyleId,
+    screens: asArray<StoryScreen>(rawProject.screens, fallback.screens),
     beats: asArray<StoryBeat>(rawProject.beats, fallback.beats),
     characters: asArray<CharacterProfile>(rawProject.characters, fallback.characters),
     locations: asArray<LocationProfile>(rawProject.locations, fallback.locations),
@@ -223,6 +232,7 @@ export function syncProjectSource(project: StoryFlowProject, inputData: ScriptDa
   }
 
   const hasGeneratedData = Boolean(
+    (Array.isArray(project.screens) && project.screens.length) ||
     (Array.isArray(project.beats) && project.beats.length) ||
     (Array.isArray(project.characters) && project.characters.length) ||
     (Array.isArray(project.locations) && project.locations.length) ||
@@ -303,7 +313,8 @@ export function replaceCharacterLocationLibrary(project: StoryFlowProject, libra
 }
 
 export function replaceStoryboardPanels(project: StoryFlowProject, storyboardPanels: StoryboardPanel[]): StoryFlowProject {
-  const mergedPanels = storyboardPanels.map((incomingPanel) => {
+  const sanitizedPanels = sanitizeStoryboardPanels(storyboardPanels);
+  const mergedPanels = sanitizedPanels.map((incomingPanel) => {
     const currentPanel = findPanelMatch(project.storyboardPanels, incomingPanel);
     return currentPanel ? mergeRespectingLocks(currentPanel, incomingPanel) : incomingPanel;
   });
@@ -416,12 +427,13 @@ export function updateLocation(project: StoryFlowProject, locationId: string, pa
   });
 }
 
-export function updateStoryboardPanel(project: StoryFlowProject, panelId: string, patch: Partial<StoryboardPanel>): StoryFlowProject {
+export function updateStoryboardPanel(project: StoryFlowProject, beatId: number, patch: Partial<StoryboardPanel>): StoryFlowProject {
   return withTimestamp({
     ...project,
-    storyboardPanels: project.storyboardPanels.map((panel) => panel.panelId === panelId ? {
+    storyboardPanels: project.storyboardPanels.map((panel) => panel.beatId === beatId ? {
       ...panel,
       ...patch,
+      beatId: panel.beatId,
       meta: {
         ...panel.meta,
         source: "user",
@@ -436,12 +448,13 @@ export function updateStoryboardPanel(project: StoryFlowProject, panelId: string
   });
 }
 
-export function updateEngineerPrompt(project: StoryFlowProject, panelId: string, patch: Partial<EngineerPrompt>): StoryFlowProject {
+export function updateEngineerPrompt(project: StoryFlowProject, beatId: number, patch: Partial<EngineerPrompt>): StoryFlowProject {
   return withTimestamp({
     ...project,
-    engineerPrompts: project.engineerPrompts.map((prompt) => prompt.panelId === panelId ? {
+    engineerPrompts: project.engineerPrompts.map((prompt) => prompt.beatId === beatId ? {
       ...prompt,
       ...patch,
+      beatId: prompt.beatId,
       meta: {
         ...prompt.meta,
         source: "user",
@@ -456,12 +469,13 @@ export function updateEngineerPrompt(project: StoryFlowProject, panelId: string,
   });
 }
 
-export function updateQAResult(project: StoryFlowProject, panelId: string, patch: Partial<QAResult>): StoryFlowProject {
+export function updateQAResult(project: StoryFlowProject, beatId: number, patch: Partial<QAResult>): StoryFlowProject {
   return withTimestamp({
     ...project,
-    qaResults: project.qaResults.map((qa) => qa.panelId === panelId ? {
+    qaResults: project.qaResults.map((qa) => qa.beatId === beatId ? {
       ...qa,
       ...patch,
+      beatId: qa.beatId,
       meta: {
         ...qa.meta,
         source: "user",
@@ -472,6 +486,17 @@ export function updateQAResult(project: StoryFlowProject, panelId: string, patch
     workflow: {
       ...markFinalResultStale(project.workflow, "QA changed; final result must be rebuilt."),
       qa: markStepNeedsReview(project.workflow.qa)
+    }
+  });
+}
+
+export function replaceScreens(project: StoryFlowProject, screens: StoryScreen[]): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    screens,
+    workflow: {
+      ...project.workflow,
+      beatAnalysis: markStepNeedsReview(project.workflow.beatAnalysis)
     }
   });
 }
@@ -560,22 +585,23 @@ export function lockLocationFields(project: StoryFlowProject, locationId: string
   });
 }
 
-export function lockStoryboardPanelField(project: StoryFlowProject, panelId: string, fieldName: string): StoryFlowProject {
+export function lockStoryboardPanelField(project: StoryFlowProject, beatId: number, fieldName: string): StoryFlowProject {
   return withTimestamp({
     ...project,
-    storyboardPanels: project.storyboardPanels.map((panel) => panel.panelId === panelId ? lockField(panel, fieldName) : panel)
+    storyboardPanels: project.storyboardPanels.map((panel) => panel.beatId === beatId ? lockField(panel, fieldName) : panel)
   });
 }
 
-export function lockEngineerPromptField(project: StoryFlowProject, panelId: string, fieldName: string): StoryFlowProject {
+export function lockEngineerPromptField(project: StoryFlowProject, beatId: number, fieldName: string): StoryFlowProject {
   return withTimestamp({
     ...project,
-    engineerPrompts: project.engineerPrompts.map((prompt) => prompt.panelId === panelId ? lockField(prompt, fieldName) : prompt)
+    engineerPrompts: project.engineerPrompts.map((prompt) => prompt.beatId === beatId ? lockField(prompt, fieldName) : prompt)
   });
 }
 
 export function buildFinalResultFromProject(project: StoryFlowProject): FinalResult {
   return buildFinalResult({
+    screens: project.screens?.length ? project.screens : createFallbackScreensFromBeats(project.beats),
     beats: project.beats,
     panels: project.storyboardPanels,
     engineerPrompts: project.engineerPrompts,

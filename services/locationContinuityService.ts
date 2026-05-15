@@ -69,24 +69,17 @@ export function buildLocationContinuityBlock(
     || matchLocationByNameOrAlias(beat.location || beat.locationName, locations);
 
   if (!location) {
-    return `LOCATION CONTINUITY:
-- No matched location profile.
-- Beat location text: ${beat.location || beat.locationName || "Unknown"}
-- Preserve any previously established environment if available.
-- Camera angle may change, but avoid random environment redesign.`;
+    return `Location Continuity: preserve the established ${beat.location || beat.locationName || "environment"} layout, furniture, lighting, and object placement across this screen; camera angle may change, but avoid random environment redesign.`;
   }
 
-  return `LOCATION CONTINUITY:
-- Use location ${location.locationId || "unknown_id"}: ${location.name}
-- Base description: ${location.description || location.details || "Unknown"}
-- Spatial layout: ${location.layout || "Unknown"}
-- Key objects to preserve: ${formatList(location.keyObjects)}
-- Lighting: ${location.lighting || location.lightingDefault || "Unknown"}
-- Color palette: ${formatList(location.colorPalette)}
-- Continuity notes: ${location.continuityNotes || "Keep the same environment identity across beats."}
-- Current beat state: ${beat.locationState || location.baseState || "No special state change."}
-- Keep the same environment identity, furniture placement, architectural features, and object relationships as previous beats.
-- Camera angle may change, but object positions and room structure must remain consistent.`;
+  const details = [
+    location.layout,
+    formatList(location.keyObjects, ""),
+    location.lighting || location.lightingDefault,
+    location.continuityNotes
+  ].map((item) => item?.trim()).filter(Boolean).join(", ");
+
+  return `Location Continuity: keep ${location.name}'s established layout${details ? `, ${details}` : ""} consistent across this screen; camera angle may change, but furniture placement, architectural features, and object relationships must remain stable.`;
 }
 
 export function buildLocationReferenceSheetPrompt(
