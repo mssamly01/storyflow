@@ -705,7 +705,7 @@ Do not start with action, character, camera, or location before the style.
 2. LOCATION FIRST:
 Immediately after style, write:
 "Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SKELETON SOURCE], [lighting/material from Location Library + Storyboard]."
-Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE. Match Location Library by locationId first, then name/aliases. Include description, layout, keyObjects, lighting, colorPalette where available. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
+Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE. Match Location Library by locationId first, then name/aliases. Use description, layout, keyObjects, and lighting where available. If colorPalette exists, convert it into natural color words and never include raw hex codes. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
 
 3. LOCATION CONTINUITY BLOCK:
 Every visualPrompt must include this block right after Location:
@@ -802,7 +802,7 @@ FINAL CHECK BEFORE OUTPUT:
 - Does every visualPrompt contain Screen Continuity?
 - Does every visualPrompt use timeOfDay from APPROVED BEAT SOURCE?
 - Does every named character include full profile details?
-- Is every outfit copied exactly from Character Library?
+- Is every current outfit copied from APPROVED SCREEN CONTINUITY for the current screen?
 - Did you include only the current beat/screen outfit, without alternate outfits or beat ranges?
 - Does every visualPrompt include posture, action, and interaction?
 - Does every visualPrompt include foreground, midground, and background when available?
@@ -1417,7 +1417,7 @@ export const generateScreenContinuity = async (
                 },
                 continuityNotes: { type: "string" }
               },
-              required: ["screenId", "screenState", "screenProps", "screenCharacterStates"]
+              required: ["screenId", "screenState", "screenProps", "screenCharacterStates", "continuityNotes"]
             }
           }
         },
@@ -1481,7 +1481,7 @@ export const generateBeatMomentDetails = async (
                   }
                 }
               },
-              required: ["beatId", "posture", "interaction", "props", "characterMomentDetails"]
+              required: ["beatId", "locationState", "posture", "interaction", "props", "characterMomentDetails"]
             }
           }
         },
