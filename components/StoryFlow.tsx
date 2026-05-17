@@ -5,6 +5,7 @@ import * as gemini from '../services/geminiService';
 import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptService';
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
 import { ScreenStudioView } from './storyflow/ScreenStudioView';
+import { ScreenContinuityView } from './storyflow/ScreenContinuityView';
 import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
 import {
   buildFinalResult,
@@ -16,6 +17,7 @@ import {
   normalizeEngineerPrompts,
   normalizeQAResults,
   normalizeScreens,
+  normalizeScreenContinuity,
   parseJsonSafe
 } from '../services/finalResultBuilderService';
 import {
@@ -640,6 +642,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       });
       if (missingBeatLinks) {
         return "Mỗi screen trong Thiết lập bối cảnh cần có beatIds hoặc startBeatId/endBeatId để liên kết với beat.";
+      }
+      const invalidCharacterState = parsed.screens.find((screen: any) =>
+        Array.isArray(screen.screenCharacterStates)
+          ? screen.screenCharacterStates.some((state: any) => !state.characterName)
+          : false
+      );
+      if (invalidCharacterState) {
+        return "Mỗi character state trong Thiết lập bối cảnh phải có characterName.";
       }
     }
     if (targetStage === ProductionStage.BEAT_MOMENT) {
@@ -2727,7 +2737,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         );
 
       case ProductionStage.SCREEN_CONTINUITY: {
-        const screensList = parsed.screens || [];
+        const screenContinuityScreens = normalizeScreenContinuity(parsed);
         return (
           <div className="space-y-6">
             <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -2743,139 +2753,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-6">
-              {screensList.map((screen: any, i: number) => (
-                <div key={screen.screenId || i} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
-                  <div className="bg-slate-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-lg uppercase shadow-sm">
-                        {screen.screenId || `Screen ${i + 1}`}
-                      </span>
-                      <h4 className="font-bold text-slate-800 text-sm">{screen.screenName || 'Bối cảnh chưa đặt tên'}</h4>
-                      <span className="bg-amber-500 text-white text-[9px] font-black px-2.5 py-1 rounded-lg uppercase shadow-sm flex items-center gap-1">
-                        Beats: {Array.isArray(screen.beatIds) && screen.beatIds.length > 0 
-                          ? screen.beatIds.join(", ") 
-                          : `${screen.startBeatId ?? "?"}–${screen.endBeatId ?? "?"}`}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {Array.isArray(screen.screenCharacters) && screen.screenCharacters.map((c: string) => (
-                        <span key={c} className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-indigo-100">
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="p-6 space-y-6">
-                    {screen.screenState && (
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 hover:bg-white transition-all">
-                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Trạng thái bối cảnh (Screen State)</span>
-                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.screenState}</p>
-                      </div>
-                    )}
-                    {Array.isArray(screen.screenProps) && screen.screenProps.length > 0 && (
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 hover:bg-white transition-all">
-                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-2">Đạo cụ bối cảnh (Screen Props)</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {screen.screenProps.map((p) => (
-                            <span key={p} className="bg-slate-200/60 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-300/40">
-                              {p}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {Array.isArray(screen.screenCharacterStates) && screen.screenCharacterStates.length > 0 && (
-                      <div className="space-y-3 pt-3 border-t border-slate-100">
-                        <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block">Trạng thái nhân vật (Screen Character States)</span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {screen.screenCharacterStates.map((c, ci) => (
-                            <div key={c.characterId || c.characterName || ci} className="bg-slate-50/50 p-4 rounded-xl border border-slate-200/60 hover:bg-white hover:shadow-sm transition-all space-y-2">
-                              <h5 className="font-bold text-indigo-600 text-xs">{c.characterName || c.characterId}</h5>
-                              <div className="space-y-2 text-[11px] leading-relaxed">
-                                {c.outfit && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Trang phục:</span>
-                                    <span className="text-slate-700 font-medium">{c.outfit}</span>
-                                  </div>
-                                )}
-                                {(c.outfitMainColor || c.outfitAccentColor) && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Màu sắc:</span>
-                                    <span className="text-slate-700 font-medium">
-                                      {c.outfitMainColor && <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold mr-1">Chủ đạo: {c.outfitMainColor}</span>}
-                                      {c.outfitAccentColor && <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold">Điểm nhấn: {c.outfitAccentColor}</span>}
-                                    </span>
-                                  </div>
-                                )}
-                                {Array.isArray(c.accessories) && c.accessories.length > 0 && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Phụ kiện:</span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {c.accessories.map((acc) => (
-                                        <span key={acc} className="bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-100">
-                                          {acc}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {Array.isArray(c.handheldItems) && c.handheldItems.length > 0 && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Vật cầm tay:</span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {c.handheldItems.map((item) => (
-                                        <span key={item} className="bg-rose-50 text-rose-700 font-semibold px-2 py-0.5 rounded border border-rose-100">
-                                          {item}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {c.appearanceNotes && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Diện mạo:</span>
-                                    <span className="text-slate-600 italic">{c.appearanceNotes}</span>
-                                  </div>
-                                )}
-                                {((Array.isArray(c.stateChanges) && c.stateChanges.length > 0) || (typeof c.stateChanges === 'string' && c.stateChanges.trim())) && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Thay đổi trạng thái:</span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {Array.isArray(c.stateChanges) ? (
-                                        c.stateChanges.map((change) => (
-                                          <span key={change} className="bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded border border-amber-100">
-                                            {change}
-                                          </span>
-                                        ))
-                                      ) : (
-                                        <span className="text-amber-700 font-semibold">{c.stateChanges}</span>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {screen.continuityNotes && (
-                      <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-100/50 hover:bg-white transition-all">
-                        <span className="font-black text-[9px] uppercase tracking-wider text-amber-600 block mb-1">Ghi chú liên tục (Continuity Notes)</span>
-                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.continuityNotes}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {screensList.length === 0 && (
-                <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
-                  <p className="text-slate-400 text-sm">Chưa có thông tin thiết lập bối cảnh nào.</p>
-                </div>
-              )}
-            </div>
+            <ScreenContinuityView screens={screenContinuityScreens} />
 
             {showAnalysisJson && (
               <div className="rounded-3xl border border-slate-200 bg-slate-950 p-6 shadow-sm">

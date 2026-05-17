@@ -235,6 +235,16 @@ function ScreenCard({ screen, beats }: { screen: StoryScreen; beats: StoryBeat[]
               {screen.location || "Unknown location"} / {screen.timeOfDay || "Unknown time"}
             </p>
             {screen.screenState && <p className="mt-3 text-sm leading-relaxed text-slate-700">{screen.screenState}</p>}
+            {(screen.beatIds?.length || screen.startBeatId || screen.endBeatId) && (
+              <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <span className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400 block mb-1">Beat Link</span>
+                <p className="text-xs font-bold text-slate-700">
+                  {screen.beatIds?.length
+                    ? `Applies to beats: ${screen.beatIds.join(", ")}`
+                    : `Beat range: ${screen.startBeatId ?? "?"}–${screen.endBeatId ?? "?"}`}
+                </p>
+              </div>
+            )}
             {screen.continuityNotes && (
               <p className="mt-3 rounded-2xl bg-violet-50 p-3 text-sm leading-relaxed text-violet-800">
                 {screen.continuityNotes}

@@ -9,7 +9,8 @@ import type {
   StoryScreen,
   StoryboardPanel,
   ScreenCharacterState,
-  BeatCharacterMomentDetail
+  BeatCharacterMomentDetail,
+  ScreenContinuityItem
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -203,8 +204,30 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
   });
 }
 
-export function normalizeScreenContinuity(raw: unknown): StoryScreen[] {
-  return normalizeScreens(raw);
+export function normalizeScreenContinuity(raw: unknown): ScreenContinuityItem[] {
+  const items = getItems(raw, ["screens", "screenContinuity"]);
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item: any) => ({
+    screenId: asString(item.screenId ?? item.screen_id, ""),
+    beatIds: asNumberArray(item.beatIds ?? item.beat_ids),
+    startBeatId:
+      item.startBeatId != null
+        ? Number(item.startBeatId)
+        : item.start_beat_id != null
+          ? Number(item.start_beat_id)
+          : undefined,
+    endBeatId:
+      item.endBeatId != null
+        ? Number(item.endBeatId)
+        : item.end_beat_id != null
+          ? Number(item.end_beat_id)
+          : undefined,
+    screenState: asString(item.screenState ?? item.screen_state, ""),
+    screenProps: asStringArray(item.screenProps ?? item.screen_props),
+    screenCharacterStates: normalizeScreenCharacterStates(item),
+    continuityNotes: asString(item.continuityNotes ?? item.continuity_notes, ""),
+  }));
 }
 
 export function normalizeBeatMomentDetails(raw: unknown): any[] {
@@ -240,7 +263,7 @@ export function mergeScreenContinuityIntoScreens(
 
   return screens.map((screen) => {
     const matched = continuityScreens.find(
-      (c) => c.screenId === screen.screenId || c.screenNumber === screen.screenNumber
+      (c) => c.screenId === screen.screenId || (c as any).screenNumber === screen.screenNumber
     );
     if (!matched) return screen;
 
