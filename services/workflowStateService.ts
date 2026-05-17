@@ -13,6 +13,8 @@ export function createEmptyWorkflow(): WorkflowState {
   return {
     beatAnalysis: createWorkflowStep(),
     characterLocation: createWorkflowStep(),
+    screenContinuity: createWorkflowStep(),
+    beatMomentDetails: createWorkflowStep(),
     storyboard: createWorkflowStep(),
     promptEngineering: createWorkflowStep(),
     qa: createWorkflowStep(),
@@ -70,6 +72,8 @@ export function markStepError(step: WorkflowStepState, errorMessage: string): Wo
 export function markDownstreamStaleAfterBeatEdit(workflow: WorkflowState): WorkflowState {
   return {
     ...workflow,
+    screenContinuity: markStepStale(workflow.screenContinuity || createWorkflowStep(), "Beat data changed; screen continuity may be outdated."),
+    beatMomentDetails: markStepStale(workflow.beatMomentDetails || createWorkflowStep(), "Beat data changed; beat moment details may be outdated."),
     storyboard: markStepStale(workflow.storyboard, "Beat data changed; storyboard may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Beat data changed; prompts may be outdated."),
     qa: markStepStale(workflow.qa, "Beat data changed; QA may be outdated."),
@@ -82,6 +86,8 @@ export function markDownstreamStaleAfterSourceEdit(workflow: WorkflowState): Wor
     ...workflow,
     beatAnalysis: markStepStale(workflow.beatAnalysis, "Source text changed; beat analysis may be outdated."),
     characterLocation: markStepStale(workflow.characterLocation, "Source text changed; character/location library may be outdated."),
+    screenContinuity: markStepStale(workflow.screenContinuity || createWorkflowStep(), "Source text changed; screen continuity may be outdated."),
+    beatMomentDetails: markStepStale(workflow.beatMomentDetails || createWorkflowStep(), "Source text changed; beat moment details may be outdated."),
     storyboard: markStepStale(workflow.storyboard, "Source text changed; storyboard may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Source text changed; prompts may be outdated."),
     qa: markStepStale(workflow.qa, "Source text changed; QA may be outdated."),
@@ -92,6 +98,8 @@ export function markDownstreamStaleAfterSourceEdit(workflow: WorkflowState): Wor
 export function markDownstreamStaleAfterCharacterEdit(workflow: WorkflowState): WorkflowState {
   return {
     ...workflow,
+    screenContinuity: markStepStale(workflow.screenContinuity || createWorkflowStep(), "Character data changed; screen continuity may be outdated."),
+    beatMomentDetails: markStepStale(workflow.beatMomentDetails || createWorkflowStep(), "Character data changed; beat moment details may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Character data changed; prompts may be outdated."),
     qa: markStepStale(workflow.qa, "Character data changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Character data changed; final result must be rebuilt.")
@@ -101,6 +109,8 @@ export function markDownstreamStaleAfterCharacterEdit(workflow: WorkflowState): 
 export function markDownstreamStaleAfterLocationEdit(workflow: WorkflowState): WorkflowState {
   return {
     ...workflow,
+    screenContinuity: markStepStale(workflow.screenContinuity || createWorkflowStep(), "Location data changed; screen continuity may be outdated."),
+    beatMomentDetails: markStepStale(workflow.beatMomentDetails || createWorkflowStep(), "Location data changed; beat moment details may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Location data changed; prompts may be outdated."),
     qa: markStepStale(workflow.qa, "Location data changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Location data changed; final result must be rebuilt.")

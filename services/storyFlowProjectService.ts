@@ -19,11 +19,14 @@ import {
   normalizeEngineerPrompts,
   normalizeQAResults,
   normalizeScreens,
-  parseJsonSafe
+  parseJsonSafe,
+  mergeScreenContinuityIntoScreens,
+  mergeBeatMomentDetailsIntoBeats
 } from "./finalResultBuilderService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import {
   createEmptyWorkflow,
+  createWorkflowStep,
   markDownstreamStaleAfterBeatEdit,
   markDownstreamStaleAfterSourceEdit,
   markDownstreamStaleAfterCharacterEdit,
@@ -118,6 +121,7 @@ function findPromptMatch(currentPrompts: EngineerPrompt[], incomingPrompt: Engin
   });
 }
 
+
 export function createInitialProject(params?: {
   title?: string;
   sourceText?: string;
@@ -136,6 +140,8 @@ export function createInitialProject(params?: {
     storyboardPanels: [],
     engineerPrompts: [],
     qaResults: [],
+    screenContinuity: "",
+    beatMomentDetails: "",
     finalResult: null,
     workflow: createEmptyWorkflow(),
     createdAt: now,
@@ -171,6 +177,8 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
     storyboardPanels: sanitizeStoryboardPanels(normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }))),
     engineerPrompts: normalizeEngineerPrompts(parseJsonSafe<unknown>(production.prompts, [])),
     qaResults: normalizeQAResults(parseJsonSafe<unknown>(production.qaReport, [])),
+    screenContinuity: production.screenContinuity || "",
+    beatMomentDetails: production.beatMomentDetails || "",
     finalResult,
     workflow: {
       ...project.workflow,
@@ -208,6 +216,8 @@ export function hydrateStoryFlowProject(
     storyboardPanels: asArray<StoryboardPanel>(rawProject.storyboardPanels, fallback.storyboardPanels),
     engineerPrompts: asArray<EngineerPrompt>(rawProject.engineerPrompts, fallback.engineerPrompts),
     qaResults: asArray<QAResult>(rawProject.qaResults, fallback.qaResults),
+    screenContinuity: typeof rawProject.screenContinuity === "string" ? rawProject.screenContinuity : fallback.screenContinuity,
+    beatMomentDetails: typeof rawProject.beatMomentDetails === "string" ? rawProject.beatMomentDetails : fallback.beatMomentDetails,
     finalResult: isRecord(rawProject.finalResult) ? rawProject.finalResult as FinalResult : fallback.finalResult,
     workflow: {
       beatAnalysis: hydrateWorkflowStep(rawWorkflow.beatAnalysis, fallback.workflow.beatAnalysis),
@@ -600,13 +610,41 @@ export function lockEngineerPromptField(project: StoryFlowProject, beatId: numbe
 }
 
 export function buildFinalResultFromProject(project: StoryFlowProject): FinalResult {
+  const mergedScreens = mergeScreenContinuityIntoScreens(
+    project.screens?.length ? project.screens : createFallbackScreensFromBeats(project.beats),
+    project.screenContinuity
+  );
+  const mergedBeats = mergeBeatMomentDetailsIntoBeats(project.beats, project.beatMomentDetails);
+
   return buildFinalResult({
-    screens: project.screens?.length ? project.screens : createFallbackScreensFromBeats(project.beats),
-    beats: project.beats,
+    screens: mergedScreens,
+    beats: mergedBeats,
     panels: project.storyboardPanels,
     engineerPrompts: project.engineerPrompts,
     qaResults: project.qaResults,
     characters: project.characters,
     locations: project.locations
+  });
+}
+
+export function replaceScreenContinuity(project: StoryFlowProject, screenContinuity: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    screenContinuity,
+    workflow: {
+      ...project.workflow,
+      screenContinuity: markStepNeedsReview(project.workflow.screenContinuity || createWorkflowStep())
+    }
+  });
+}
+
+export function replaceBeatMomentDetails(project: StoryFlowProject, beatMomentDetails: string): StoryFlowProject {
+  return withTimestamp({
+    ...project,
+    beatMomentDetails,
+    workflow: {
+      ...project.workflow,
+      beatMomentDetails: markStepNeedsReview(project.workflow.beatMomentDetails || createWorkflowStep())
+    }
   });
 }

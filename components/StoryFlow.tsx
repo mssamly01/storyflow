@@ -34,7 +34,9 @@ import {
   replaceScreens,
   replaceStoryboardPanels,
   serializeProjectForStorage,
-  syncProjectSource
+  syncProjectSource,
+  replaceScreenContinuity,
+  replaceBeatMomentDetails
 } from '../services/storyFlowProjectService';
 import {
   buildSrtFromItems,
@@ -270,6 +272,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     const set = new Set<ProductionStage>([ProductionStage.INPUT]);
     if (prod.analysis) set.add(ProductionStage.ANALYSIS);
     if (prod.characterLocationAnalysis) set.add(ProductionStage.CHARACTER_LOCATION);
+    if (prod.screenContinuity) set.add(ProductionStage.SCREEN_CONTINUITY);
+    if (prod.beatMomentDetails) set.add(ProductionStage.BEAT_MOMENT);
     if (prod.storyboard) set.add(ProductionStage.STORYBOARD);
     if (prod.prompts) set.add(ProductionStage.PROMPTS);
     if (prod.qaReport) set.add(ProductionStage.QA);
@@ -371,6 +375,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     { id: ProductionStage.INPUT, label: "Nhập tiểu thuyết", icon: FileText },
     { id: ProductionStage.ANALYSIS, label: "Phân tích nội dung", icon: BarChart2 },
     { id: ProductionStage.CHARACTER_LOCATION, label: "Nhân vật & Bối cảnh", icon: Users },
+    { id: ProductionStage.SCREEN_CONTINUITY, label: "Thiết lập bối cảnh", icon: Palette },
+    { id: ProductionStage.BEAT_MOMENT, label: "Chi tiết hành động", icon: Table },
     { id: ProductionStage.STORYBOARD, label: "Phác thảo minh họa", icon: Layout },
     { id: ProductionStage.PROMPTS, label: "Prompt Engineering", icon: Zap },
     { id: ProductionStage.QA, label: "QA & Consistency", icon: ShieldCheck },
@@ -670,9 +676,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         } catch {
           return gemini.getCharacterLocationLibraryPrompt(inputData.script, [], stylePrompt, existingLibrary);
         }
+      case ProductionStage.SCREEN_CONTINUITY:
+        return gemini.getScreenContinuityPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
+      case ProductionStage.BEAT_MOMENT:
+        return gemini.getBeatMomentDetailsPrompt(production.analysis || '', production.characterLocationAnalysis || '', production.screenContinuity || '', stylePrompt);
       case ProductionStage.STORYBOARD: 
         return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
-      case ProductionStage.PROMPTS: return gemini.getEngineerPromptsPrompt(production.storyboard || '', production.characterLocationAnalysis || '', stylePrompt, production.analysis || '');
+      case ProductionStage.PROMPTS:
+        return gemini.getEngineerPromptsPrompt(
+          production.storyboard || '',
+          production.characterLocationAnalysis || '',
+          stylePrompt,
+          production.analysis || '',
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
+        );
       case ProductionStage.QA: return gemini.getQAPrompt(production.prompts || '', production.characterLocationAnalysis || '', stylePrompt, production.storyboard || '', production.analysis || '');
       case ProductionStage.FINAL:
         return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
@@ -866,6 +884,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(result, {}))
           );
         }
+        if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
+          return replaceScreenContinuity(prev, result);
+        }
+        if (targetStage === ProductionStage.BEAT_MOMENT) {
+          return replaceBeatMomentDetails(prev, result);
+        }
         if (targetStage === ProductionStage.STORYBOARD) {
           return replaceStoryboardPanels(prev, normalizeStoryboardPanels(parseJsonSafe<unknown>(result, { panels: [] })));
         }
@@ -914,6 +938,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       const updated = { ...prev };
       if (targetStage === ProductionStage.ANALYSIS) updated.analysis = result;
       else if (targetStage === ProductionStage.CHARACTER_LOCATION) updated.characterLocationAnalysis = result;
+      else if (targetStage === ProductionStage.SCREEN_CONTINUITY) updated.screenContinuity = result;
+      else if (targetStage === ProductionStage.BEAT_MOMENT) updated.beatMomentDetails = result;
       else if (targetStage === ProductionStage.STORYBOARD) updated.storyboard = result;
       else if (targetStage === ProductionStage.PROMPTS) updated.prompts = result;
       else if (targetStage === ProductionStage.QA) updated.qaReport = result;
@@ -1045,11 +1071,33 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         }
         setIsLoading(false);
         return;
+      } else if (stage === ProductionStage.SCREEN_CONTINUITY) {
+        result = await gemini.generateScreenContinuity(
+          production.analysis || '',
+          production.characterLocationAnalysis || '',
+          getSelectedStylePrompt()
+        );
+        targetStage = ProductionStage.SCREEN_CONTINUITY;
+      } else if (stage === ProductionStage.BEAT_MOMENT) {
+        result = await gemini.generateBeatMomentDetails(
+          production.analysis || '',
+          production.characterLocationAnalysis || '',
+          production.screenContinuity || '',
+          getSelectedStylePrompt()
+        );
+        targetStage = ProductionStage.BEAT_MOMENT;
       } else if (stage === ProductionStage.STORYBOARD) {
         result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
-        result = await gemini.engineerPrompts(production.storyboard || '', production.characterLocationAnalysis || '', getSelectedStylePrompt(), production.analysis || '');
+        result = await gemini.engineerPrompts(
+          production.storyboard || '',
+          production.characterLocationAnalysis || '',
+          getSelectedStylePrompt(),
+          production.analysis || '',
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
+        );
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
         result = await gemini.runQA(
@@ -1078,7 +1126,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           engineerPrompts: project.engineerPrompts.length ? project.engineerPrompts : normalizeEngineerPrompts(promptData),
           qaResults: project.qaResults.length ? project.qaResults : normalizeQAResults(qaData),
           characters: project.characters.length ? project.characters : libraryData.characters,
-          locations: project.locations.length ? project.locations : libraryData.locations
+          locations: project.locations.length ? project.locations : libraryData.locations,
+          screenContinuity: production.screenContinuity || "",
+          beatMomentDetails: production.beatMomentDetails || ""
         };
         const finalResult = buildFinalResultFromProject(projectForFinal);
         result = JSON.stringify(finalResult, null, 2);
@@ -2593,6 +2643,228 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             )}
           </div>
         );
+
+      case ProductionStage.SCREEN_CONTINUITY: {
+        const screensList = parsed.screens || [];
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Palette className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Thiết lập bối cảnh (Screen Continuity)</span>
+              </div>
+              <button
+                onClick={() => setShowAnalysisJson(prev => !prev)}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm flex items-center gap-2 ${showAnalysisJson ? 'bg-slate-900 text-white border-slate-900' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border-indigo-100'}`}
+              >
+                <Code2 className="w-3.5 h-3.5" /> {showAnalysisJson ? 'Ẩn JSON' : 'Xem JSON'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6">
+              {screensList.map((screen: any, i: number) => (
+                <div key={screen.screenId || i} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                  <div className="bg-slate-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-lg uppercase shadow-sm">
+                        {screen.screenId || `Screen ${i + 1}`}
+                      </span>
+                      <h4 className="font-bold text-slate-800 text-sm">{screen.screenName || 'Bối cảnh chưa đặt tên'}</h4>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Array.isArray(screen.screenCharacters) && screen.screenCharacters.map((c: string) => (
+                        <span key={c} className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-indigo-100">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    {screen.sceneSetup && (
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 hover:bg-white transition-all">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Thiết lập cảnh (Scene Setup)</span>
+                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.sceneSetup}</p>
+                      </div>
+                    )}
+                    {screen.continuityNotes && (
+                      <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-100/50 hover:bg-white transition-all">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-amber-600 block mb-1">Ghi chú liên tục (Continuity Notes)</span>
+                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.continuityNotes}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {screensList.length === 0 && (
+                <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                  <p className="text-slate-400 text-sm">Chưa có thông tin thiết lập bối cảnh nào.</p>
+                </div>
+              )}
+            </div>
+
+            {showAnalysisJson && (
+              <div className="rounded-3xl border border-slate-200 bg-slate-950 p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Debug JSON</p>
+                    <h3 className="text-sm font-black text-white">Raw screenContinuity</h3>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(JSON.stringify(parsed, null, 2))}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copy JSON
+                  </button>
+                </div>
+                <pre className="max-h-[520px] overflow-auto rounded-2xl bg-black/30 p-4 text-xs leading-relaxed text-emerald-300 font-mono">
+                  {JSON.stringify(parsed, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      case ProductionStage.BEAT_MOMENT: {
+        const beatDetails = parsed.beatDetails || [];
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Table className="w-5 h-5 text-indigo-600" />
+                <span className="text-sm font-bold text-slate-800">Chi tiết hành động (Beat Moment Details)</span>
+              </div>
+              <button
+                onClick={() => setShowAnalysisJson(prev => !prev)}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border shadow-sm flex items-center gap-2 ${showAnalysisJson ? 'bg-slate-900 text-white border-slate-900' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border-indigo-100'}`}
+              >
+                <Code2 className="w-3.5 h-3.5" /> {showAnalysisJson ? 'Ẩn JSON' : 'Xem JSON'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6">
+              {beatDetails.map((beat: any, i: number) => (
+                <div key={beat.beatId || i} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                  <div className="bg-slate-50 px-6 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <span className="bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-lg uppercase shadow-sm">
+                        Beat {beat.beatId || (i + 1)}
+                      </span>
+                      {beat.screenId && (
+                        <span className="bg-sky-50 text-sky-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-sky-100">
+                          Screen: {beat.screenId}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-6 space-y-6">
+                    {beat.originalText && (
+                      <div className="space-y-1">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block">Nội dung gốc</span>
+                        <p className="text-sm text-slate-600 italic border-l-2 border-slate-200 pl-4">{beat.originalText}</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {beat.posture && (
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                          <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Tư thế chung</span>
+                          <p className="text-xs text-slate-700 font-semibold">{beat.posture}</p>
+                        </div>
+                      )}
+                      {beat.interaction && (
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 col-span-2">
+                          <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Tương tác</span>
+                          <p className="text-xs text-slate-700 font-semibold">{beat.interaction}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {Array.isArray(beat.props) && beat.props.length > 0 && (
+                      <div>
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-2">Đạo cụ trong cảnh</span>
+                        <div className="flex flex-wrap gap-2">
+                          {beat.props.map((p: string) => (
+                            <span key={p} className="bg-rose-50 text-rose-700 text-[10px] font-bold px-2.5 py-1 rounded-lg border border-rose-100">
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(beat.characterMomentDetails) && beat.characterMomentDetails.length > 0 && (
+                      <div className="space-y-3 pt-3 border-t border-slate-100">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block">Chi tiết nhân vật tại Beat</span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {beat.characterMomentDetails.map((c: any, ci: number) => (
+                            <div key={c.characterId || c.characterName || ci} className="bg-slate-50/50 p-4 rounded-xl border border-slate-200/60 hover:bg-white hover:shadow-sm transition-all">
+                              <h5 className="font-bold text-indigo-600 text-xs mb-3">{c.characterName || c.characterId}</h5>
+                              <div className="space-y-2.5 text-[11px]">
+                                {c.poseRefinement && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Tư thế:</span>
+                                    <span className="text-slate-700 font-medium">{c.poseRefinement}</span>
+                                  </div>
+                                )}
+                                {c.expression && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Biểu cảm:</span>
+                                    <span className="text-slate-700 font-medium">{c.expression}</span>
+                                  </div>
+                                )}
+                                {Array.isArray(c.handheldItems) && c.handheldItems.length > 0 && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Vật cầm tay:</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {c.handheldItems.map((item: string) => (
+                                        <span key={item} className="bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-100">
+                                          {item}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {beatDetails.length === 0 && (
+                <div className="text-center py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                  <p className="text-slate-400 text-sm">Chưa có thông tin chi tiết hành động nào.</p>
+                </div>
+              )}
+            </div>
+
+            {showAnalysisJson && (
+              <div className="rounded-3xl border border-slate-200 bg-slate-950 p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Debug JSON</p>
+                    <h3 className="text-sm font-black text-white">Raw beatMomentDetails</h3>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(JSON.stringify(parsed, null, 2))}
+                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copy JSON
+                  </button>
+                </div>
+                <pre className="max-h-[520px] overflow-auto rounded-2xl bg-black/30 p-4 text-xs leading-relaxed text-emerald-300 font-mono">
+                  {JSON.stringify(parsed, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        );
+      }
 
       case ProductionStage.STORYBOARD: {
         const panels = normalizeStoryboardPanels(parsed);

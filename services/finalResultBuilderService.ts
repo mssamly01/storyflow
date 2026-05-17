@@ -134,6 +134,8 @@ export function normalizeCharacterMomentDetails(raw: any): BeatCharacterMomentDe
     handheldItems: asStringArray(item.handheldItems ?? item.handheld_items),
     accessoriesChange: asStringArray(item.accessoriesChange ?? item.accessories_change),
     momentNotes: item.momentNotes ?? item.moment_notes ?? "",
+    poseRefinement: item.poseRefinement ?? item.pose_refinement ?? "",
+    expression: item.expression ?? "",
   }));
 }
 
@@ -192,6 +194,98 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       characterMomentDetails: normalizeCharacterMomentDetails(item),
       meta: item.meta
     } as StoryBeat;
+  });
+}
+
+export function normalizeScreenContinuity(raw: unknown): StoryScreen[] {
+  return normalizeScreens(raw);
+}
+
+export function normalizeBeatMomentDetails(raw: unknown): any[] {
+  return getItems(raw, ["beatDetails", "beats", "details"]).map((item, index) => {
+    const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
+    const characterMomentDetails = asArray(item.characterMomentDetails ?? item.character_moment_details ?? []).map((cmd: any) => ({
+      characterName: cmd.characterName ?? cmd.character_name ?? cmd.name ?? "",
+      characterId: cmd.characterId ?? cmd.character_id,
+      poseRefinement: cmd.poseRefinement ?? cmd.pose_refinement ?? "",
+      expression: cmd.expression ?? "",
+      handheldItems: asStringArray(cmd.handheldItems ?? cmd.handheld_items ?? [])
+    }));
+
+    return {
+      beatId,
+      screenId: asString(item.screenId ?? item.screen_id),
+      locationState: asString(item.locationState ?? item.location_state),
+      posture: asString(item.posture),
+      interaction: asString(item.interaction),
+      props: asStringArray(item.props),
+      characterMomentDetails
+    };
+  });
+}
+
+export function mergeScreenContinuityIntoScreens(
+  screens: StoryScreen[],
+  screenContinuityRaw: unknown
+): StoryScreen[] {
+  if (!screenContinuityRaw) return screens;
+  const continuityScreens = normalizeScreenContinuity(screenContinuityRaw);
+  if (!continuityScreens.length) return screens;
+
+  return screens.map((screen) => {
+    const matched = continuityScreens.find(
+      (c) => c.screenId === screen.screenId || c.screenNumber === screen.screenNumber
+    );
+    if (!matched) return screen;
+
+    return {
+      ...screen,
+      screenState: matched.screenState || screen.screenState,
+      screenProps: matched.screenProps?.length ? matched.screenProps : screen.screenProps,
+      continuityNotes: matched.continuityNotes || screen.continuityNotes,
+      screenCharacterStates: matched.screenCharacterStates?.length
+        ? matched.screenCharacterStates
+        : screen.screenCharacterStates
+    };
+  });
+}
+
+export function mergeBeatMomentDetailsIntoBeats(
+  beats: StoryBeat[],
+  beatMomentDetailsRaw: unknown
+): StoryBeat[] {
+  if (!beatMomentDetailsRaw) return beats;
+  const details = normalizeBeatMomentDetails(beatMomentDetailsRaw);
+  if (!details.length) return beats;
+
+  return beats.map((beat) => {
+    const matched = details.find((d) => d.beatId === beat.beatId);
+    if (!matched) return beat;
+
+    const characterMomentDetails = matched.characterMomentDetails?.map((cmd: any) => {
+      const existing = beat.characterMomentDetails?.find(
+        (e) => e.characterName === cmd.characterName || e.characterId === cmd.characterId
+      );
+      return {
+        characterName: cmd.characterName,
+        characterId: cmd.characterId,
+        poseRefinement: cmd.poseRefinement,
+        expression: cmd.expression,
+        handheldItems: cmd.handheldItems,
+        visibleAccessories: existing?.visibleAccessories || [],
+        accessoriesChange: existing?.accessoriesChange || [],
+        momentNotes: existing?.momentNotes || ""
+      };
+    }) || beat.characterMomentDetails;
+
+    return {
+      ...beat,
+      locationState: matched.locationState || beat.locationState,
+      posture: matched.posture || beat.posture,
+      interaction: matched.interaction || beat.interaction,
+      props: matched.props?.length ? matched.props : beat.props,
+      characterMomentDetails
+    };
   });
 }
 

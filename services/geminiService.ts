@@ -71,11 +71,19 @@ Analyze the input story and split it into fine-grained image-ready beats.
 A beat is not a paragraph.
 A beat is one clear visual moment that can be illustrated in one image.
 
-Do NOT create character profiles.
-Do NOT create location profiles.
-Do NOT create image prompts.
-Do NOT rewrite the source story.
-Do NOT add a visualMoment field. Make each beat itself small and drawable instead.
+LIGHTWEIGHT BEAT ANALYSIS RULE - CRITICAL:
+This stage must only create the story skeleton.
+
+Do NOT generate:
+- screenCharacterStates
+- detailed outfit/accessory state
+- characterMomentDetails
+- detailed posture
+- detailed props
+- detailed locationState
+- long interaction descriptions
+
+Your job is to identify focus/visible/offscreen characters, location, time, short action, atmosphere, and visual focus.
 
 BEAT SPLITTING RULES - CRITICAL:
 1. Split the entire story into continuous, fine-grained, image-ready beats.
@@ -91,27 +99,14 @@ BEAT SPLITTING RULES - CRITICAL:
 11. Do not over-split filler sentences with no visual value unless they change emotion, action, location, or story state.
 12. It is better to output more short beats than fewer long beats.
 
-SCREEN CONTINUITY RULE - CRITICAL:
+SCREEN SKELETON RULE - CRITICAL:
 - Group consecutive beats into screens.
-- CHARACTER OUTFIT AND ACCESSORY CONTINUITY RULE - CRITICAL:
-  Analyze and structure character appearance details into three distinct layers:
-  1. Character Library signature accessories: stable features (e.g. glasses, wedding ring, pearl earrings) belonging permanently to character profile.
-  2. Screen-level state: outfit, main accessories, and handheld items that remain persistent throughout a continuous screen (use screenCharacterStates).
-  3. Beat-level moment: momentary hand-held items or accessories changes occurring only in this beat (use characterMomentDetails).
-  * Do not put temporary props (wine glass, phone, contract, bouquet, suitcase) into the permanent Character Library profile unless it is a character's defining signature item.
-  * Do not copy styling, outfits, or accessories from other screens into the current beat.
-- A screen is a continuous scene with the same location, timeOfDay, spatial layout, ongoing character presence, and props/state continuity.
+- A screen is a continuous scene with the same location, timeOfDay, ongoing character presence.
 - Multiple beats can belong to one screen.
 - Do not analyze each beat as an isolated scene.
 - Use screenId to link beats to screens.
 - screenCharacters must include all characters physically present or directly involved in the screen.
 - Do not remove a character from screenCharacters unless the source says they leave, the location changes, time jumps, or a new screen starts.
-
-CHARACTER ROLE RULE:
-- screenCharacters: all characters present or directly involved in the continuous screen.
-- focusCharacters: characters receiving narrative/camera focus in this beat.
-- visibleCharacters: characters visible in the frame for this beat.
-- offscreenPresentCharacters: characters still present in the screen but not visible because of camera angle, focus, or composition.
 - A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
 - Do not drop supporting characters from the screen just because the current beat focuses on someone else.
 
@@ -170,14 +165,6 @@ CROWD ACTION RULE:
 - If guests, staff, classmates, family members, or crowd characters are present, describe what they are doing, where they are looking, or how they react.
 - Do not write vague phrases like "public setting" or "crowd in background".
 
-POSTURE AND POSITION RULE:
-- posture must describe body posture, action state, and relative position of every character in the beat.
-- Include standing/sitting/lying/kneeling/running/leaning/turning/head lowered/hand gripping/etc.
-- Include where each character is in the scene.
-- Position must persist from the previous beat.
-- Only change a character's position when the source text describes movement.
-- Do not teleport characters.
-
 CHARACTER PRESENCE CONTINUITY:
 - characters must list all characters physically present in the scene or directly involved in the visual beat.
 - Track the timeline continuously.
@@ -197,9 +184,6 @@ VISUAL FOCUS RULE:
 BEAT SPLITTING EXAMPLE - FORMAT ONLY, DO NOT COPY CONTENT:
 Source paragraph:
 "At the grandfather's birthday banquet, Yunfan arrived late with his assistant. 'Thanh Y, move across the table; Hua Ran is unfamiliar with this seat and is used to sitting beside me.' Thanh Y did not hesitate. She stood up immediately and sat beside the dark-faced grandfather. Yunfan looked surprised, raised his eyebrow, then pressed the embarrassed assistant into Thanh Y's former seat."
-
-Bad output:
-One beat containing the whole paragraph.
 
 Good output:
 [
@@ -233,8 +217,6 @@ Good output:
   }
 ]
 
-The example is only for splitting logic. Do not copy its names or events unless they appear in the input story.
-
 Selected art style context:
 ${artStyleDescription || "No specific style selected."}
 
@@ -249,26 +231,10 @@ Return ONLY valid JSON with this schema:
       "location": "Concrete location",
       "locationId": "loc_001",
       "timeOfDay": "Evening",
-      "screenState": "Current state of this continuous scene",
       "screenCharacters": ["Character A", "Character B"],
-      "screenProps": ["Prop A", "Prop B"],
-      "screenCharacterStates": [
-        {
-          "characterName": "Character A",
-          "characterId": "char_001",
-          "outfit": "detailed description with color, e.g. elegant champagne-gold evening gown with pearl-white embroidery",
-          "outfitMainColor": "champagne-gold",
-          "outfitAccentColor": "pearl-white",
-          "accessories": ["pearl earrings"],
-          "handheldItems": ["wine glass"],
-          "appearanceNotes": "hair neatly tied up",
-          "stateChanges": []
-        }
-      ],
       "startBeatId": 1,
       "endBeatId": 5,
-      "summary": "What happens in this screen",
-      "continuityNotes": "Continuity notes for characters, props, and layout"
+      "summary": "What happens in this screen"
     }
   ],
   "beats": [
@@ -283,21 +249,7 @@ Return ONLY valid JSON with this schema:
       "characters": ["Character A", "Character B"],
       "location": "Concrete location name",
       "locationId": "loc_001",
-      "locationState": "Current state of the location in this beat.",
-      "action": "One main drawable action.",
-      "interaction": "Specific interaction using character names.",
-      "posture": "Posture, action state, and relative position of all present characters.",
-      "characterMomentDetails": [
-        {
-          "characterName": "Character A",
-          "characterId": "char_001",
-          "visibleAccessories": ["pearl earrings"],
-          "handheldItems": ["phone"],
-          "accessoriesChange": ["silver clutch placed on the banquet table"],
-          "momentNotes": "phone raised in her right hand"
-        }
-      ],
-      "props": ["Specific prop"],
+      "action": "One main action.",
       "visualFocus": "Specific main image focus.",
       "atmosphere": "Dominant mood.",
       "timeOfDay": "Evening"
@@ -319,7 +271,6 @@ ORIGINAL TEXT COVERAGE GUIDELINES:
 - Do not duplicate the same source text in multiple beats.
 - Do not add text that does not exist in the source.
 - Beat order must follow source order.
-- Do not add visualMoment.
 
 BEAT CUTTING RULES:
 - A beat is one visual moment that can be illustrated as one storyboard panel.
@@ -334,10 +285,7 @@ SPLIT WHEN:
 - Present scene changes to memory, flashback, social media, or phone screen.
 - Main visual action changes.
 - A different character starts a new action, dialogue line, or thought.
-- Character posture changes significantly.
-- Main interaction target changes.
 - Narration interrupts actions/dialogue.
-- Emotional intensity or atmosphere changes clearly.
 - Dialogue becomes long or moves to a new action/emotional point.
 
 DO NOT SPLIT WHEN:
@@ -348,7 +296,7 @@ DO NOT SPLIT WHEN:
 - One short message/call question-answer pair belongs to the same visual moment.
 
 FIELD RULES:
-- screens: screen-level continuity containers for shared location, time, layout, present characters, and props.
+- screens: screen-level continuity containers for shared location, time, layout, present characters.
 - screenId: stable link from each beat to its screen.
 - summary: short explanation of the beat, not copied from originalText.
 - characters: legacy compatibility field; include visibleCharacters when possible.
@@ -357,11 +305,7 @@ FIELD RULES:
 - offscreenPresentCharacters: characters still present in the screen but not visible in this beat.
 - location: most specific known place, or "Unknown".
 - locationId: stable location id if inferable from consistent location naming, otherwise omit or use "".
-- locationState: current state of the location in this beat.
 - action: main action.
-- interaction: who reacts/speaks/looks/touches/threatens/helps whom, using concrete character names.
-- posture: concrete body positions, action state, and relative positions of all present characters.
-- props: objects required for continuity.
 - visualFocus: what the image should focus on.
 - atmosphere: emotional mood.
 - timeOfDay: Early Morning, Morning, Mid-day, Afternoon, Golden Hour, Evening, Late Night, or Unknown.
@@ -670,7 +614,14 @@ ${artStyleDescription || "No specific style selected."}
 `;
 };
 
-export const getEngineerPromptsPrompt = (storyboard: string, charLocAnalysis: string, style: string, analysis = "") => `
+export const getEngineerPromptsPrompt = (
+  storyboard: string,
+  charLocAnalysis: string,
+  style: string,
+  analysis = "",
+  screenContinuity = "",
+  beatMomentDetails = ""
+) => `
 You are a senior Prompt Engineering specialist. Convert the Storyboard into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
 
 TASK:
@@ -678,28 +629,21 @@ Create one copy-ready visualPrompt for each panel.
 Each visualPrompt must be detailed enough to paste directly into an AI image generator.
 Each visualPrompt must contain both the positive prompt and a final "Negative prompt:" section.
 
-SOURCE-OF-TRUTH RULES:
-- Do not re-analyze story fields.
-- Do not infer timeOfDay, location, visible characters, props, action, interaction, posture, atmosphere, or visualFocus.
-- originalText, timeOfDay, location, locationId, locationState, visible characters, props, action, interaction, posture, atmosphere, and visualFocus must come from APPROVED BEAT SOURCE.
-- Storyboard is only visual direction: shotType, cameraAngle, cameraDistance, lensFeel, composition, foreground, midground, background, characterBlocking, lightingDirection, depthAndPerspective, visualEmphasis, cameraNotes.
-- Character Library is the source of truth for identity, face, hair, eyes, outfit, accessories, props, colorPalette, and continuityNotes.
-- Location Library is the source of truth for description, layout, keyObjects, lighting, colorPalette, continuityNotes, and baseState.
-- If data conflicts, prioritize APPROVED BEAT SOURCE plus Character/Location Library.
-- If any input entity contains meta.locks.lockedFields, preserve those fields exactly and only regenerate unlocked fields.
-- All source linking is handled by the app through beatId. Do not output extra source mapping metadata.
-- Beat Analysis has already split the story into image-ready beats.
-- Treat each beat as one drawable image moment.
-- Do not try to illustrate the entire source story paragraph.
-- Use beat.originalText only as context for that one beat.
-- Main visual direction must come from beat.action, beat.interaction, beat.posture, beat.visualFocus, beat.focusCharacters, beat.visibleCharacters, beat.offscreenPresentCharacters, beat.props, beat.location/locationState, and beat.timeOfDay.
-- Screen continuity comes from APPROVED BEAT SOURCE screens[]. Use screenCharacters as the present-character continuity pool.
+SOURCE PRIORITIES (CRITICAL SOURCE OF TRUTH RULES):
+To ensure absolute character identity and layout permanence across panels, apply this strict priority hierarchy:
+1. APPROVED BEAT SKELETON SOURCE: For basic scene structure, screen list, and beat list.
+2. CHARACTER + LOCATION LIBRARY: For core character details (hair, face, signature accessories) and base location setting.
+3. SCREEN CONTINUITY: For screen-level character outfits, main colors, screen props, and layout changes.
+4. BEAT MOMENT DETAILS: For beat-specific active posture, interactions, active props/handheld items, and momentary expressions.
+5. STORYBOARD VISUAL DIRECTION: Strictly for framing, shot type, camera angle, and background/midground/foreground layout.
+
+Do not invent visual details that violate this hierarchy.
 
 ACCESSORY SELECTION RULE - CRITICAL:
 When constructing the visualPrompt for a beat:
 1. Start with the character's core stable identity from the Character Library.
-2. Overlay the screen-level outfit, accessories, and handheld items from screenCharacterStates in APPROVED BEAT SOURCE screens[].
-3. Apply beat-level momentary changes or handheld items from beat.characterMomentDetails only if they are visible in this exact beat.
+2. Overlay the screen-level outfit, accessories, and handheld items from SCREEN CONTINUITY screens[].
+3. Apply beat-level momentary changes or handheld items from BEAT MOMENT DETAILS beatDetails[] only if they are visible in this exact beat.
 4. Do NOT list accessories or outfits from other screens or other beats. Keep visualPrompt strictly consistent with the current screen and beat.
 5. Do NOT list every known accessory. Include only:
    - signature accessories that are currently visible,
@@ -707,7 +651,7 @@ When constructing the visualPrompt for a beat:
    - current beat-level handheld items or changes.
 
 OUTFIT SELECTION RULE - CRITICAL:
-Choose only the outfit specified in the current screen's screenCharacterStates for this character. Do not include outfits from other screens.
+Choose only the outfit specified in the current screen's SCREEN CONTINUITY for this character. Do not include outfits from other screens.
 
 CHARACTER COLOR DETAIL RULE - CRITICAL:
 For every visible character included in visualPrompt, always describe them with explicit, natural-language color descriptions for:
@@ -763,8 +707,8 @@ Do not start with action, character, camera, or location before the style.
 
 2. LOCATION FIRST:
 Immediately after style, write:
-"Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SOURCE], [lighting/material from Location Library + Storyboard]."
-Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SOURCE. Match Location Library by locationId first, then name/aliases. Include description, layout, keyObjects, lighting, colorPalette where available. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
+"Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SKELETON SOURCE], [lighting/material from Location Library + Storyboard]."
+Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE. Match Location Library by locationId first, then name/aliases. Include description, layout, keyObjects, lighting, colorPalette where available. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
 
 3. LOCATION CONTINUITY BLOCK:
 Every visualPrompt must include this block right after Location:
@@ -773,7 +717,7 @@ Do not include locationId. Do not include labels like base description, spatial 
 
 4. SCENE + POSTURE + INTERACTION:
 After Location Continuity, write:
-"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from APPROVED BEAT SOURCE + Storyboard blocking]."
+"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from BEAT MOMENT DETAILS + Storyboard blocking]."
 Always describe posture for each visible character. Always describe action and interaction: who looks at whom, speaks to whom, touches whom. For side/background characters, describe concrete action and gaze direction. Avoid vague group nouns such as "the group", "the trio", "both of them", or ambiguous "they"; use specific character names.
 
 SCREEN CONTINUITY IN VISUAL PROMPT:
@@ -819,23 +763,6 @@ Use this example only to understand the required level of detail, ordering, and 
 
 Example visualPrompt:
 "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired. Location: CEO Office (a modern luxury CEO office with a dark walnut executive desk, black leather chair, floor-to-ceiling city window, glass bookshelves on the left wall, abstract painting behind the desk, and a black sofa area on the right), evening, cool city light from the window mixed with soft interior office lighting. Location Continuity: keep the centered executive desk, black leather chair, guest chairs, glass bookshelves, abstract wall painting, sofa area, laptop, coffee cup, and cool office lighting consistent across this screen. Screen Continuity: Linh An and Tong Mat remain in the office across this tense conversation; this shot focuses on Linh An confronting Tong Mat across the desk. Scene: medium close-up, eye-level camera angle, main character positioned on the left side of the frame, tense conversation across the desk. Linh An (Gender: Female, Age: 24, Height: 165cm, Face: oval face, Hair: jet-black long silky hair, Eyes: dark-brown deep eyes, Posture: standing stiffly with tense shoulders, Outfit: cream-white silk blouse and black pencil skirt, Accessories: small pearl earrings, Handheld: silver clutch placed on the desk) grips the edge of the desk while looking directly at Tong Mat. Tong Mat (Gender: Male, Age: 31, Height: 182cm, Face: sharp face, Hair: jet-black neatly styled hair, Eyes: dark-brown cold eyes, Posture: seated behind the desk, Outfit: charcoal-black tailored black business suit and white dress shirt, Accessories: silver wristwatch, Handheld: none) leans back in the black leather office chair, staring back at Linh An with a controlled expression. Foreground: edge of the dark walnut desk and white coffee cup. Midground: Linh An and Tong Mat facing each other. Background: floor-to-ceiling city window and glass bookshelves. no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
-
-Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
-
-DATA INPUTS:
-
-APPROVED BEAT SOURCE:
-${analysis || "No approved beat data provided. Use storyboard legacy source fields only as fallback."}
-
-STORYBOARD VISUAL DIRECTION:
-${storyboard}
-
-CHARACTER + LOCATION LIBRARY:
-${charLocAnalysis}
-
-OUTPUT FIELD RULES:
-- Return ONLY valid JSON.
-- Do not use markdown.
 - Do not add commentary.
 - Output may be a JSON array or an object with "engineerPrompts".
 - Each engineerPrompts item must contain ONLY:
@@ -1000,6 +927,107 @@ QA PATCHES / NOTES:
 ${qaReport}
 `;
 
+export const getScreenContinuityPrompt = (analysis: string, charLocAnalysis: string, style = "") => `
+You are a master of visual continuity for sequential storytelling (comics, storyboards, webtoons).
+
+Your ONLY task:
+Perform Screen-Level Continuity Analysis (Phase 2).
+You will analyze the screen skeleton (from Phase 1) and output the screen-level visual details for outfits, props, and location states.
+
+SCREEN CONTINUITY RULES:
+1. For each screen in the provided input, determine the outfit and style state of every character present on that screen.
+2. If a character appears in multiple screens, ensure their outfits make narrative sense (e.g. they don't change clothes in the middle of a continuous conversation in the same room).
+3. If they move to a new location or a new time of day, outfit changes must be logical.
+4. If a character profile includes an "outfit" description, use that as the primary guideline, but expand it to specify screen-level visible items, colors, and accessories.
+5. Do NOT list every accessory. Only signature accessories and screen-level accessories.
+6. Return ONLY a valid JSON object. No markdown. No commentary.
+
+Required JSON Schema:
+{
+  "screens": [
+    {
+      "screenId": "string (e.g. screen_1)",
+      "screenNumber": 1,
+      "screenName": "string",
+      "location": "string",
+      "locationId": "string",
+      "timeOfDay": "string",
+      "screenState": "string (layout status or changes in this screen)",
+      "screenProps": ["string (props permanent/visible on this screen)"],
+      "screenCharacterStates": [
+        {
+          "characterId": "string",
+          "characterName": "string",
+          "outfit": "string (complete description of outfit type, main color, accent color)",
+          "accessories": ["string (visible screen-level accessories and signature accessories)"]
+        }
+      ],
+      "continuityNotes": "string"
+    }
+  ]
+}
+
+APPROVED BEAT SKELETON SOURCE:
+${analysis}
+
+CHARACTER + LOCATION LIBRARY:
+${charLocAnalysis}
+
+ART STYLE:
+${style}
+`;
+
+export const getBeatMomentDetailsPrompt = (analysis: string, charLocAnalysis: string, screenContinuity: string, style = "") => `
+You are a master of visual sequencing and moment-to-moment action for storyboards.
+
+Your ONLY task:
+Perform Beat-Level Moment Details Analysis (Phase 3).
+You will analyze the screen skeleton and screen continuity, and output the highly detailed, momentary actions, expressions, and posture changes for each beat.
+
+BEAT MOMENT RULES:
+1. For each beat, define the exact posture, active momentary gesture, expression, and handheld item or props.
+2. Ensure postures are physically consistent (e.g. if character sits, they stay sitting until they stand up).
+3. Ensure gestures and expressions perfectly match the original text and dialogue.
+4. Avoid hex colors or technical labels.
+5. Return ONLY a valid JSON object. No markdown. No commentary.
+
+Required JSON Schema:
+{
+  "beatDetails": [
+    {
+      "beatId": 1,
+      "screenId": "string",
+      "originalText": "string",
+      "locationState": "string (momentary location changes or object interaction)",
+      "posture": "string (explicit physical pose: standing, sitting, crouching, etc.)",
+      "interaction": "string (detailed physical or verbal interaction, e.g. looking at X, pointing at Y)",
+      "props": ["string (active handheld props or objects in this exact beat)"],
+      "characterMomentDetails": [
+        {
+          "characterId": "string",
+          "characterName": "string",
+          "poseRefinement": "string (specific hand/body gestures)",
+          "expression": "string (facial expression)",
+          "handheldItems": ["string (items held in hand right now)"]
+        }
+      ]
+    }
+  ]
+}
+
+APPROVED BEAT SKELETON SOURCE:
+${analysis}
+
+SCREEN CONTINUITY:
+${screenContinuity}
+
+CHARACTER + LOCATION LIBRARY:
+${charLocAnalysis}
+
+ART STYLE:
+${style}
+`;
+
 // --- API SERVICES ---
 
 export const analyzeBeats = async (text: string, artStyleDescription?: string): Promise<BeatAnalysisResult> => {
@@ -1023,21 +1051,15 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
                 location: { type: "string" },
                 locationId: { type: "string" },
                 timeOfDay: { type: "string" },
-                screenState: { type: "string" },
                 screenCharacters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                screenProps: {
                   type: "array",
                   items: { type: "string" }
                 },
                 startBeatId: { type: "integer" },
                 endBeatId: { type: "integer" },
-                summary: { type: "string" },
-                continuityNotes: { type: "string" }
+                summary: { type: "string" }
               },
-              required: ["screenId", "screenNumber", "screenName", "location", "timeOfDay", "screenState", "screenCharacters", "screenProps", "startBeatId", "endBeatId", "summary"]
+              required: ["screenId", "screenNumber", "screenName", "location", "timeOfDay", "screenCharacters", "startBeatId", "endBeatId", "summary"]
             }
           },
           beats: {
@@ -1067,19 +1089,12 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
                 },
                 location: { type: "string" },
                 locationId: { type: "string" },
-                locationState: { type: "string" },
                 action: { type: "string" },
-                interaction: { type: "string" },
-                posture: { type: "string" },
-                props: {
-                  type: "array",
-                  items: { type: "string" }
-                },
                 visualFocus: { type: "string" },
                 atmosphere: { type: "string" },
                 timeOfDay: { type: "string" }
               },
-              required: ["beatId", "screenId", "originalText", "summary", "focusCharacters", "visibleCharacters", "offscreenPresentCharacters", "characters", "location", "action", "interaction", "posture", "props", "visualFocus", "atmosphere", "timeOfDay"]
+              required: ["beatId", "screenId", "originalText", "summary", "focusCharacters", "visibleCharacters", "offscreenPresentCharacters", "characters", "location", "action", "visualFocus", "atmosphere", "timeOfDay"]
             }
           },
           coverageCheck: {
@@ -1245,6 +1260,8 @@ export const analyzeStoryPhase1 = async (script: string, style: string, existing
 export const analyzePhase1Analysis = async (script: string, style: string, existingLibrary?: string) => {
   const result = await analyzeStoryPhase1(script, style, existingLibrary);
   return JSON.stringify(result);
+
+
 };
 
 export const createStoryboard = async (analysis: string, charLocAnalysis: string, style = "") => {
@@ -1300,38 +1317,9 @@ export const createStoryboard = async (analysis: string, charLocAnalysis: string
       } as any
     }
   });
-  const parsed = parseGeminiJson<{ panels?: unknown[] } | unknown[]>(response.text);
+  const parsed = parseGeminiJson<{ panels?: any[] } | any[]>(response.text);
   const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(parsed));
   return JSON.stringify({ panels }, null, 2);
-};
-
-export const engineerPrompts = async (storyboard: string, charLocAnalysis: string, style: string, analysis = "") => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getEngineerPromptsPrompt(storyboard, charLocAnalysis, style, analysis),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          engineerPrompts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                visualPrompt: { type: "string" }
-              },
-              required: ["beatId", "visualPrompt"]
-            }
-          }
-        },
-        required: ["engineerPrompts"]
-      } as any
-    }
-  });
-  return response.text;
 };
 
 export const runQA = async (
@@ -1358,6 +1346,160 @@ export const runQA = async (
           },
           required: ["beatId", "visualPrompt", "qaNotes"]
         }
+      } as any
+    }
+  });
+  return response.text;
+};
+
+export const generateScreenContinuity = async (
+  analysis: string,
+  charLocAnalysis: string,
+  style = ""
+): Promise<string> => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: getModel(),
+    contents: getScreenContinuityPrompt(analysis, charLocAnalysis, style),
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: {
+          screens: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                screenId: { type: "string" },
+                screenNumber: { type: "integer" },
+                screenName: { type: "string" },
+                location: { type: "string" },
+                locationId: { type: "string" },
+                timeOfDay: { type: "string" },
+                screenState: { type: "string" },
+                screenProps: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                screenCharacterStates: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      characterId: { type: "string" },
+                      characterName: { type: "string" },
+                      outfit: { type: "string" },
+                      accessories: {
+                        type: "array",
+                        items: { type: "string" }
+                      }
+                    },
+                    required: ["characterId", "characterName", "outfit", "accessories"]
+                  }
+                },
+                continuityNotes: { type: "string" }
+              },
+              required: ["screenId", "screenNumber", "screenName", "location", "timeOfDay", "screenState", "screenProps", "screenCharacterStates"]
+            }
+          }
+        },
+        required: ["screens"]
+      } as any
+    }
+  });
+  return response.text;
+};
+
+export const generateBeatMomentDetails = async (
+  analysis: string,
+  charLocAnalysis: string,
+  screenContinuity: string,
+  style = ""
+): Promise<string> => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: getModel(),
+    contents: getBeatMomentDetailsPrompt(analysis, charLocAnalysis, screenContinuity, style),
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: {
+          beatDetails: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                beatId: { type: "integer" },
+                screenId: { type: "string" },
+                originalText: { type: "string" },
+                locationState: { type: "string" },
+                posture: { type: "string" },
+                interaction: { type: "string" },
+                props: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                characterMomentDetails: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      characterId: { type: "string" },
+                      characterName: { type: "string" },
+                      poseRefinement: { type: "string" },
+                      expression: { type: "string" },
+                      handheldItems: {
+                        type: "array",
+                        items: { type: "string" }
+                      }
+                    },
+                    required: ["characterId", "characterName", "poseRefinement", "expression", "handheldItems"]
+                  }
+                }
+              },
+              required: ["beatId", "screenId", "originalText", "posture", "interaction", "props", "characterMomentDetails"]
+            }
+          }
+        },
+        required: ["beatDetails"]
+      } as any
+    }
+  });
+  return response.text;
+};
+
+export const engineerPrompts = async (
+  storyboard: string,
+  charLocAnalysis: string,
+  style: string,
+  analysis = "",
+  screenContinuity = "",
+  beatMomentDetails = ""
+) => {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: getModel(),
+    contents: getEngineerPromptsPrompt(storyboard, charLocAnalysis, style, analysis, screenContinuity, beatMomentDetails),
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: {
+          engineerPrompts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                beatId: { type: "integer" },
+                visualPrompt: { type: "string" }
+              },
+              required: ["beatId", "visualPrompt"]
+            }
+          }
+        },
+        required: ["engineerPrompts"]
       } as any
     }
   });
@@ -1414,4 +1556,3 @@ export const generateFinalResult = async (
   });
   return response.text;
 };
-

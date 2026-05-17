@@ -2,6 +2,8 @@ export enum ProductionStage {
   INPUT = 'input',
   ANALYSIS = 'analysis',
   CHARACTER_LOCATION = 'character-location',
+  SCREEN_CONTINUITY = 'screen-continuity',
+  BEAT_MOMENT = 'beat-moment',
   STORYBOARD = 'storyboard',
   PROMPTS = 'prompts',
   QA = 'qa',
@@ -20,6 +22,8 @@ export interface ScriptData {
 export interface ProductionData {
   analysis?: string;
   characterLocationAnalysis?: string;
+  screenContinuity?: string;
+  beatMomentDetails?: string;
   storyboard?: string;
   prompts?: string;
   qaReport?: string;
@@ -78,6 +82,8 @@ export interface BeatCharacterMomentDetail {
   handheldItems?: string[];
   accessoriesChange?: string[];
   momentNotes?: string;
+  poseRefinement?: string;
+  expression?: string;
 }
 
 export interface StoryBeat extends BeatAnalysis {
@@ -95,6 +101,31 @@ export interface StoryBeat extends BeatAnalysis {
   action?: string;
   visualFocus?: string;
   characterMomentDetails?: BeatCharacterMomentDetail[];
+}
+
+export interface ScreenContinuityItem {
+  screenId: string;
+  screenState: string;
+  screenProps: string[];
+  screenCharacterStates: ScreenCharacterState[];
+  continuityNotes?: string;
+}
+
+export interface ScreenContinuityResult {
+  screens: ScreenContinuityItem[];
+}
+
+export interface BeatMomentDetail {
+  beatId: number;
+  interaction?: string;
+  posture?: string;
+  props?: string[];
+  locationState?: string;
+  characterMomentDetails?: BeatCharacterMomentDetail[];
+}
+
+export interface BeatMomentDetailResult {
+  beatDetails: BeatMomentDetail[];
 }
 
 export interface CoverageCheck {
@@ -346,6 +377,8 @@ export interface WorkflowStepState {
 export interface WorkflowState {
   beatAnalysis: WorkflowStepState;
   characterLocation: WorkflowStepState;
+  screenContinuity?: WorkflowStepState;
+  beatMomentDetails?: WorkflowStepState;
   storyboard: WorkflowStepState;
   promptEngineering: WorkflowStepState;
   qa: WorkflowStepState;
@@ -381,6 +414,8 @@ export interface StoryFlowProject {
   storyboardPanels: StoryboardPanel[];
   engineerPrompts: EngineerPrompt[];
   qaResults: QAResult[];
+  screenContinuity?: string;
+  beatMomentDetails?: string;
   finalResult: FinalResult | null;
   workflow: WorkflowState;
   createdAt: string;
