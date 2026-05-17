@@ -943,7 +943,7 @@ SCREEN CONTINUITY RULES:
    - accessories (visible screen-level accessories)
    - handheldItems (items they might be holding generally)
    - appearanceNotes (general visual appearance/condition)
-   - stateChanges (any clothing/accessory changes)
+   - stateChanges (list of any clothing/accessory changes, e.g. ["string"])
 6. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
@@ -963,7 +963,7 @@ Required JSON Schema:
           "accessories": ["string"],
           "handheldItems": ["string"],
           "appearanceNotes": "string",
-          "stateChanges": "string"
+          "stateChanges": ["string"]
         }
       ],
       "continuityNotes": "string"
@@ -997,7 +997,7 @@ BEAT MOMENT RULES:
    - characterName
    - visibleAccessories (accessories visible on the character in this exact beat)
    - handheldItems (items held in hand right now)
-   - accessoriesChange (any changes to their accessories at this moment)
+   - accessoriesChange (list of any changes to their accessories at this moment, e.g. ["string"])
    - momentNotes (facial expressions, detailed hand gestures, or body language specific to this beat)
 5. Return ONLY a valid JSON object. No markdown. No commentary.
 
@@ -1016,7 +1016,7 @@ Required JSON Schema:
           "characterName": "string",
           "visibleAccessories": ["string"],
           "handheldItems": ["string"],
-          "accessoriesChange": "string",
+          "accessoriesChange": ["string"],
           "momentNotes": "string"
         }
       ]
@@ -1407,7 +1407,10 @@ export const generateScreenContinuity = async (
                         items: { type: "string" }
                       },
                       appearanceNotes: { type: "string" },
-                      stateChanges: { type: "string" }
+                      stateChanges: {
+                        type: "array",
+                        items: { type: "string" }
+                      }
                     },
                     required: ["characterId", "characterName", "outfit", "outfitMainColor", "outfitAccentColor", "accessories", "handheldItems", "appearanceNotes", "stateChanges"]
                   }
@@ -1468,7 +1471,10 @@ export const generateBeatMomentDetails = async (
                         type: "array",
                         items: { type: "string" }
                       },
-                      accessoriesChange: { type: "string" },
+                      accessoriesChange: {
+                        type: "array",
+                        items: { type: "string" }
+                      },
                       momentNotes: { type: "string" }
                     },
                     required: ["characterId", "characterName", "visibleAccessories", "handheldItems", "accessoriesChange", "momentNotes"]

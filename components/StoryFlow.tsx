@@ -2806,10 +2806,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                                     <span className="text-slate-600 italic">{c.appearanceNotes}</span>
                                   </div>
                                 )}
-                                {c.stateChanges && (
+                                {((Array.isArray(c.stateChanges) && c.stateChanges.length > 0) || (typeof c.stateChanges === 'string' && c.stateChanges.trim())) && (
                                   <div className="flex items-start gap-2">
                                     <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Thay đổi trạng thái:</span>
-                                    <span className="text-amber-700 font-semibold">{c.stateChanges}</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {Array.isArray(c.stateChanges) ? (
+                                        c.stateChanges.map((change) => (
+                                          <span key={change} className="bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded border border-amber-100">
+                                            {change}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-amber-700 font-semibold">{c.stateChanges}</span>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -2958,10 +2968,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                                     </div>
                                   </div>
                                 )}
-                                {c.accessoriesChange && (
+                                {((Array.isArray(c.accessoriesChange) && c.accessoriesChange.length > 0) || (typeof c.accessoriesChange === 'string' && c.accessoriesChange.trim())) && (
                                   <div className="flex items-start gap-2">
                                     <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Thay đổi phụ kiện:</span>
-                                    <span className="text-amber-700 font-semibold">{c.accessoriesChange}</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {Array.isArray(c.accessoriesChange) ? (
+                                        c.accessoriesChange.map((change) => (
+                                          <span key={change} className="bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded border border-amber-100">
+                                            {change}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-amber-700 font-semibold">{c.accessoriesChange}</span>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                                 {c.momentNotes && (
