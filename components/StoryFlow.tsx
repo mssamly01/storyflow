@@ -221,6 +221,18 @@ class StageRenderBoundary extends Component<
   }
 }
 
+function getPromptEngineeringMissingInputs(production: ProductionData): string[] {
+  const missing: string[] = [];
+
+  if (!production.analysis?.trim()) missing.push("Phân tích nội dung");
+  if (!production.characterLocationAnalysis?.trim()) missing.push("Nhân vật & Bối cảnh");
+  if (!production.screenContinuity?.trim()) missing.push("Thiết lập bối cảnh");
+  if (!production.beatMomentDetails?.trim()) missing.push("Chi tiết hành động");
+  if (!production.storyboard?.trim()) missing.push("Phác thảo minh họa");
+
+  return missing;
+}
+
 const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [stage, setStage] = useState<ProductionStage>(ProductionStage.INPUT);
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
@@ -728,14 +740,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           production.beatMomentDetails || ''
         );
       case ProductionStage.PROMPTS:
-        return gemini.getEngineerPromptsPrompt(
-          production.storyboard || '',
-          production.characterLocationAnalysis || '',
-          stylePrompt,
-          production.analysis || '',
-          production.screenContinuity || '',
-          production.beatMomentDetails || ''
-        );
+        return gemini.getEngineerPromptsPrompt({
+          analysisJson: production.analysis || '',
+          characterLocationJson: production.characterLocationAnalysis || '',
+          screenContinuityJson: production.screenContinuity || '',
+          beatMomentDetailsJson: production.beatMomentDetails || '',
+          storyboardJson: production.storyboard || '',
+          style: stylePrompt,
+        });
       case ProductionStage.QA: 
         return gemini.getQAPrompt(
           production.prompts || '', 
@@ -1180,14 +1192,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         );
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
-        result = await gemini.engineerPrompts(
-          production.storyboard || '',
-          production.characterLocationAnalysis || '',
-          getSelectedStylePrompt(),
-          production.analysis || '',
-          production.screenContinuity || '',
-          production.beatMomentDetails || ''
-        );
+        result = await gemini.engineerPrompts({
+          analysisJson: production.analysis || '',
+          characterLocationJson: production.characterLocationAnalysis || '',
+          screenContinuityJson: production.screenContinuity || '',
+          beatMomentDetailsJson: production.beatMomentDetails || '',
+          storyboardJson: production.storyboard || '',
+          style: getSelectedStylePrompt(),
+        });
         targetStage = ProductionStage.PROMPTS;
       } else if (stage === ProductionStage.QA) {
         result = await gemini.runQA(
@@ -3679,8 +3691,25 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     if (isManualMode || (isGlobalManualMode && !currentResult)) return renderManualView();
 
+    const missingPromptInputs = getPromptEngineeringMissingInputs(production);
+
     return (
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {stage === ProductionStage.PROMPTS && missingPromptInputs.length > 0 && (
+          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-amber-800">
+              <AlertCircle className="w-5 h-5 text-amber-600" />
+              <p className="font-black uppercase tracking-wider text-[11px]">Cảnh báo thiếu dữ liệu đầu vào</p>
+            </div>
+            <p className="font-bold">Prompt Engineering chưa đủ dữ liệu nguồn.</p>
+            <p className="mt-1">
+              Còn thiếu các bước: <span className="font-mono font-bold text-indigo-600">{missingPromptInputs.join(", ")}</span>.
+            </p>
+            <p className="mt-1 text-xs text-amber-700 leading-relaxed">
+              Nếu bạn sao chép prompt sang cửa sổ chat mới khi thiếu các dữ liệu này, AI bên ngoài sẽ không có đủ ngữ cảnh JSON của các bước trước để tạo visualPrompt chính xác theo kịch bản của bạn.
+            </p>
+          </div>
+        )}
         {!currentResult && !isLoading && !isGlobalManualMode ? (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>
         ) : (

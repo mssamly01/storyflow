@@ -611,183 +611,185 @@ ${JSON.stringify(library.characters || [], null, 2)}
 LOCATION LIBRARY:\r\n${JSON.stringify(library.locations || [], null, 2)}\r\n\r\nAPPROVED SCREEN CONTINUITY:\r\n${screenContinuity || "No screen continuity data provided."}\r\n\r\nAPPROVED BEAT MOMENT DETAILS:\r\n${beatMomentDetails || "No beat moment details provided."}\r\n\r\nART STYLE:\r\n${artStyleDescription || "No specific style selected."}\r\n`;
 };
 
-export const getEngineerPromptsPrompt = (
-  storyboard: string,
-  charLocAnalysis: string,
-  style: string,
-  analysis = "",
-  screenContinuity = "",
-  beatMomentDetails = ""
-) => `
-You are a senior Prompt Engineering specialist. Convert the Storyboard into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
+export interface EngineerPromptInput {
+  analysisJson: string;
+  characterLocationJson: string;
+  screenContinuityJson: string;
+  beatMomentDetailsJson: string;
+  storyboardJson: string;
+  style: string;
+}
+
+function safePromptJsonBlock(value: string | undefined | null): string {
+  const text = value?.trim();
+  if (!text) {
+    return "{ }";
+  }
+  return text;
+}
+
+export const getEngineerPromptsPrompt = ({
+  analysisJson,
+  characterLocationJson,
+  screenContinuityJson,
+  beatMomentDetailsJson,
+  storyboardJson,
+  style,
+}: EngineerPromptInput): string => `
+You are a senior Prompt Engineering specialist. Convert the approved storyboard/beat data into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
 
 TASK:
-Create one copy-ready visualPrompt for each panel.
+Create one copy-ready visualPrompt for each storyboard item / beat.
+Each output item must be linked only by beatId.
+Do not use panelId or panelNumber.
 Each visualPrompt must be detailed enough to paste directly into an AI image generator.
-Each visualPrompt must contain both the positive prompt and a final "Negative prompt:" section.
+Each visualPrompt must contain both the positive prompt and a final full "Negative prompt:" section.
 
 SOURCE PRIORITIES (CRITICAL SOURCE OF TRUTH RULES):
-To ensure absolute character identity and layout permanence across panels, apply this strict priority hierarchy:
+To ensure absolute character identity and layout permanence across prompts, apply this strict priority hierarchy:
 1. APPROVED BEAT SKELETON SOURCE: For basic scene structure, screen list, and beat list.
-2. CHARACTER + LOCATION LIBRARY: For core character details (hair, face, signature accessories) and base location setting.
-3. SCREEN CONTINUITY: For screen-level character outfits, main colors, screen props, and layout changes.
-4. BEAT MOMENT DETAILS: For beat-specific active posture, interactions, active props/handheld items, and momentary expressions.
-5. STORYBOARD VISUAL DIRECTION: Strictly for framing, shot type, camera angle, and background/midground/foreground layout.
+2. CHARACTER + LOCATION LIBRARY: For core character details, hair, face, eye color, signature accessories, and base location setting.
+3. APPROVED SCREEN CONTINUITY: For screen-level character outfits, outfit colors, screen props, persistent handheld items, and layout changes.
+4. APPROVED BEAT MOMENT DETAILS: For beat-specific active posture, interactions, active props, active handheld items, visible accessories, and momentary expressions.
+5. APPROVED STORYBOARD VISUAL DIRECTION: Strictly for framing, shot type, camera angle, composition, foreground, midground, and background.
 
 Do not invent visual details that violate this hierarchy.
 
+SCREEN CONTINUITY LINKING RULE:
+Screen Continuity is screen-level data, but each item may include beatIds/startBeatId/endBeatId.
+When generating a visualPrompt for a beat:
+1. Use beat.screenId to find the matching Screen Continuity item.
+2. If screenId does not match or is empty, use beatId against beatIds/startBeatId/endBeatId inside the Screen Continuity items.
+3. Do not invent screen continuity if no match exists.
+
 ACCESSORY SELECTION RULE - CRITICAL:
 When constructing the visualPrompt for a beat:
-1. Start with the character's core stable identity from the Character Library.
-2. Overlay the screen-level outfit, accessories, and handheld items from SCREEN CONTINUITY screens[].
-3. Apply beat-level momentary changes or handheld items from BEAT MOMENT DETAILS beatDetails[] only if they are visible in this exact beat.
-4. Do NOT list accessories or outfits from other screens or other beats. Keep visualPrompt strictly consistent with the current screen and beat.
+1. Start with the character's core stable identity from Character Library.
+2. Overlay the screen-level outfit, accessories, and persistent handheld items from APPROVED SCREEN CONTINUITY.
+3. Apply beat-level momentary changes or handheld items from APPROVED BEAT MOMENT DETAILS only if they are visible in this exact beat.
+4. Do NOT list accessories or outfits from other screens or other beats.
 5. Do NOT list every known accessory. Include only:
    - signature accessories that are currently visible,
    - current screen-level accessories,
+   - current screen-level handheld items only if still visible/held,
    - current beat-level handheld items or changes.
 
 OUTFIT SELECTION RULE - CRITICAL:
-Choose only the outfit specified in the current screen's SCREEN CONTINUITY for this character. Do not include outfits from other screens.
+Choose only the outfit specified in the current screen's APPROVED SCREEN CONTINUITY for this character.
+Do not include outfits from other screens.
+Use Character Library only for identity/default traits, not the current outfit if Screen Continuity provides one.
 
 CHARACTER COLOR DETAIL RULE - CRITICAL:
 For every visible character included in visualPrompt, always describe them with explicit, natural-language color descriptions for:
-- Hair color (e.g. "long silky jet-black hair", "short styled chestnut-brown hair")
-- Eye color (e.g. "deep dark-brown eyes", "sharp light-brown eyes")
-- Outfit color (e.g. "elegant champagne-gold evening gown with pearl-white embroidery", "high-end charcoal-black business suit with a crisp white shirt and dark silver tie")
+- Hair color
+- Eye color
+- Outfit color
 
-Do not write vague appearance descriptions without color (e.g., do not write just "long hair", "expressive eyes", "evening gown").
+Do not write vague appearance descriptions without color.
 
 COLOR WORDING RULE:
-Use natural language color descriptions in visualPrompt. Do NOT use hex codes like #FFD700 or #000000.
-
-OUTFIT COLOR RULE:
-When describing outfit in visualPrompt, include the outfit type, outfit main color, and outfit accent color. Prefer phrasing like "charcoal-black business suit with a crisp white shirt and dark silver tie".
+Use natural language color descriptions in visualPrompt.
+Do NOT use hex codes like #FFD700 or #000000.
 
 CLEAN VISUAL PROMPT RULE - CRITICAL:
 visualPrompt must be clean, natural, and copy-ready for an image generator.
 Do NOT include internal metadata in visualPrompt:
-- no locationId, screenId, beatId, panelId, or sourceUsage
+- no locationId, screenId, beatId, panelId, sourceUsage
 - no raw IDs like loc_001, screen_001, char_001, or panel_001
-- no phrases like "use location loc_001"
-- no beat ranges like "(beats 1-164)", "(beat 234)", or "beats 190-215"
-- no raw hex color codes like #FFD700
+- no beat ranges like "(beats 1-164)"
+- no raw hex color codes
 - no schema/debug labels such as "base description:", "spatial layout:", "key objects to preserve:", "current beat state:", or "color palette:"
-- no JSON-style field labels unless rewritten as natural image-prompt language
 Use internal IDs only to look up data. Never print them in visualPrompt.
 
-CURRENT BEAT OUTFIT RULE - CRITICAL:
-Character Library may contain multiple outfits for different story sections or beat ranges.
-For each visualPrompt:
-- Select ONLY the outfit relevant to the current beatId/screen.
-- Do NOT list alternate outfits from other beats or screens.
-- Do NOT include beat ranges in the prompt.
-- Do NOT write "(beats 1-164)" or similar.
-- If unsure, choose the outfit that matches the current location, timeOfDay, action, and screen.
-
-NATURAL CONTINUITY RULE:
-Location Continuity and Screen Continuity must be written as natural image-prompt language, not internal debug text.
-Bad: "Location Continuity: use location loc_001: Banquet Hall; base description: ...; spatial layout: ...; key objects to preserve: ...; color palette: #FFD700."
-Good: "Location Continuity: keep the same banquet hall layout, central round table, ornate chairs, chandeliers, flower arrangements, and luxury dinnerware consistent across this screen."
-Bad: "Screen Continuity: This beat belongs to screen_001."
-Good: "Screen Continuity: Khuc Thanh Y, Ha Van Pham, Hua Nhiem, Grandfather Ha, and the guests remain present around the banquet table; this shot focuses on Ha Van Pham and Khuc Thanh Y."
-
 VISUAL STYLE:
-${style}
+${style || "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired."}
 
 VISUAL PROMPT CONSTRUCTION RULES - MUST FOLLOW ORDER:
 
 1. STYLE FIRST:
-Start every visualPrompt exactly with the selected visual style:
-"${style}"
-Do not start with action, character, camera, or location before the style.
+Start every visualPrompt exactly with the selected visual style.
 
 2. LOCATION FIRST:
 Immediately after style, write:
 "Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SKELETON SOURCE], [lighting/material from Location Library + Storyboard]."
-Never write only the location name. Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE. Match Location Library by locationId first, then name/aliases. Use description, layout, keyObjects, and lighting where available. If colorPalette exists, convert it into natural color words and never include raw hex codes. Do not redesign the room, add random furniture, move doors/windows/desks/sofas/shelves, or change color palette unless the beat explicitly says so.
+Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE.
+Match Location Library by locationId first, then name/aliases.
+Use description, layout, keyObjects, and lighting where available.
+If colorPalette exists, convert it into natural color words and never include raw hex codes.
 
 3. LOCATION CONTINUITY BLOCK:
 Every visualPrompt must include this block right after Location:
 "Location Continuity: keep [important layout elements], [important furniture/objects], and [lighting/material cues] consistent across this screen."
-Do not include locationId. Do not include labels like base description, spatial layout, key objects to preserve, color palette, or current beat state. Do not include hex colors. Keep this continuity block short and natural.
+Do not include locationId, raw IDs, debug labels, or hex colors.
 
-4. SCENE + POSTURE + INTERACTION:
-After Location Continuity, write:
-"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from BEAT MOMENT DETAILS + Storyboard blocking]."
-Always describe posture for each visible character. Always describe action and interaction: who looks at whom, speaks to whom, touches whom. For side/background characters, describe concrete action and gaze direction. Avoid vague group nouns such as "the group", "the trio", "both of them", or ambiguous "they"; use specific character names.
-
-SCREEN CONTINUITY LINKING RULE:
-Screen Continuity is screen-level data, but each item also includes beatIds/startBeatId/endBeatId.
-When generating a visualPrompt for a beat:
-1. Use beat.screenId to find the matching Screen Continuity.
-2. If screenId does not match or is empty, use beatId against beatIds/startBeatId/endBeatId inside the Screen Continuity array items.
-3. Do not invent screen continuity if no match exists.
-
-SCREEN CONTINUITY IN VISUAL PROMPT:
+4. SCREEN CONTINUITY SENTENCE:
 Each visualPrompt must include a Screen Continuity sentence after Location Continuity:
 "Screen Continuity: [screen characters] remain present in/around [location]; this shot focuses on [focusCharacters], while [visible supporting characters] remain [background position/action], and [offscreen characters] stay nearby but outside the frame."
-Do not include screenId or raw screen metadata. Do not over-list if not needed. Do not delete supporting characters from the screen. If visibleCharacters excludes a screen character, treat them as offscreen, not absent. If a screen character is visible in background, include their profile if named. If a screen character is offscreen, mention them only in continuity note, not as visible.
+Do not include screenId or raw screen metadata.
+Do not draw every screen character in every beat.
+Only draw characters listed in visibleCharacters or required by Storyboard blocking.
+Screen characters not in visibleCharacters should be mentioned only as offscreen continuity if relevant.
 
-5. FULL CHARACTER PROFILE:
-Every named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground/background/off-screen characters and body parts.
-Required format:
-"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Posture: [current posture], Outfit: [outfitMainColor] [outfitAccentColor if available] [copy screen outfit exactly], Accessories: [visible signatureAccessories + screen-level accessories], Handheld: [beat-level handheldItems if visible/active])"
+5. SCENE + POSTURE + INTERACTION:
+After Screen Continuity, write:
+"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from BEAT MOMENT DETAILS + Storyboard blocking]."
+Always describe posture for each visible character.
+Use specific character names.
+
+6. FULL CHARACTER PROFILE:
+Every visible named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground characters, background characters, and visible body parts.
+Offscreen characters must NOT receive a full visual profile.
+Mention offscreen characters only briefly in the Screen Continuity sentence.
+Do not describe hair, outfit, face, accessories, or posture for offscreen characters, because that may cause the image generator to draw them.
+
+Required visible character profile format:
+"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Posture: [current posture], Outfit: [outfitMainColor] [outfitAccentColor if available] [copy screen outfit exactly], Accessories: [visible signatureAccessories + screen-level accessories], Handheld: [currently visible handheld items only; use Beat Moment Details first, then Screen Continuity if the item persists across the screen])"
+
 If a profile field is missing, use available fields only. Do not invent new appearance details.
 
-6. OUTFIT FIDELITY:
-First choose the correct outfit for the current beat/screen, then copy only that outfit description accurately. Do not copy the entire multi-outfit list. Do not copy beat ranges or outfit metadata. Do not include outfits from other story sections.
-
-7. CAMERA / OTS / POV / OBJECT INTERACTION:
-Dialogue prefers close-up or medium close-up. Interaction prefers medium shot or over-the-shoulder. Large action prefers wide shot. If Storyboard provides cameraAngle/shotType, use it as source.
-For OTS or POV, the foreground viewpoint character must have a full profile:
-"Over-the-shoulder shot, foreground: [Character A profile]'s shoulder and back of head, background: [Character B profile] [action]."
-When a character interacts with phone/book/mirror/weapon/object, do not describe the object alone. Show the character's hand/shoulder/body holding or interacting with it. If screen content matters but the screen is not front-facing, use inset panel or split screen. Reflections must be "faint reflection" or "low opacity reflection".
-
-8. OBJECT PERMANENCE & STATE CONTINUITY:
-Keep posture/action/props from previous panels if the text does not clearly change them. If a character is lying/sitting/kneeling, keep that posture until an explicit change. If a character holds a phone/bag/weapon/cup, mention it until the text says it was put down or lost. Do not forget approved props or change location state without beat evidence.
-
-9. FOREGROUND / MIDGROUND / BACKGROUND:
+7. FOREGROUND / MIDGROUND / BACKGROUND:
 Use Storyboard fields foreground, midground, background, depthAndPerspective, visualEmphasis, lightingDirection, but never alter source fields from Beat.
 
-10. STRICT NO TEXT RULE:
+8. STRICT NO TEXT RULE:
 End the positive part with:
 "no text, no speech bubbles, no captions, no subtitles, no watermark, no logo."
 
-11. NEGATIVE PROMPT INSIDE visualPrompt:
-Every visualPrompt must end with:
+9. NEGATIVE PROMPT INSIDE visualPrompt:
+Every visualPrompt must end with this full section:
 "Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
 Do not put negativePrompt in a separate field.
 
-VISUAL PROMPT EXAMPLE - FORMAT ONLY, DO NOT COPY CONTENT:
-The example below is only a format example.
-Do not copy its character names, location names, location details, or scene content unless they exist in the input data.
-Never use the example names Linh An, Tong Mat, or CEO Office unless those exact names exist in the input data.
-Use this example only to understand the required level of detail, ordering, and structure.
+APPROVED BEAT SKELETON SOURCE:
+\`\`\`json
+${safePromptJsonBlock(analysisJson)}
+\`\`\`
 
-Example visualPrompt:
-"Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired. Location: CEO Office (a modern luxury CEO office with a dark walnut executive desk, black leather chair, floor-to-ceiling city window, glass bookshelves on the left wall, abstract painting behind the desk, and a black sofa area on the right), evening, cool city light from the window mixed with soft interior office lighting. Location Continuity: keep the centered executive desk, black leather chair, guest chairs, glass bookshelves, abstract wall painting, sofa area, laptop, coffee cup, and cool office lighting consistent across this screen. Screen Continuity: Linh An and Tong Mat remain in the office across this tense conversation; this shot focuses on Linh An confronting Tong Mat across the desk. Scene: medium close-up, eye-level camera angle, main character positioned on the left side of the frame, tense conversation across the desk. Linh An (Gender: Female, Age: 24, Height: 165cm, Face: oval face, Hair: jet-black long silky hair, Eyes: dark-brown deep eyes, Posture: standing stiffly with tense shoulders, Outfit: cream-white silk blouse and black pencil skirt, Accessories: small pearl earrings, Handheld: silver clutch placed on the desk) grips the edge of the desk while looking directly at Tong Mat. Tong Mat (Gender: Male, Age: 31, Height: 182cm, Face: sharp face, Hair: jet-black neatly styled hair, Eyes: dark-brown cold eyes, Posture: seated behind the desk, Outfit: charcoal-black tailored black business suit and white dress shirt, Accessories: silver wristwatch, Handheld: none) leans back in the black leather office chair, staring back at Linh An with a controlled expression. Foreground: edge of the dark walnut desk and white coffee cup. Midground: Linh An and Tong Mat facing each other. Background: floor-to-ceiling city window and glass bookshelves. no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
-- Do not add commentary.
-- Output may be a JSON array or an object with "engineerPrompts".
-- Each engineerPrompts item must contain ONLY:
-  beatId
-  visualPrompt
-- Do NOT output panelId.
-- Do NOT output panelNumber.
-- Do NOT output sourceUsage.
-- Do NOT output usedBeatId.
-- Do NOT output usedLocationId.
-- Do NOT output usedCharacterIds.
-- Do NOT output negativePrompt.
-- Do NOT output negative_prompt.
-- visualPrompt must not contain internal IDs, beat ranges, raw hex codes, or debug/schema labels.
+CHARACTER + LOCATION LIBRARY:
+\`\`\`json
+${safePromptJsonBlock(characterLocationJson)}
+\`\`\`
+
+APPROVED SCREEN CONTINUITY:
+\`\`\`json
+${safePromptJsonBlock(screenContinuityJson)}
+\`\`\`
+
+APPROVED BEAT MOMENT DETAILS:
+\`\`\`json
+${safePromptJsonBlock(beatMomentDetailsJson)}
+\`\`\`
+
+APPROVED STORYBOARD VISUAL DIRECTION:
+\`\`\`json
+${safePromptJsonBlock(storyboardJson)}
+\`\`\`
 
 REQUIRED JSON SHAPE:
 {
   "engineerPrompts": [
     {
       "beatId": 1,
-      "visualPrompt": "string ending with Negative prompt:"
+      "visualPrompt": "string ending with the full Negative prompt section"
     }
   ]
 }
@@ -798,23 +800,20 @@ FINAL CHECK BEFORE OUTPUT:
 - Do not add commentary outside JSON.
 - Did every item include beatId and visualPrompt?
 - Did you avoid panelId and panelNumber?
-- Did you avoid sourceUsage, usedBeatId, usedLocationId, usedCharacterIds?
-- Did you avoid negativePrompt and negative_prompt fields?
 - Did every visualPrompt avoid internal IDs like loc_001, screen_001, char_001, and panel_001?
 - Did every visualPrompt avoid beat ranges and raw hex color codes?
-- Did every visualPrompt use natural Location Continuity and Screen Continuity sentences instead of debug/schema labels?
 - Does every visualPrompt start with the selected style?
 - Does every visualPrompt contain Location?
 - Does every visualPrompt contain Location Continuity?
 - Does every visualPrompt contain Screen Continuity?
-- Does every visualPrompt use timeOfDay from APPROVED BEAT SOURCE?
-- Does every named character include full profile details?
+- Does every visualPrompt use timeOfDay from APPROVED BEAT SKELETON SOURCE?
+- Does every visible named character include full profile details?
+- Did offscreen characters avoid full profile details?
 - Is every visible character's current outfit taken from APPROVED SCREEN CONTINUITY, using Character Library only for identity/default traits?
-- Did you include only the current beat/screen outfit, without alternate outfits or beat ranges?
-- Does every visualPrompt include posture, action, and interaction?
-- Does every visualPrompt include foreground, midground, and background when available?
+- Does every visualPrompt include posture, action, and interaction from APPROVED BEAT MOMENT DETAILS where available?
+- Does every visualPrompt include foreground, midground, and background from APPROVED STORYBOARD VISUAL DIRECTION when available?
 - Does every visualPrompt include no text, no speech bubbles, no captions, no subtitles?
-- Does every visualPrompt include a final "Negative prompt:" section?
+- Does every visualPrompt include the full final "Negative prompt:" section?
 `;
 
 export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "", screenContinuity = "", beatMomentDetails = "") => `
@@ -1521,18 +1520,25 @@ export const generateBeatMomentDetails = async (
   return response.text;
 };
 
-export const engineerPrompts = async (
-  storyboard: string,
-  charLocAnalysis: string,
-  style: string,
-  analysis = "",
-  screenContinuity = "",
-  beatMomentDetails = ""
-) => {
+export const engineerPrompts = async ({
+  analysisJson,
+  characterLocationJson,
+  screenContinuityJson,
+  beatMomentDetailsJson,
+  storyboardJson,
+  style,
+}: EngineerPromptInput) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getEngineerPromptsPrompt(storyboard, charLocAnalysis, style, analysis, screenContinuity, beatMomentDetails),
+    contents: getEngineerPromptsPrompt({
+      analysisJson,
+      characterLocationJson,
+      screenContinuityJson,
+      beatMomentDetailsJson,
+      storyboardJson,
+      style,
+    }),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
