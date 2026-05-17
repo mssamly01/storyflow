@@ -717,6 +717,13 @@ After Location Continuity, write:
 "Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from BEAT MOMENT DETAILS + Storyboard blocking]."
 Always describe posture for each visible character. Always describe action and interaction: who looks at whom, speaks to whom, touches whom. For side/background characters, describe concrete action and gaze direction. Avoid vague group nouns such as "the group", "the trio", "both of them", or ambiguous "they"; use specific character names.
 
+SCREEN CONTINUITY LINKING RULE:
+Screen Continuity is screen-level data, but each item also includes beatIds/startBeatId/endBeatId.
+When generating a visualPrompt for a beat:
+1. Use beat.screenId to find the matching Screen Continuity.
+2. If screenId does not match or is empty, use beatId against beatIds/startBeatId/endBeatId inside the Screen Continuity array items.
+3. Do not invent screen continuity if no match exists.
+
 SCREEN CONTINUITY IN VISUAL PROMPT:
 Each visualPrompt must include a Screen Continuity sentence after Location Continuity:
 "Screen Continuity: [screen characters] remain present in/around [location]; this shot focuses on [focusCharacters], while [visible supporting characters] remain [background position/action], and [offscreen characters] stay nearby but outside the frame."
@@ -932,9 +939,10 @@ You will analyze the screen skeleton (from Phase 1) and output the screen-level 
 SCREEN CONTINUITY RULES:
 1. For each screen in the provided input, determine the outfit and style state of every character present on that screen.
 2. CRITICAL SCREEN ID RULE: You must copy the exact screenId (e.g. "screen_001") from the APPROVED BEAT SKELETON SOURCE. Do not invent new screenId formats or use "screen_1" if it is "screen_001".
-3. Do NOT output "screenNumber", "screenName", "location", "locationId", or "timeOfDay".
-4. Required output for each screen consists ONLY of: screenId, screenState, screenProps, screenCharacterStates, and continuityNotes.
-5. In screenCharacterStates, you must specify:
+3. CRITICAL BEAT LINKING RULE: For each screen, copy all beatId values that belong to that screen from the APPROVED BEAT SKELETON SOURCE into beatIds. Do not invent, remove, or renumber beatIds.
+4. Do NOT output "screenNumber", "screenName", "location", "locationId", or "timeOfDay".
+5. Required output for each screen consists ONLY of: screenId, beatIds, startBeatId, endBeatId, screenState, screenProps, screenCharacterStates, and continuityNotes.
+6. In screenCharacterStates, you must specify:
    - characterId
    - characterName
    - outfit (complete description of outfit type/style)
@@ -944,13 +952,16 @@ SCREEN CONTINUITY RULES:
    - handheldItems (items they might be holding generally)
    - appearanceNotes (general visual appearance/condition)
    - stateChanges (list of any clothing/accessory changes, e.g. ["string"])
-6. Return ONLY a valid JSON object. No markdown. No commentary.
+7. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
   "screens": [
     {
       "screenId": "string (e.g. screen_001)",
+      "beatIds": [1, 2, 3],
+      "startBeatId": 1,
+      "endBeatId": 3,
       "screenState": "string (layout status or changes in this screen)",
       "screenProps": ["string (props permanent/visible on this screen)"],
       "screenCharacterStates": [
@@ -970,6 +981,18 @@ Required JSON Schema:
     }
   ]
 }
+
+FIELD RULES:
+- screenId: copy exactly from APPROVED BEAT SKELETON SOURCE.
+- beatIds: copy all beatId values belonging to this screen from the approved skeleton.
+- startBeatId: copy the first beatId of this screen.
+- endBeatId: copy the last beatId of this screen.
+- screenState: describe only screen-level layout/status/state.
+- screenProps: props visible or important throughout the screen.
+- screenCharacterStates: current outfit/accessory state for each character present in this screen.
+- handheldItems: only items held generally across this screen, not one-beat temporary items.
+- stateChanges: array of screen-level clothing/accessory changes. If none, return [].
+- continuityNotes: concise note for maintaining layout, outfit, props, and character positions across the screen.
 
 APPROVED BEAT SKELETON SOURCE:
 ${analysis}
@@ -1383,6 +1406,12 @@ export const generateScreenContinuity = async (
               type: "object",
               properties: {
                 screenId: { type: "string" },
+                beatIds: {
+                  type: "array",
+                  items: { type: "integer" }
+                },
+                startBeatId: { type: "integer" },
+                endBeatId: { type: "integer" },
                 screenState: { type: "string" },
                 screenProps: {
                   type: "array",
@@ -1417,7 +1446,7 @@ export const generateScreenContinuity = async (
                 },
                 continuityNotes: { type: "string" }
               },
-              required: ["screenId", "screenState", "screenProps", "screenCharacterStates", "continuityNotes"]
+              required: ["screenId", "beatIds", "startBeatId", "endBeatId", "screenState", "screenProps", "screenCharacterStates", "continuityNotes"]
             }
           }
         },

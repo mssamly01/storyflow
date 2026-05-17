@@ -629,6 +629,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.screens)) {
         return "Định dạng JSON không hợp lệ cho Screen Continuity. JSON phải là một đối tượng chứa mảng 'screens': { \"screens\": [...] }";
       }
+      const invalidScreen = parsed.screens.find((screen: any) => !screen.screenId);
+      if (invalidScreen) {
+        return "Mỗi screen trong Thiết lập bối cảnh phải có screenId.";
+      }
+      const missingBeatLinks = parsed.screens.find((screen: any) => {
+        const hasBeatIds = Array.isArray(screen.beatIds) && screen.beatIds.length > 0;
+        const hasRange = screen.startBeatId != null && screen.endBeatId != null;
+        return !hasBeatIds && !hasRange;
+      });
+      if (missingBeatLinks) {
+        return "Mỗi screen trong Thiết lập bối cảnh cần có beatIds hoặc startBeatId/endBeatId để liên kết với beat.";
+      }
     }
     if (targetStage === ProductionStage.BEAT_MOMENT) {
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.beatDetails)) {
@@ -2740,6 +2752,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                         {screen.screenId || `Screen ${i + 1}`}
                       </span>
                       <h4 className="font-bold text-slate-800 text-sm">{screen.screenName || 'Bối cảnh chưa đặt tên'}</h4>
+                      <span className="bg-amber-500 text-white text-[9px] font-black px-2.5 py-1 rounded-lg uppercase shadow-sm flex items-center gap-1">
+                        Beats: {Array.isArray(screen.beatIds) && screen.beatIds.length > 0 
+                          ? screen.beatIds.join(", ") 
+                          : `${screen.startBeatId ?? "?"}–${screen.endBeatId ?? "?"}`}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {Array.isArray(screen.screenCharacters) && screen.screenCharacters.map((c: string) => (

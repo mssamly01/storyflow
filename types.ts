@@ -71,6 +71,7 @@ export interface StoryScreen {
   screenCharacterStates?: ScreenCharacterState[];
   startBeatId: number;
   endBeatId: number;
+  beatIds?: number[];
   summary: string;
   continuityNotes?: string;
 }
@@ -105,6 +106,9 @@ export interface StoryBeat extends BeatAnalysis {
 
 export interface ScreenContinuityItem {
   screenId: string;
+  beatIds?: number[];
+  startBeatId?: number;
+  endBeatId?: number;
   screenState: string;
   screenProps: string[];
   screenCharacterStates: ScreenCharacterState[];

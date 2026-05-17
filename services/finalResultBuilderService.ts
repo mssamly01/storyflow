@@ -59,6 +59,11 @@ const asStringArray = (value: unknown): string[] => Array.isArray(value)
   ? value.map((item) => String(item)).filter(Boolean)
   : [];
 
+const asNumberArray = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+};
+
 function getItems(raw: unknown, keys: string[]): UnknownRecord[] {
   if (Array.isArray(raw)) return raw as UnknownRecord[];
   if (!raw || typeof raw !== "object") return [];
@@ -154,6 +159,7 @@ export function normalizeScreens(raw: unknown): StoryScreen[] {
       screenProps: asStringArray(item.screenProps ?? item.screen_props),
       startBeatId: asNumber(item.startBeatId ?? item.start_beat_id, 0),
       endBeatId: asNumber(item.endBeatId ?? item.end_beat_id, 0),
+      beatIds: (item.beatIds ?? item.beat_ids) ? asNumberArray(item.beatIds ?? item.beat_ids) : undefined,
       summary: asString(item.summary),
       continuityNotes: asString(item.continuityNotes ?? item.continuity_notes),
       screenCharacterStates: normalizeScreenCharacterStates(item),
@@ -240,6 +246,9 @@ export function mergeScreenContinuityIntoScreens(
 
     return {
       ...screen,
+      beatIds: matched.beatIds?.length ? matched.beatIds : screen.beatIds,
+      startBeatId: matched.startBeatId ?? screen.startBeatId,
+      endBeatId: matched.endBeatId ?? screen.endBeatId,
       screenState: matched.screenState || screen.screenState,
       screenProps: matched.screenProps?.length ? matched.screenProps : screen.screenProps,
       continuityNotes: matched.continuityNotes || screen.continuityNotes,
@@ -404,7 +413,21 @@ export function buildFinalResultPanel(params: {
   const subject = source.visibleCharacters.length
     ? source.visibleCharacters.join(", ")
     : source.visualFocus || source.summary || "N/A";
-  const screen = screens.find((item) => item.screenId && item.screenId === bundle.beat?.screenId);
+  let screen = screens.find((item) => item.screenId && item.screenId === bundle.beat?.screenId);
+  if (!screen && beatId > 0) {
+    screen = screens.find((item) => {
+      if (Array.isArray(item.beatIds) && item.beatIds.includes(beatId)) return true;
+      if (
+        item.startBeatId != null &&
+        item.endBeatId != null &&
+        beatId >= item.startBeatId &&
+        beatId <= item.endBeatId
+      ) {
+        return true;
+      }
+      return false;
+    });
+  }
   const characterRefNames = Array.from(new Set([
     ...(screen?.screenCharacters || []),
     ...source.focusCharacters,
@@ -538,4 +561,30 @@ export function getFinalResultMissingInputs(params: {
     missingInputs,
     warnings
   };
+}
+
+export function findScreenContinuityForBeat(
+  beatId: number,
+  screenId: string | undefined,
+  continuityItems: any[]
+): any | undefined {
+  if (screenId) {
+    const byScreenId = continuityItems.find((item) => item.screenId === screenId);
+    if (byScreenId) return byScreenId;
+  }
+
+  return continuityItems.find((item) => {
+    if (Array.isArray(item.beatIds) && item.beatIds.includes(beatId)) return true;
+
+    if (
+      item.startBeatId != null &&
+      item.endBeatId != null &&
+      beatId >= item.startBeatId &&
+      beatId <= item.endBeatId
+    ) {
+      return true;
+    }
+
+    return false;
+  });
 }
