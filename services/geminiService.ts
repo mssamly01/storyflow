@@ -1,4 +1,4 @@
-﻿
+
 import { GoogleGenAI, Part } from "@google/genai";
 import { getConfig } from "./configService";
 import { mapLocationIdsToBeats } from "./locationContinuityService";
@@ -93,6 +93,13 @@ BEAT SPLITTING RULES - CRITICAL:
 
 SCREEN CONTINUITY RULE - CRITICAL:
 - Group consecutive beats into screens.
+- CHARACTER OUTFIT AND ACCESSORY CONTINUITY RULE - CRITICAL:
+  Analyze and structure character appearance details into three distinct layers:
+  1. Character Library signature accessories: stable features (e.g. glasses, wedding ring, pearl earrings) belonging permanently to character profile.
+  2. Screen-level state: outfit, main accessories, and handheld items that remain persistent throughout a continuous screen (use screenCharacterStates).
+  3. Beat-level moment: momentary hand-held items or accessories changes occurring only in this beat (use characterMomentDetails).
+  * Do not put temporary props (wine glass, phone, contract, bouquet, suitcase) into the permanent Character Library profile unless it is a character's defining signature item.
+  * Do not copy styling, outfits, or accessories from other screens into the current beat.
 - A screen is a continuous scene with the same location, timeOfDay, spatial layout, ongoing character presence, and props/state continuity.
 - Multiple beats can belong to one screen.
 - Do not analyze each beat as an isolated scene.
@@ -245,6 +252,19 @@ Return ONLY valid JSON with this schema:
       "screenState": "Current state of this continuous scene",
       "screenCharacters": ["Character A", "Character B"],
       "screenProps": ["Prop A", "Prop B"],
+      "screenCharacterStates": [
+        {
+          "characterName": "Character A",
+          "characterId": "char_001",
+          "outfit": "detailed description with color, e.g. elegant champagne-gold evening gown with pearl-white embroidery",
+          "outfitMainColor": "champagne-gold",
+          "outfitAccentColor": "pearl-white",
+          "accessories": ["pearl earrings"],
+          "handheldItems": ["wine glass"],
+          "appearanceNotes": "hair neatly tied up",
+          "stateChanges": []
+        }
+      ],
       "startBeatId": 1,
       "endBeatId": 5,
       "summary": "What happens in this screen",
@@ -267,6 +287,16 @@ Return ONLY valid JSON with this schema:
       "action": "One main drawable action.",
       "interaction": "Specific interaction using character names.",
       "posture": "Posture, action state, and relative position of all present characters.",
+      "characterMomentDetails": [
+        {
+          "characterName": "Character A",
+          "characterId": "char_001",
+          "visibleAccessories": ["pearl earrings"],
+          "handheldItems": ["phone"],
+          "accessoriesChange": ["silver clutch placed on the banquet table"],
+          "momentNotes": "phone raised in her right hand"
+        }
+      ],
       "props": ["Specific prop"],
       "visualFocus": "Specific main image focus.",
       "atmosphere": "Dominant mood.",
@@ -393,9 +423,16 @@ Return ONLY valid JSON with this schema:
       "bodyType": "...",
       "face": "...",
       "hair": "...",
+      "hairColor": "...",
       "eyes": "...",
+      "eyeColor": "...",
       "outfit": "...",
+      "outfitMainColor": "...",
+      "outfitAccentColor": "...",
       "accessories": ["..."],
+      "signatureAccessories": ["..."],
+      "defaultStyle": "...",
+      "styleNotes": "...",
       "props": ["..."],
       "colorPalette": ["..."],
       "personalityVisualCues": "...",
@@ -427,6 +464,17 @@ Return ONLY valid JSON with this schema:
 
 CHARACTER RULES:
 - One profile per unique character.
+- SIGNATURE ACCESSORY RULE:
+  * Character profiles should include only stable/signature accessories that the character normally wears across screens (e.g. glasses, wedding ring, signature earrings, familiar watch).
+  * Do NOT include temporary props or handheld items (e.g. phone, wine glass, bouquet, suitcase, contract) as permanent character accessories.
+  * Extract or infer general fashion identity and styling notes to defaultStyle and styleNotes.
+- CHARACTER COLOR DETAIL RULE - CRITICAL:
+  For each character profile, you must extract or infer explicit color information and populate these fields:
+  * hairColor (e.g. "jet-black", "chestnut-brown", "platinum-blonde")
+  * eyeColor (e.g. "dark-brown", "emerald-green", "icy-blue")
+  * outfitMainColor (e.g. "champagne-gold", "charcoal-black", "cream-white")
+  * outfitAccentColor (e.g. "pearl-white", "pale-pink", "dark-silver")
+  Do not leave these blank or use vague color-less terms. If the source story does not explicitly specify a color, you MUST infer a stable, visually appealing natural color word that fits the character's description and maintain it consistently. Do NOT use hex codes like #FFD700.
 - Merge aliases/pronouns/titles that refer to the same person.
 - Use screens.screenCharacters as the primary source for who is present in each continuous screen.
 - Use beats.focusCharacters, beats.visibleCharacters, and beats.offscreenPresentCharacters to understand character roles per beat.
@@ -647,6 +695,34 @@ SOURCE-OF-TRUTH RULES:
 - Main visual direction must come from beat.action, beat.interaction, beat.posture, beat.visualFocus, beat.focusCharacters, beat.visibleCharacters, beat.offscreenPresentCharacters, beat.props, beat.location/locationState, and beat.timeOfDay.
 - Screen continuity comes from APPROVED BEAT SOURCE screens[]. Use screenCharacters as the present-character continuity pool.
 
+ACCESSORY SELECTION RULE - CRITICAL:
+When constructing the visualPrompt for a beat:
+1. Start with the character's core stable identity from the Character Library.
+2. Overlay the screen-level outfit, accessories, and handheld items from screenCharacterStates in APPROVED BEAT SOURCE screens[].
+3. Apply beat-level momentary changes or handheld items from beat.characterMomentDetails only if they are visible in this exact beat.
+4. Do NOT list accessories or outfits from other screens or other beats. Keep visualPrompt strictly consistent with the current screen and beat.
+5. Do NOT list every known accessory. Include only:
+   - signature accessories that are currently visible,
+   - current screen-level accessories,
+   - current beat-level handheld items or changes.
+
+OUTFIT SELECTION RULE - CRITICAL:
+Choose only the outfit specified in the current screen's screenCharacterStates for this character. Do not include outfits from other screens.
+
+CHARACTER COLOR DETAIL RULE - CRITICAL:
+For every visible character included in visualPrompt, always describe them with explicit, natural-language color descriptions for:
+- Hair color (e.g. "long silky jet-black hair", "short styled chestnut-brown hair")
+- Eye color (e.g. "deep dark-brown eyes", "sharp light-brown eyes")
+- Outfit color (e.g. "elegant champagne-gold evening gown with pearl-white embroidery", "high-end charcoal-black business suit with a crisp white shirt and dark silver tie")
+
+Do not write vague appearance descriptions without color (e.g., do not write just "long hair", "expressive eyes", "evening gown").
+
+COLOR WORDING RULE:
+Use natural language color descriptions in visualPrompt. Do NOT use hex codes like #FFD700 or #000000.
+
+OUTFIT COLOR RULE:
+When describing outfit in visualPrompt, include the outfit type, outfit main color, and outfit accent color. Prefer phrasing like "charcoal-black business suit with a crisp white shirt and dark silver tie".
+
 CLEAN VISUAL PROMPT RULE - CRITICAL:
 visualPrompt must be clean, natural, and copy-ready for an image generator.
 Do NOT include internal metadata in visualPrompt:
@@ -708,7 +784,7 @@ Do not include screenId or raw screen metadata. Do not over-list if not needed. 
 5. FULL CHARACTER PROFILE:
 Every named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground/background/off-screen characters and body parts.
 Required format:
-"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hair], Eyes: [eyes], Posture: [current posture], Outfit: [copy outfit exactly])"
+"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Posture: [current posture], Outfit: [outfitMainColor] [outfitAccentColor if available] [copy screen outfit exactly], Accessories: [visible signatureAccessories + screen-level accessories], Handheld: [beat-level handheldItems if visible/active])"
 If a profile field is missing, use available fields only. Do not invent new appearance details.
 
 6. OUTFIT FIDELITY:
@@ -742,7 +818,7 @@ Never use the example names Linh An, Tong Mat, or CEO Office unless those exact 
 Use this example only to understand the required level of detail, ordering, and structure.
 
 Example visualPrompt:
-"Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired. Location: CEO Office (a modern luxury CEO office with a dark walnut executive desk, black leather chair, floor-to-ceiling city window, glass bookshelves on the left wall, abstract painting behind the desk, and a black sofa area on the right), evening, cool city light from the window mixed with soft interior office lighting. Location Continuity: keep the centered executive desk, black leather chair, guest chairs, glass bookshelves, abstract wall painting, sofa area, laptop, coffee cup, and cool office lighting consistent across this screen. Screen Continuity: Linh An and Tong Mat remain in the office across this tense conversation; this shot focuses on Linh An confronting Tong Mat across the desk. Scene: medium close-up, eye-level camera angle, main character positioned on the left side of the frame, tense conversation across the desk. Linh An (Female, 24, 165cm, oval face, long black hair, dark brown eyes, Posture: standing stiffly with tense shoulders, Outfit: white silk blouse, black pencil skirt, small pearl earrings) grips the edge of the desk while looking directly at Tong Mat. Tong Mat (Male, 31, 182cm, sharp face, neatly styled black hair, cold dark eyes, Posture: seated behind the desk, Outfit: tailored black business suit, white dress shirt, silver wristwatch) leans back in the black leather office chair, staring back at Linh An with a controlled expression. Foreground: edge of the dark walnut desk and white coffee cup. Midground: Linh An and Tong Mat facing each other. Background: floor-to-ceiling city window and glass bookshelves. no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
+"Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired. Location: CEO Office (a modern luxury CEO office with a dark walnut executive desk, black leather chair, floor-to-ceiling city window, glass bookshelves on the left wall, abstract painting behind the desk, and a black sofa area on the right), evening, cool city light from the window mixed with soft interior office lighting. Location Continuity: keep the centered executive desk, black leather chair, guest chairs, glass bookshelves, abstract wall painting, sofa area, laptop, coffee cup, and cool office lighting consistent across this screen. Screen Continuity: Linh An and Tong Mat remain in the office across this tense conversation; this shot focuses on Linh An confronting Tong Mat across the desk. Scene: medium close-up, eye-level camera angle, main character positioned on the left side of the frame, tense conversation across the desk. Linh An (Gender: Female, Age: 24, Height: 165cm, Face: oval face, Hair: jet-black long silky hair, Eyes: dark-brown deep eyes, Posture: standing stiffly with tense shoulders, Outfit: cream-white silk blouse and black pencil skirt, Accessories: small pearl earrings, Handheld: silver clutch placed on the desk) grips the edge of the desk while looking directly at Tong Mat. Tong Mat (Gender: Male, Age: 31, Height: 182cm, Face: sharp face, Hair: jet-black neatly styled hair, Eyes: dark-brown cold eyes, Posture: seated behind the desk, Outfit: charcoal-black tailored black business suit and white dress shirt, Accessories: silver wristwatch, Handheld: none) leans back in the black leather office chair, staring back at Linh An with a controlled expression. Foreground: edge of the dark walnut desk and white coffee cup. Midground: Linh An and Tong Mat facing each other. Background: floor-to-ceiling city window and glass bookshelves. no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
 
 Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
 

@@ -151,6 +151,41 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
               {beat.timeOfDay || "Unknown time"} / {beat.location || beat.locationName || "Unknown location"}
             </p>
           </div>
+
+          {beat.characterMomentDetails && beat.characterMomentDetails.length > 0 && (
+            <div className="col-span-full border-t border-slate-100 pt-4">
+              <SectionLabel>Beat Moment Details</SectionLabel>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                {beat.characterMomentDetails.map((moment) => (
+                  <div key={moment.characterName} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                    <p className="text-xs font-bold text-slate-900">{moment.characterName}</p>
+                    {moment.visibleAccessories && moment.visibleAccessories.length > 0 && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-[9px] font-semibold text-slate-500 font-bold">Accessories:</span>
+                        <ChipList items={moment.visibleAccessories} tone="amber" empty="" />
+                      </div>
+                    )}
+                    {moment.handheldItems && moment.handheldItems.length > 0 && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-[9px] font-semibold text-slate-500 font-bold">Handheld:</span>
+                        <ChipList items={moment.handheldItems} tone="sky" empty="" />
+                      </div>
+                    )}
+                    {moment.accessoriesChange && moment.accessoriesChange.length > 0 && (
+                      <div className="mt-1 text-[9px] text-slate-600 font-medium">
+                        <span className="font-semibold text-slate-500 font-bold">Change:</span> {moment.accessoriesChange.join(", ")}
+                      </div>
+                    )}
+                    {moment.momentNotes && (
+                      <p className="mt-1 text-[9px] text-slate-500 italic">
+                        Note: {moment.momentNotes}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </article>
@@ -217,6 +252,41 @@ function ScreenCard({ screen, beats }: { screen: StoryScreen; beats: StoryBeat[]
             </div>
           </div>
         </div>
+
+        {screen.screenCharacterStates && screen.screenCharacterStates.length > 0 && (
+          <div className="mt-5 rounded-3xl border border-slate-200 bg-white p-5">
+            <SectionLabel>Screen Character States (Outfit & Accessories)</SectionLabel>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {screen.screenCharacterStates.map((charState) => (
+                <div key={charState.characterName} className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+                  <p className="text-sm font-bold text-slate-900">{charState.characterName}</p>
+                  {charState.outfit && (
+                    <p className="mt-1 text-xs text-slate-700 font-medium">
+                      <span className="font-semibold text-slate-500 font-bold">Outfit:</span> {charState.outfit}
+                    </p>
+                  )}
+                  {charState.accessories && charState.accessories.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-semibold text-slate-500 font-bold">Accessories:</span>
+                      <ChipList items={charState.accessories} tone="amber" empty="" />
+                    </div>
+                  )}
+                  {charState.handheldItems && charState.handheldItems.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-semibold text-slate-500 font-bold">Handheld:</span>
+                      <ChipList items={charState.handheldItems} tone="sky" empty="" />
+                    </div>
+                  )}
+                  {charState.appearanceNotes && (
+                    <p className="mt-2 text-[10px] text-slate-500 italic">
+                      Note: {charState.appearanceNotes}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mt-5 flex items-center justify-between">
           <p className="text-sm font-bold text-slate-700">Beat Timeline / {beats.length} beats</p>

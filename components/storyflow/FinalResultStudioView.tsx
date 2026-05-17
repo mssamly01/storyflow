@@ -254,6 +254,41 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
             </div>
           </div>
 
+          {item.source?.characterMomentDetails && item.source.characterMomentDetails.length > 0 && (
+            <div>
+              <SectionLabel>Beat Moment Details</SectionLabel>
+              <div className="grid gap-4 sm:grid-cols-2 mt-2">
+                {item.source.characterMomentDetails.map((moment) => (
+                  <div key={moment.characterName} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                    <p className="text-xs font-extrabold text-slate-900">{moment.characterName}</p>
+                    {moment.visibleAccessories && moment.visibleAccessories.length > 0 && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-400 font-bold">Accessories:</span>
+                        <ChipList items={moment.visibleAccessories} tone="amber" />
+                      </div>
+                    )}
+                    {moment.handheldItems && moment.handheldItems.length > 0 && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-400 font-bold">Handheld:</span>
+                        <ChipList items={moment.handheldItems} tone="sky" />
+                      </div>
+                    )}
+                    {moment.accessoriesChange && moment.accessoriesChange.length > 0 && (
+                      <p className="mt-1 text-[9px] text-slate-600 font-medium">
+                        <span className="font-bold text-slate-400 font-bold">Change:</span> {moment.accessoriesChange.join(", ")}
+                      </p>
+                    )}
+                    {moment.momentNotes && (
+                      <p className="mt-1 text-[9px] text-slate-500 italic">
+                        Note: {moment.momentNotes}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {qaStatus !== 'pass' && (item.qa?.issues ?? []).length > 0 && (
             <div>
               <SectionLabel>QA Issues & Recommendations</SectionLabel>
@@ -368,6 +403,39 @@ export function FinalResultStudioView({
                   <ChipList items={screen.screenProps} tone="sky" />
                 </div>
               </div>
+
+              {screen.screenCharacterStates && screen.screenCharacterStates.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
+                  <div className="flex items-center gap-2 mb-3">
+                    <User className="w-3.5 h-3.5 text-indigo-500" />
+                    <SectionLabel>Screen Character Outfits & Accessories</SectionLabel>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mt-3">
+                    {screen.screenCharacterStates.map((charState) => (
+                      <div key={charState.characterName} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                        <p className="text-xs font-extrabold text-slate-900">{charState.characterName}</p>
+                        {charState.outfit && (
+                          <p className="mt-1 text-[11px] text-slate-700 font-medium">
+                            <span className="font-bold text-slate-400 font-bold">Outfit:</span> {charState.outfit}
+                          </p>
+                        )}
+                        {charState.accessories && charState.accessories.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[9px] font-bold text-slate-400 font-bold">Accessories:</span>
+                            <ChipList items={charState.accessories} tone="amber" />
+                          </div>
+                        )}
+                        {charState.handheldItems && charState.handheldItems.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[9px] font-bold text-slate-400 font-bold">Handheld:</span>
+                            <ChipList items={charState.handheldItems} tone="sky" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {(screen.screenState || screen.continuityNotes) && (
                 <div className="mt-6 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">

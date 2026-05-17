@@ -7,7 +7,9 @@ import type {
   QAResult,
   StoryBeat,
   StoryScreen,
-  StoryboardPanel
+  StoryboardPanel,
+  ScreenCharacterState,
+  BeatCharacterMomentDetail
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -104,6 +106,37 @@ export function normalizeQAResults(raw: unknown): QAResult[] {
   });
 }
 
+export function normalizeScreenCharacterStates(raw: any): ScreenCharacterState[] {
+  const items = raw?.screenCharacterStates ?? raw?.screen_character_states ?? [];
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item: any) => ({
+    characterName: item.characterName ?? item.character_name ?? item.name ?? "",
+    characterId: item.characterId ?? item.character_id,
+    outfit: item.outfit ?? "",
+    outfitMainColor: item.outfitMainColor ?? item.outfit_main_color,
+    outfitAccentColor: item.outfitAccentColor ?? item.outfit_accent_color,
+    accessories: asStringArray(item.accessories),
+    handheldItems: asStringArray(item.handheldItems ?? item.handheld_items),
+    appearanceNotes: item.appearanceNotes ?? item.appearance_notes ?? "",
+    stateChanges: asStringArray(item.stateChanges ?? item.state_changes),
+  }));
+}
+
+export function normalizeCharacterMomentDetails(raw: any): BeatCharacterMomentDetail[] {
+  const items = raw?.characterMomentDetails ?? raw?.character_moment_details ?? [];
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item: any) => ({
+    characterName: item.characterName ?? item.character_name ?? item.name ?? "",
+    characterId: item.characterId ?? item.character_id,
+    visibleAccessories: asStringArray(item.visibleAccessories ?? item.visible_accessories),
+    handheldItems: asStringArray(item.handheldItems ?? item.handheld_items),
+    accessoriesChange: asStringArray(item.accessoriesChange ?? item.accessories_change),
+    momentNotes: item.momentNotes ?? item.moment_notes ?? "",
+  }));
+}
+
 export function normalizeScreens(raw: unknown): StoryScreen[] {
   return getItems(raw, ["screens", "storyScreens"]).map((item, index) => {
     const screenNumber = asNumber(item.screenNumber ?? item.screen_number, index + 1);
@@ -121,6 +154,7 @@ export function normalizeScreens(raw: unknown): StoryScreen[] {
       endBeatId: asNumber(item.endBeatId ?? item.end_beat_id, 0),
       summary: asString(item.summary),
       continuityNotes: asString(item.continuityNotes ?? item.continuity_notes),
+      screenCharacterStates: normalizeScreenCharacterStates(item),
       meta: item.meta
     };
   });
@@ -155,6 +189,7 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       visualFocus: asString(item.visualFocus ?? item.visual_focus),
       atmosphere: asString(item.atmosphere),
       timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
+      characterMomentDetails: normalizeCharacterMomentDetails(item),
       meta: item.meta
     } as StoryBeat;
   });
@@ -295,7 +330,8 @@ export function buildFinalResultPanel(params: {
       screenCharacters: screen.screenCharacters,
       screenProps: screen.screenProps,
       screenState: screen.screenState,
-      continuityNotes: screen.continuityNotes
+      continuityNotes: screen.continuityNotes,
+      screenCharacterStates: screen.screenCharacterStates
     } : undefined,
     source: {
       originalText: source.originalText,
@@ -312,7 +348,8 @@ export function buildFinalResultPanel(params: {
       interaction: source.interaction,
       posture: source.posture,
       atmosphere: source.atmosphere,
-      visualFocus: source.visualFocus
+      visualFocus: source.visualFocus,
+      characterMomentDetails: bundle.beat?.characterMomentDetails
     },
     storyboard: {
       shotType: panel.shotType || "",

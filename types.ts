@@ -41,6 +41,18 @@ export interface BeatAnalysis {
   timeOfDay?: string;
 }
 
+export interface ScreenCharacterState {
+  characterName: string;
+  characterId?: string;
+  outfit: string;
+  outfitMainColor?: string;
+  outfitAccentColor?: string;
+  accessories: string[];
+  handheldItems: string[];
+  appearanceNotes?: string;
+  stateChanges?: string[];
+}
+
 export interface StoryScreen {
   meta?: EditableMeta;
   screenId: string;
@@ -52,10 +64,20 @@ export interface StoryScreen {
   screenState: string;
   screenCharacters: string[];
   screenProps: string[];
+  screenCharacterStates?: ScreenCharacterState[];
   startBeatId: number;
   endBeatId: number;
   summary: string;
   continuityNotes?: string;
+}
+
+export interface BeatCharacterMomentDetail {
+  characterName: string;
+  characterId?: string;
+  visibleAccessories?: string[];
+  handheldItems?: string[];
+  accessoriesChange?: string[];
+  momentNotes?: string;
 }
 
 export interface StoryBeat extends BeatAnalysis {
@@ -72,6 +94,7 @@ export interface StoryBeat extends BeatAnalysis {
   locationState?: string;
   action?: string;
   visualFocus?: string;
+  characterMomentDetails?: BeatCharacterMomentDetail[];
 }
 
 export interface CoverageCheck {
@@ -104,10 +127,17 @@ export interface CharacterProfile {
   bodyType?: string;
   face?: string;
   hair?: string;
+  hairColor?: string;
   eyes?: string;
+  eyeColor?: string;
   signatureFeatures?: string[];
   outfit?: string;
+  outfitMainColor?: string;
+  outfitAccentColor?: string;
   accessories?: string[];
+  signatureAccessories?: string[];
+  defaultStyle?: string;
+  styleNotes?: string;
   props?: string[];
   colorPalette?: string[];
   personalityVisualCues?: string;
@@ -226,6 +256,7 @@ export interface FinalResultPanel {
     screenProps: string[];
     screenState: string;
     continuityNotes?: string;
+    screenCharacterStates?: ScreenCharacterState[];
   };
   source: {
     originalText: string;
@@ -243,6 +274,7 @@ export interface FinalResultPanel {
     posture: string;
     atmosphere: string;
     visualFocus: string;
+    characterMomentDetails?: BeatCharacterMomentDetail[];
   };
   storyboard: {
     shotType: string;
