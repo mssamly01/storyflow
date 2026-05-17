@@ -97,7 +97,7 @@ export function buildImagePromptTxtFromFinalResult(
       return visualPrompt.replace(/\s+/g, " ").trim();
     })
     .filter(Boolean)
-    .join("\n\n");
+    .join("\n");
 }
 
 export function downloadTextFile(

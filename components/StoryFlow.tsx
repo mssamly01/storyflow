@@ -573,9 +573,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
     if (s === ProductionStage.ANALYSIS) return !!production.analysis;
     if (s === ProductionStage.CHARACTER_LOCATION) {
-      // Chỉ hiển thị dữ liệu nếu đã có phân tích cho chương hiện tại
       return !!production.characterLocationAnalysis;
     }
+    if (s === ProductionStage.SCREEN_CONTINUITY) return !!production.screenContinuity;
+    if (s === ProductionStage.BEAT_MOMENT) return !!production.beatMomentDetails;
     if (s === ProductionStage.STORYBOARD) return !!production.storyboard;
     if (s === ProductionStage.PROMPTS) return !!production.prompts;
     if (s === ProductionStage.QA) return !!production.qaReport;
@@ -586,6 +587,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const getWorkflowStatusForStage = (s: ProductionStage): StepStatus | null => {
     if (s === ProductionStage.ANALYSIS) return project.workflow.beatAnalysis.status;
     if (s === ProductionStage.CHARACTER_LOCATION) return project.workflow.characterLocation.status;
+    if (s === ProductionStage.SCREEN_CONTINUITY) return project.workflow.screenContinuity.status;
+    if (s === ProductionStage.BEAT_MOMENT) return project.workflow.beatMomentDetails.status;
     if (s === ProductionStage.STORYBOARD) return project.workflow.storyboard.status;
     if (s === ProductionStage.PROMPTS) return project.workflow.promptEngineering.status;
     if (s === ProductionStage.QA) return project.workflow.qa.status;
@@ -619,6 +622,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       (location?.locationId && item.locationId === location.locationId) ||
       (location?.name && item.name === location.name)
     ) || location;
+  };
+
+  const validateStageJsonShape = (parsed: any, targetStage: ProductionStage): string | null => {
+    if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.screens)) {
+        return "Định dạng JSON không hợp lệ cho Screen Continuity. JSON phải là một đối tượng chứa mảng 'screens': { \"screens\": [...] }";
+      }
+    }
+    if (targetStage === ProductionStage.BEAT_MOMENT) {
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.beatDetails)) {
+        return "Định dạng JSON không hợp lệ cho Beat Moment Details. JSON phải là một đối tượng chứa mảng 'beatDetails': { \"beatDetails\": [...] }";
+      }
+    }
+    return null;
   };
 
   const renderLockSummary = (entity: any) => {
@@ -770,7 +787,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     let parsedJson: any = null;
     try {
       parsedJson = JSON.parse(manualInputValue);
-    } catch (e) {}
+    } catch (e) {
+      setError("Dữ liệu nhập vào không phải là JSON hợp lệ.");
+      return;
+    }
+
+    const validationError = validateStageJsonShape(parsedJson, stage);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
 
     if (parsedJson && (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION)) {
       const pastedBeatAnalysis = getAnalysisBeatsFromParsed(parsedJson);
@@ -1053,22 +1079,43 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       let result = '';
       let targetStage = stage;
 
-      if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION) {
-        const existingLibrary = getMasterLibrary();
-        result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-        const parsed = JSON.parse(result);
-        const analysisValue = typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2);
-        const characterLocationValue = typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2);
+      if (stage === ProductionStage.ANALYSIS) {
+        const resultObj = await gemini.analyzeBeats(inputData.script, getSelectedStylePrompt());
+        const analysisValue = JSON.stringify(resultObj, null, 2);
         setProduction(prev => ({
           ...prev,
-          analysis: analysisValue,
+          analysis: analysisValue
+        }));
+        const beats = normalizeBeats(resultObj);
+        const parsedScreens = normalizeScreens(resultObj);
+        const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+        setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
+        
+        setStage(ProductionStage.CHARACTER_LOCATION);
+        setIsLoading(false);
+        return;
+      } else if (stage === ProductionStage.CHARACTER_LOCATION) {
+        const existingLibrary = getMasterLibrary();
+        const analysisData = parseJsonSafe<unknown>(production.analysis, []);
+        const beats = normalizeBeats(analysisData);
+        const parsedScreens = normalizeScreens(analysisData);
+        const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+        
+        const libraryObj = await gemini.generateCharacterLocationLibrary(
+          inputData.script,
+          beats,
+          getSelectedStylePrompt(),
+          existingLibrary,
+          screens
+        );
+        const characterLocationValue = JSON.stringify(libraryObj, null, 2);
+        setProduction(prev => ({
+          ...prev,
           characterLocationAnalysis: characterLocationValue
         }));
-        syncPhaseOneProjectData(analysisValue, characterLocationValue);
-        const nextIdx = steps.findIndex(s => s.id === stage) + 1;
-        if (nextIdx < steps.length) {
-          setStage(steps[nextIdx].id);
-        }
+        setProject(prev => replaceCharacterLocationLibrary(prev, normalizeCharacterLocationLibrary(libraryObj)));
+        
+        setStage(ProductionStage.SCREEN_CONTINUITY);
         setIsLoading(false);
         return;
       } else if (stage === ProductionStage.SCREEN_CONTINUITY) {
@@ -1087,7 +1134,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         );
         targetStage = ProductionStage.BEAT_MOMENT;
       } else if (stage === ProductionStage.STORYBOARD) {
-        result = await gemini.createStoryboard(production.analysis || '', production.characterLocationAnalysis || '', getSelectedStylePrompt());
+        result = await gemini.createStoryboard(
+          production.analysis || '',
+          production.characterLocationAnalysis || '',
+          getSelectedStylePrompt(),
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
+        );
         targetStage = ProductionStage.STORYBOARD;
       } else if (stage === ProductionStage.PROMPTS) {
         result = await gemini.engineerPrompts(
@@ -1105,7 +1158,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           production.characterLocationAnalysis || '',
           getSelectedStylePrompt(),
           production.storyboard || '',
-          production.analysis || ''
+          production.analysis || '',
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
         );
         targetStage = ProductionStage.QA;
       } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
@@ -2679,11 +2734,88 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       ))}
                     </div>
                   </div>
-                  <div className="p-6 space-y-4">
-                    {screen.sceneSetup && (
+                  <div className="p-6 space-y-6">
+                    {screen.screenState && (
                       <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 hover:bg-white transition-all">
-                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Thiết lập cảnh (Scene Setup)</span>
-                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.sceneSetup}</p>
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-1">Trạng thái bối cảnh (Screen State)</span>
+                        <p className="text-slate-700 text-xs leading-relaxed whitespace-pre-wrap">{screen.screenState}</p>
+                      </div>
+                    )}
+                    {Array.isArray(screen.screenProps) && screen.screenProps.length > 0 && (
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 hover:bg-white transition-all">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block mb-2">Đạo cụ bối cảnh (Screen Props)</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {screen.screenProps.map((p) => (
+                            <span key={p} className="bg-slate-200/60 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-md border border-slate-300/40">
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {Array.isArray(screen.screenCharacterStates) && screen.screenCharacterStates.length > 0 && (
+                      <div className="space-y-3 pt-3 border-t border-slate-100">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block">Trạng thái nhân vật (Screen Character States)</span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {screen.screenCharacterStates.map((c, ci) => (
+                            <div key={c.characterId || c.characterName || ci} className="bg-slate-50/50 p-4 rounded-xl border border-slate-200/60 hover:bg-white hover:shadow-sm transition-all space-y-2">
+                              <h5 className="font-bold text-indigo-600 text-xs">{c.characterName || c.characterId}</h5>
+                              <div className="space-y-2 text-[11px] leading-relaxed">
+                                {c.outfit && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Trang phục:</span>
+                                    <span className="text-slate-700 font-medium">{c.outfit}</span>
+                                  </div>
+                                )}
+                                {(c.outfitMainColor || c.outfitAccentColor) && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Màu sắc:</span>
+                                    <span className="text-slate-700 font-medium">
+                                      {c.outfitMainColor && <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold mr-1">Chủ đạo: {c.outfitMainColor}</span>}
+                                      {c.outfitAccentColor && <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold">Điểm nhấn: {c.outfitAccentColor}</span>}
+                                    </span>
+                                  </div>
+                                )}
+                                {Array.isArray(c.accessories) && c.accessories.length > 0 && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Phụ kiện:</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {c.accessories.map((acc) => (
+                                        <span key={acc} className="bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-100">
+                                          {acc}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {Array.isArray(c.handheldItems) && c.handheldItems.length > 0 && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Vật cầm tay:</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {c.handheldItems.map((item) => (
+                                        <span key={item} className="bg-rose-50 text-rose-700 font-semibold px-2 py-0.5 rounded border border-rose-100">
+                                          {item}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {c.appearanceNotes && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Diện mạo:</span>
+                                    <span className="text-slate-600 italic">{c.appearanceNotes}</span>
+                                  </div>
+                                )}
+                                {c.stateChanges && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Thay đổi trạng thái:</span>
+                                    <span className="text-amber-700 font-semibold">{c.stateChanges}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                     {screen.continuityNotes && (
@@ -2802,28 +2934,40 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                             <div key={c.characterId || c.characterName || ci} className="bg-slate-50/50 p-4 rounded-xl border border-slate-200/60 hover:bg-white hover:shadow-sm transition-all">
                               <h5 className="font-bold text-indigo-600 text-xs mb-3">{c.characterName || c.characterId}</h5>
                               <div className="space-y-2.5 text-[11px]">
-                                {c.poseRefinement && (
+                                {Array.isArray(c.visibleAccessories) && c.visibleAccessories.length > 0 && (
                                   <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Tư thế:</span>
-                                    <span className="text-slate-700 font-medium">{c.poseRefinement}</span>
-                                  </div>
-                                )}
-                                {c.expression && (
-                                  <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Biểu cảm:</span>
-                                    <span className="text-slate-700 font-medium">{c.expression}</span>
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Phụ kiện hiển thị:</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {c.visibleAccessories.map((acc) => (
+                                        <span key={acc} className="bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-100">
+                                          {acc}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
                                 {Array.isArray(c.handheldItems) && c.handheldItems.length > 0 && (
                                   <div className="flex items-start gap-2">
-                                    <span className="text-slate-400 uppercase font-black tracking-wider w-20 flex-shrink-0">Vật cầm tay:</span>
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Vật cầm tay:</span>
                                     <div className="flex flex-wrap gap-1">
-                                      {c.handheldItems.map((item: string) => (
-                                        <span key={item} className="bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded border border-indigo-100">
+                                      {c.handheldItems.map((item) => (
+                                        <span key={item} className="bg-rose-50 text-rose-700 font-semibold px-2 py-0.5 rounded border border-rose-100">
                                           {item}
                                         </span>
                                       ))}
                                     </div>
+                                  </div>
+                                )}
+                                {c.accessoriesChange && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Thay đổi phụ kiện:</span>
+                                    <span className="text-amber-700 font-semibold">{c.accessoriesChange}</span>
+                                  </div>
+                                )}
+                                {c.momentNotes && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-400 uppercase font-black tracking-wider w-24 flex-shrink-0">Ghi chú khoảnh khắc:</span>
+                                    <span className="text-slate-600 font-medium italic">{c.momentNotes}</span>
                                   </div>
                                 )}
                               </div>

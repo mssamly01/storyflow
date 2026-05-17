@@ -377,8 +377,8 @@ export interface WorkflowStepState {
 export interface WorkflowState {
   beatAnalysis: WorkflowStepState;
   characterLocation: WorkflowStepState;
-  screenContinuity?: WorkflowStepState;
-  beatMomentDetails?: WorkflowStepState;
+  screenContinuity: WorkflowStepState;
+  beatMomentDetails: WorkflowStepState;
   storyboard: WorkflowStepState;
   promptEngineering: WorkflowStepState;
   qa: WorkflowStepState;

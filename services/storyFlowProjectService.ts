@@ -222,6 +222,8 @@ export function hydrateStoryFlowProject(
     workflow: {
       beatAnalysis: hydrateWorkflowStep(rawWorkflow.beatAnalysis, fallback.workflow.beatAnalysis),
       characterLocation: hydrateWorkflowStep(rawWorkflow.characterLocation, fallback.workflow.characterLocation),
+      screenContinuity: hydrateWorkflowStep(rawWorkflow.screenContinuity, fallback.workflow.screenContinuity),
+      beatMomentDetails: hydrateWorkflowStep(rawWorkflow.beatMomentDetails, fallback.workflow.beatMomentDetails),
       storyboard: hydrateWorkflowStep(rawWorkflow.storyboard, fallback.workflow.storyboard),
       promptEngineering: hydrateWorkflowStep(rawWorkflow.promptEngineering, fallback.workflow.promptEngineering),
       qa: hydrateWorkflowStep(rawWorkflow.qa, fallback.workflow.qa),

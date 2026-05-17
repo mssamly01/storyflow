@@ -487,7 +487,9 @@ DESCRIPTION RULES - CRITICAL:
 export const getStoryboardPrompt = (
   analysis: string,
   charLocAnalysis: string,
-  artStyleDescription = ""
+  artStyleDescription = "",
+  screenContinuity = "",
+  beatMomentDetails = ""
 ) => {
   const analysisData = parseJsonFallback<unknown>(analysis, []);
   const beats = normalizeBeats(analysisData);
@@ -606,12 +608,7 @@ ${JSON.stringify(screens, null, 2)}
 CHARACTER LIBRARY:
 ${JSON.stringify(library.characters || [], null, 2)}
 
-LOCATION LIBRARY:
-${JSON.stringify(library.locations || [], null, 2)}
-
-ART STYLE:
-${artStyleDescription || "No specific style selected."}
-`;
+LOCATION LIBRARY:\r\n${JSON.stringify(library.locations || [], null, 2)}\r\n\r\nAPPROVED SCREEN CONTINUITY:\r\n${screenContinuity || "No screen continuity data provided."}\r\n\r\nAPPROVED BEAT MOMENT DETAILS:\r\n${beatMomentDetails || "No beat moment details provided."}\r\n\r\nART STYLE:\r\n${artStyleDescription || "No specific style selected."}\r\n`;
 };
 
 export const getEngineerPromptsPrompt = (
@@ -813,7 +810,7 @@ FINAL CHECK BEFORE OUTPUT:
 - Does every visualPrompt include a final "Negative prompt:" section?
 `;
 
-export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "") => `
+export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "", screenContinuity = "", beatMomentDetails = "") => `
 You are a QA checker for an illustrated story prompt pipeline.
 
 Your ONLY task:
@@ -863,9 +860,7 @@ ${storyboard || "No storyboard data provided."}
 CHARACTER + LOCATION LIBRARY:
 ${charLocAnalysis}
 
-GENERATED PROMPTS TO CHECK:
-${data}
-`;
+GENERATED PROMPTS TO CHECK:\r\n${data}\r\n\r\nAPPROVED SCREEN CONTINUITY:\r\n${screenContinuity || "No screen continuity data provided."}\r\n\r\nAPPROVED BEAT MOMENT DETAILS:\r\n${beatMomentDetails || "No beat moment details provided."}\r\n`;
 
 /**
  * @deprecated Prefer buildFinalResult() from finalResultBuilderService.
@@ -936,30 +931,39 @@ You will analyze the screen skeleton (from Phase 1) and output the screen-level 
 
 SCREEN CONTINUITY RULES:
 1. For each screen in the provided input, determine the outfit and style state of every character present on that screen.
-2. If a character appears in multiple screens, ensure their outfits make narrative sense (e.g. they don't change clothes in the middle of a continuous conversation in the same room).
-3. If they move to a new location or a new time of day, outfit changes must be logical.
-4. If a character profile includes an "outfit" description, use that as the primary guideline, but expand it to specify screen-level visible items, colors, and accessories.
-5. Do NOT list every accessory. Only signature accessories and screen-level accessories.
+2. CRITICAL SCREEN ID RULE: You must copy the exact screenId (e.g. "screen_001") from the APPROVED BEAT SKELETON SOURCE. Do not invent new screenId formats or use "screen_1" if it is "screen_001".
+3. Do NOT output "screenNumber", "screenName", "location", "locationId", or "timeOfDay".
+4. Required output for each screen consists ONLY of: screenId, screenState, screenProps, screenCharacterStates, and continuityNotes.
+5. In screenCharacterStates, you must specify:
+   - characterId
+   - characterName
+   - outfit (complete description of outfit type/style)
+   - outfitMainColor (main color of the outfit)
+   - outfitAccentColor (accent color of the outfit)
+   - accessories (visible screen-level accessories)
+   - handheldItems (items they might be holding generally)
+   - appearanceNotes (general visual appearance/condition)
+   - stateChanges (any clothing/accessory changes)
 6. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
   "screens": [
     {
-      "screenId": "string (e.g. screen_1)",
-      "screenNumber": 1,
-      "screenName": "string",
-      "location": "string",
-      "locationId": "string",
-      "timeOfDay": "string",
+      "screenId": "string (e.g. screen_001)",
       "screenState": "string (layout status or changes in this screen)",
       "screenProps": ["string (props permanent/visible on this screen)"],
       "screenCharacterStates": [
         {
           "characterId": "string",
           "characterName": "string",
-          "outfit": "string (complete description of outfit type, main color, accent color)",
-          "accessories": ["string (visible screen-level accessories and signature accessories)"]
+          "outfit": "string",
+          "outfitMainColor": "string",
+          "outfitAccentColor": "string",
+          "accessories": ["string"],
+          "handheldItems": ["string"],
+          "appearanceNotes": "string",
+          "stateChanges": "string"
         }
       ],
       "continuityNotes": "string"
@@ -986,9 +990,15 @@ You will analyze the screen skeleton and screen continuity, and output the highl
 
 BEAT MOMENT RULES:
 1. For each beat, define the exact posture, active momentary gesture, expression, and handheld item or props.
-2. Ensure postures are physically consistent (e.g. if character sits, they stay sitting until they stand up).
-3. Ensure gestures and expressions perfectly match the original text and dialogue.
-4. Avoid hex colors or technical labels.
+2. Do NOT output "screenId" or "originalText" inside the beatDetails.
+3. Required output for each beat consists ONLY of: beatId, interaction, posture, props, locationState, and characterMomentDetails.
+4. In characterMomentDetails, you must specify:
+   - characterId
+   - characterName
+   - visibleAccessories (accessories visible on the character in this exact beat)
+   - handheldItems (items held in hand right now)
+   - accessoriesChange (any changes to their accessories at this moment)
+   - momentNotes (facial expressions, detailed hand gestures, or body language specific to this beat)
 5. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
@@ -996,8 +1006,6 @@ Required JSON Schema:
   "beatDetails": [
     {
       "beatId": 1,
-      "screenId": "string",
-      "originalText": "string",
       "locationState": "string (momentary location changes or object interaction)",
       "posture": "string (explicit physical pose: standing, sitting, crouching, etc.)",
       "interaction": "string (detailed physical or verbal interaction, e.g. looking at X, pointing at Y)",
@@ -1006,9 +1014,10 @@ Required JSON Schema:
         {
           "characterId": "string",
           "characterName": "string",
-          "poseRefinement": "string (specific hand/body gestures)",
-          "expression": "string (facial expression)",
-          "handheldItems": ["string (items held in hand right now)"]
+          "visibleAccessories": ["string"],
+          "handheldItems": ["string"],
+          "accessoriesChange": "string",
+          "momentNotes": "string"
         }
       ]
     }
@@ -1264,11 +1273,11 @@ export const analyzePhase1Analysis = async (script: string, style: string, exist
 
 };
 
-export const createStoryboard = async (analysis: string, charLocAnalysis: string, style = "") => {
+export const createStoryboard = async (analysis: string, charLocAnalysis: string, style = "", screenContinuity = "", beatMomentDetails = "") => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getStoryboardPrompt(analysis, charLocAnalysis, style),
+    contents: getStoryboardPrompt(analysis, charLocAnalysis, style, screenContinuity, beatMomentDetails),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -1327,12 +1336,14 @@ export const runQA = async (
   charLocAnalysis: string,
   style: string,
   storyboard = "",
-  analysis = ""
+  analysis = "",
+  screenContinuity = "",
+  beatMomentDetails = ""
 ) => {
   const ai = getAI();
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getQAPrompt(data, charLocAnalysis, style, storyboard, analysis),
+    contents: getQAPrompt(data, charLocAnalysis, style, storyboard, analysis, screenContinuity, beatMomentDetails),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -1372,11 +1383,6 @@ export const generateScreenContinuity = async (
               type: "object",
               properties: {
                 screenId: { type: "string" },
-                screenNumber: { type: "integer" },
-                screenName: { type: "string" },
-                location: { type: "string" },
-                locationId: { type: "string" },
-                timeOfDay: { type: "string" },
                 screenState: { type: "string" },
                 screenProps: {
                   type: "array",
@@ -1390,17 +1396,25 @@ export const generateScreenContinuity = async (
                       characterId: { type: "string" },
                       characterName: { type: "string" },
                       outfit: { type: "string" },
+                      outfitMainColor: { type: "string" },
+                      outfitAccentColor: { type: "string" },
                       accessories: {
                         type: "array",
                         items: { type: "string" }
-                      }
+                      },
+                      handheldItems: {
+                        type: "array",
+                        items: { type: "string" }
+                      },
+                      appearanceNotes: { type: "string" },
+                      stateChanges: { type: "string" }
                     },
-                    required: ["characterId", "characterName", "outfit", "accessories"]
+                    required: ["characterId", "characterName", "outfit", "outfitMainColor", "outfitAccentColor", "accessories", "handheldItems", "appearanceNotes", "stateChanges"]
                   }
                 },
                 continuityNotes: { type: "string" }
               },
-              required: ["screenId", "screenNumber", "screenName", "location", "timeOfDay", "screenState", "screenProps", "screenCharacterStates"]
+              required: ["screenId", "screenState", "screenProps", "screenCharacterStates"]
             }
           }
         },
@@ -1432,8 +1446,6 @@ export const generateBeatMomentDetails = async (
               type: "object",
               properties: {
                 beatId: { type: "integer" },
-                screenId: { type: "string" },
-                originalText: { type: "string" },
                 locationState: { type: "string" },
                 posture: { type: "string" },
                 interaction: { type: "string" },
@@ -1448,18 +1460,22 @@ export const generateBeatMomentDetails = async (
                     properties: {
                       characterId: { type: "string" },
                       characterName: { type: "string" },
-                      poseRefinement: { type: "string" },
-                      expression: { type: "string" },
+                      visibleAccessories: {
+                        type: "array",
+                        items: { type: "string" }
+                      },
                       handheldItems: {
                         type: "array",
                         items: { type: "string" }
-                      }
+                      },
+                      accessoriesChange: { type: "string" },
+                      momentNotes: { type: "string" }
                     },
-                    required: ["characterId", "characterName", "poseRefinement", "expression", "handheldItems"]
+                    required: ["characterId", "characterName", "visibleAccessories", "handheldItems", "accessoriesChange", "momentNotes"]
                   }
                 }
               },
-              required: ["beatId", "screenId", "originalText", "posture", "interaction", "props", "characterMomentDetails"]
+              required: ["beatId", "posture", "interaction", "props", "characterMomentDetails"]
             }
           }
         },
