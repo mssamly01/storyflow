@@ -698,7 +698,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       case ProductionStage.BEAT_MOMENT:
         return gemini.getBeatMomentDetailsPrompt(production.analysis || '', production.characterLocationAnalysis || '', production.screenContinuity || '', stylePrompt);
       case ProductionStage.STORYBOARD: 
-        return gemini.getStoryboardPrompt(production.analysis || '', production.characterLocationAnalysis || '', stylePrompt);
+        return gemini.getStoryboardPrompt(
+          production.analysis || '', 
+          production.characterLocationAnalysis || '', 
+          stylePrompt,
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
+        );
       case ProductionStage.PROMPTS:
         return gemini.getEngineerPromptsPrompt(
           production.storyboard || '',
@@ -708,7 +714,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           production.screenContinuity || '',
           production.beatMomentDetails || ''
         );
-      case ProductionStage.QA: return gemini.getQAPrompt(production.prompts || '', production.characterLocationAnalysis || '', stylePrompt, production.storyboard || '', production.analysis || '');
+      case ProductionStage.QA: 
+        return gemini.getQAPrompt(
+          production.prompts || '', 
+          production.characterLocationAnalysis || '', 
+          stylePrompt, 
+          production.storyboard || '', 
+          production.analysis || '',
+          production.screenContinuity || '',
+          production.beatMomentDetails || ''
+        );
       case ProductionStage.FINAL:
         return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
       default: return '';
