@@ -165,8 +165,10 @@ export interface CharacterProfile {
   hairColor?: string;
   eyes?: string;
   eyeColor?: string;
+  appearancePrompt?: string;
   signatureFeatures?: string[];
   outfit?: string;
+  outfitPrompt?: string;
   outfitMainColor?: string;
   outfitAccentColor?: string;
   accessories?: string[];
@@ -189,6 +191,7 @@ export interface LocationProfile {
   name: string;
   aliases?: string[];
   description?: string;
+  locationPrompt?: string;
   details?: string;
   layout?: string;
   keyObjects?: string[];
@@ -199,6 +202,7 @@ export interface LocationProfile {
   lightingDefault?: string;
   atmosphereDefault?: string;
   continuityNotes?: string;
+  continuityPrompt?: string;
   firstAppearanceBeatId?: number | null;
   appearsInBeatIds?: number[];
 }

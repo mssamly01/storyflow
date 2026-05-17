@@ -1,9 +1,10 @@
 
-import { GoogleGenAI, Part } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { getConfig } from "./configService";
 import { mapLocationIdsToBeats } from "./locationContinuityService";
 import { createFallbackScreensFromBeats, normalizeBeats, normalizeScreens } from "./finalResultBuilderService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import { buildEngineerPromptsJsonWithResolver } from "./visualPromptResolverService";
 import type {
   BeatAnalysisResult,
   CharacterLocationLibraryResult,
@@ -370,7 +371,9 @@ Return ONLY valid JSON with this schema:
       "hairColor": "...",
       "eyes": "...",
       "eyeColor": "...",
+      "appearancePrompt": "...",
       "outfit": "...",
+      "outfitPrompt": "...",
       "outfitMainColor": "...",
       "outfitAccentColor": "...",
       "accessories": ["..."],
@@ -393,12 +396,14 @@ Return ONLY valid JSON with this schema:
       "name": "...",
       "aliases": ["..."],
       "description": "...",
+      "locationPrompt": "...",
       "layout": "...",
       "keyObjects": ["..."],
       "lighting": "...",
       "atmosphere": "...",
       "colorPalette": ["..."],
       "continuityNotes": "...",
+      "continuityPrompt": "...",
       "baseState": "...",
       "firstAppearanceBeatId": 1,
       "appearsInBeatIds": [1, 2]
@@ -419,6 +424,23 @@ CHARACTER RULES:
   * outfitMainColor (e.g. "champagne-gold", "charcoal-black", "cream-white")
   * outfitAccentColor (e.g. "pearl-white", "pale-pink", "dark-silver")
   Do not leave these blank or use vague color-less terms. If the source story does not explicitly specify a color, you MUST infer a stable, visually appealing natural color word that fits the character's description and maintain it consistently. Do NOT use hex codes like #FFD700.
+- COPY-READY CHARACTER PROMPT RULE - CRITICAL:
+  * appearancePrompt must be a complete, natural-language canonical identity description for the character, including face, hair, eyes, body impression, and stable style cues.
+  * outfitPrompt must be a complete, natural-language canonical fallback outfit description for the character.
+  * Do NOT write vague references such as "same outfit", "as before", "current outfit", "initially", "later", or "varies by scene" in appearancePrompt or outfitPrompt.
+  * If the story has multiple eras/outfits, choose the current/default outfit for this chapter and describe it fully. Screen Continuity can override it later.
+- GARMENT-LEVEL OUTFIT RULE - CRITICAL:
+  * outfit and outfitPrompt must describe the exact garments worn on the body, not a broad category label.
+  * Do NOT write generic labels such as "nurse uniform", "school uniform", "black elegant suit", "domestic clothing", "business outfit", or "hospital uniform" by themselves.
+  * Expand every outfit into specific worn pieces in top-down order and inner-to-outer order.
+  * Required order: headwear first if present; upper-body inner layer first; upper-body outer layers next; one-piece garment if present; bottoms; belt/waist items; socks/stockings if visible; shoes last.
+  * For layered outfits, explicitly state layer position, e.g. "white button-up shirt worn inside, black suit vest worn over the shirt, black suit jacket worn outside".
+  * For one-piece clothing, explicitly state it as the main garment and still mention any outer layer, e.g. "cream one-piece summer dress as the main garment, light cardigan worn outside".
+  * For uniforms, describe each item, e.g. "white nurse cap on the head, pale-blue short-sleeve scrub top, matching scrub pants, white flat shoes" instead of "nurse uniform".
+- POSITIONED ACCESSORY RULE - CRITICAL:
+  * accessories and signatureAccessories must include where the item is worn or attached.
+  * Good: "pearl earrings on both earlobes", "silver necklace around the neck", "gold watch on the left wrist", "name badge pinned to the left chest pocket".
+  * Do not write accessory names without positions unless the position is physically obvious and still named in the phrase.
 - Merge aliases/pronouns/titles that refer to the same person.
 - Use screens.screenCharacters as the primary source for who is present in each continuous screen.
 - Use beats.focusCharacters, beats.visibleCharacters, and beats.offscreenPresentCharacters to understand character roles per beat.
@@ -428,7 +450,8 @@ CHARACTER RULES:
 - Use beatId references to fill firstAppearanceBeatId and appearsInBeatIds.
 - Infer missing visual details conservatively.
 - outfit describes current/default visual outfit.
-- accessories lists items worn or carried on the body that must remain visually consistent.
+- outfitPrompt is the copy-ready fallback outfit wording used by deterministic prompt generation when a screen does not override the outfit.
+- accessories lists items worn or carried on the body that must remain visually consistent, with their body/clothing position.
 - props lists recurring objects associated with the character.
 - colorPalette is a compact list of key colors from hair, eyes, skin tone, outfit, accessories, and recurring props.
 - expressionSet includes expressions suitable for this character based on personality and story tone.
@@ -442,12 +465,15 @@ LOCATION RULES:
 - Merge aliases that refer to the same place.
 - If vague, create stable names like "Unknown Interior 1".
 - description defines the overall reusable environment.
+- locationPrompt is a complete, natural-language canonical location description used directly inside final image prompts.
 - layout describes the spatial arrangement of major elements, furniture, doors, windows, and architectural features.
 - keyObjects lists furniture, props, and architectural features that must stay consistent.
 - lighting describes reusable lighting conditions.
 - colorPalette is a compact reusable palette for the environment.
 - continuityNotes explicitly describes what must remain consistent across beats.
+- continuityPrompt is a complete, natural-language continuity sentence that lists the layout, key objects, materials, lighting, and object relationships that must not change.
 - baseState describes the default environmental state before beat-specific changes.
+- Do NOT write vague references such as "same location", "as before", "current setting", or beat-specific camera focus as the location identity.
 - Use appearsInBeatIds based on the approved beat list.
 - Do not include any image prompt field.
 
@@ -585,10 +611,12 @@ VISUAL DIRECTION RULES:
 - lensFeel: natural, cinematic compression, slight wide-angle, intimate portrait feel, etc.
 - composition: where the important subjects are placed in the frame.
 - foreground/midground/background: describe visual layers only.
+- foreground/midground/background must never redefine the location identity. If the camera focuses on the floor, glass table, hallway, stairs, eyes, or a reflected object, describe it as a layer/focus area inside the approved location.
 - characterBlocking: place approved characters in the frame.
 - expression and poseRefinement can refine the approved beat posture, but must not contradict it.
 - lightingDirection can refine how existing location lighting is presented, but must not rewrite source story facts.
 - cameraNotes should mention continuity concerns only when helpful.
+- Do not invent or alter character outfits. Outfit identity is owned by Character Library and Screen Continuity.
 
 SCREEN CONTINUITY FOR STORYBOARD:
 - Each beat belongs to a screen.
@@ -951,7 +979,27 @@ SCREEN CONTINUITY RULES:
    - handheldItems (items they might be holding generally)
    - appearanceNotes (general visual appearance/condition)
    - stateChanges (list of any clothing/accessory changes, e.g. ["string"])
-7. Return ONLY a valid JSON object. No markdown. No commentary.
+7. COPY-READY OUTFIT RULE - CRITICAL:
+   - outfit must be full copy-ready wording for this screen, never "same", "same as previous", "current outfit", "domestic clothing" without color/style details, or any other vague reference.
+   - If the outfit does not change from the Character Library, copy the full outfitPrompt or outfit wording and adapt it to the current screen colors.
+   - outfitMainColor and outfitAccentColor must remain stable for this screen.
+   - Screen Continuity decides only screen-level outfits, accessories, persistent props, and persistent handheld items.
+8. GARMENT-LEVEL OUTFIT RULE - CRITICAL:
+   - outfit must describe exact garments, not broad category labels.
+   - Do NOT write generic labels such as "nurse uniform", "school uniform", "black elegant suit", "domestic clothing", "business outfit", or "hospital uniform" by themselves.
+   - Expand the outfit into individual worn pieces in top-down order and inner-to-outer order.
+   - Required order: headwear first if present; upper-body inner layer first; upper-body outer layers next; one-piece garment if present; bottoms; belt/waist items; socks/stockings if visible; shoes last.
+   - Explicitly identify layer positions, e.g. "white button-up shirt worn inside, black suit vest worn over the shirt, black blazer worn outside, black trousers, black leather belt, black dress shoes".
+   - If the character wears a blouse/shirt under a vest, coat, blazer, cardigan, apron, lab coat, or nurse coat, mention the inner garment first and the outer garment second.
+   - If a uniform is required by the story, describe the exact uniform pieces, e.g. "white nurse cap on the head, pale-blue scrub top, matching scrub pants, white flat shoes".
+9. POSITIONED ACCESSORY RULE - CRITICAL:
+   - accessories must include exact body/clothing position.
+   - Examples: "gold watch on the left wrist", "pearl earrings on both earlobes", "name badge clipped to the left chest pocket", "ID card hanging from a neck lanyard".
+   - handheldItems must describe current position only if held across the whole screen; beat-specific item position belongs in Beat Moment Details.
+10. SCREEN LOCATION RULE - CRITICAL:
+   - screenState must describe only screen-level layout/status changes.
+   - Do not turn beat-specific camera focus such as "glass table surface", "floor near sofa", "hallway visible", or "eyes close-up" into a new location.
+11. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
@@ -989,6 +1037,8 @@ FIELD RULES:
 - screenState: describe only screen-level layout/status/state.
 - screenProps: props visible or important throughout the screen.
 - screenCharacterStates: current outfit/accessory state for each character present in this screen.
+- outfit: full copy-ready current outfit wording for the character on this screen, listing exact garments top-down and inner-to-outer.
+- accessories: screen-level accessories with exact body/clothing position.
 - handheldItems: only items held generally across this screen, not one-beat temporary items.
 - stateChanges: array of screen-level clothing/accessory changes. If none, return [].
 - continuityNotes: concise note for maintaining layout, outfit, props, and character positions across the screen.
@@ -1017,11 +1067,20 @@ BEAT MOMENT RULES:
 4. In characterMomentDetails, you must specify:
    - characterId
    - characterName
-   - visibleAccessories (accessories visible on the character in this exact beat)
-   - handheldItems (items held in hand right now)
-   - accessoriesChange (list of any changes to their accessories at this moment, e.g. ["string"])
+   - visibleAccessories (accessories visible on the character in this exact beat, including exact body/clothing position)
+   - handheldItems (items held in hand right now, including exact hand/body position)
+   - accessoriesChange (list of any changes to their accessories at this moment, including new position, e.g. ["name badge now hanging from neck lanyard"])
    - momentNotes (facial expressions, detailed hand gestures, or body language specific to this beat)
-5. Return ONLY a valid JSON object. No markdown. No commentary.
+5. LOCATION / OUTFIT BOUNDARY RULE - CRITICAL:
+   - Do not describe or change character outfit in this step.
+   - Do not redefine the location identity.
+   - locationState must describe only temporary beat-level changes or object interactions, such as "broken glass shards on the floor" or "red book lying on the glass table".
+   - Camera focus areas such as "floor near sofa", "glass table surface", "hallway visible", and "eye close-up" are momentary framing details, not new locations.
+6. VARIABLE ACCESSORY / PROP POSITION RULE - CRITICAL:
+   - For flexible items such as phones, notebooks, folders, cups, name badges, ID cards, bags, or medical charts, describe where they are in this beat.
+   - Good: "smartphone gripped in her right hand", "notebook tucked under her left arm", "ID card hanging from a neck lanyard", "name badge pinned to the left chest pocket".
+   - If the item is not visible in this exact beat, omit it.
+7. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
@@ -1180,8 +1239,14 @@ export const generateCharacterLocationLibrary = async (
                 bodyType: { type: "string" },
                 face: { type: "string" },
                 hair: { type: "string" },
+                hairColor: { type: "string" },
                 eyes: { type: "string" },
+                eyeColor: { type: "string" },
+                appearancePrompt: { type: "string" },
                 outfit: { type: "string" },
+                outfitPrompt: { type: "string" },
+                outfitMainColor: { type: "string" },
+                outfitAccentColor: { type: "string" },
                 accessories: {
                   type: "array",
                   items: { type: "string" }
@@ -1210,7 +1275,7 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "integer" }
                 }
               },
-              required: ["characterId", "name", "aliases", "role", "gender", "age", "height", "bodyType", "face", "hair", "eyes", "outfit", "accessories", "props", "colorPalette", "personalityVisualCues", "expressionSet", "gestureSet", "continuityNotes", "appearsInBeatIds"]
+              required: ["characterId", "name", "aliases", "role", "gender", "age", "height", "bodyType", "face", "hair", "hairColor", "eyes", "eyeColor", "appearancePrompt", "outfit", "outfitPrompt", "outfitMainColor", "outfitAccentColor", "accessories", "props", "colorPalette", "personalityVisualCues", "expressionSet", "gestureSet", "continuityNotes", "appearsInBeatIds"]
             }
           },
           locations: {
@@ -1225,6 +1290,7 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "string" }
                 },
                 description: { type: "string" },
+                locationPrompt: { type: "string" },
                 layout: { type: "string" },
                 keyObjects: {
                   type: "array",
@@ -1237,6 +1303,7 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "string" }
                 },
                 continuityNotes: { type: "string" },
+                continuityPrompt: { type: "string" },
                 baseState: { type: "string" },
                 firstAppearanceBeatId: { type: "integer" },
                 appearsInBeatIds: {
@@ -1244,7 +1311,7 @@ export const generateCharacterLocationLibrary = async (
                   items: { type: "integer" }
                 }
               },
-              required: ["locationId", "name", "aliases", "description", "layout", "keyObjects", "lighting", "atmosphere", "colorPalette", "continuityNotes", "baseState", "appearsInBeatIds"]
+              required: ["locationId", "name", "aliases", "description", "locationPrompt", "layout", "keyObjects", "lighting", "atmosphere", "colorPalette", "continuityNotes", "continuityPrompt", "baseState", "appearsInBeatIds"]
             }
           }
         },
@@ -1528,39 +1595,14 @@ export const engineerPrompts = async ({
   storyboardJson,
   style,
 }: EngineerPromptInput) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getEngineerPromptsPrompt({
-      analysisJson,
-      characterLocationJson,
-      screenContinuityJson,
-      beatMomentDetailsJson,
-      storyboardJson,
-      style,
-    }),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          engineerPrompts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                visualPrompt: { type: "string" }
-              },
-              required: ["beatId", "visualPrompt"]
-            }
-          }
-        },
-        required: ["engineerPrompts"]
-      } as any
-    }
+  return buildEngineerPromptsJsonWithResolver({
+    analysisJson,
+    characterLocationJson,
+    screenContinuityJson,
+    beatMomentDetailsJson,
+    storyboardJson,
+    style,
   });
-  return response.text;
 };
 
 /**

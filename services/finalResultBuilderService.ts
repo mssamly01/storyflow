@@ -236,9 +236,12 @@ export function normalizeBeatMomentDetails(raw: unknown): any[] {
     const characterMomentDetails = asArray(item.characterMomentDetails ?? item.character_moment_details ?? []).map((cmd: any) => ({
       characterName: cmd.characterName ?? cmd.character_name ?? cmd.name ?? "",
       characterId: cmd.characterId ?? cmd.character_id,
+      visibleAccessories: asStringArray(cmd.visibleAccessories ?? cmd.visible_accessories ?? []),
       poseRefinement: cmd.poseRefinement ?? cmd.pose_refinement ?? "",
       expression: cmd.expression ?? "",
-      handheldItems: asStringArray(cmd.handheldItems ?? cmd.handheld_items ?? [])
+      handheldItems: asStringArray(cmd.handheldItems ?? cmd.handheld_items ?? []),
+      accessoriesChange: asStringArray(cmd.accessoriesChange ?? cmd.accessories_change ?? []),
+      momentNotes: cmd.momentNotes ?? cmd.moment_notes ?? ""
     }));
 
     return {
@@ -304,9 +307,9 @@ export function mergeBeatMomentDetailsIntoBeats(
         poseRefinement: cmd.poseRefinement,
         expression: cmd.expression,
         handheldItems: cmd.handheldItems,
-        visibleAccessories: existing?.visibleAccessories || [],
-        accessoriesChange: existing?.accessoriesChange || [],
-        momentNotes: existing?.momentNotes || ""
+        visibleAccessories: cmd.visibleAccessories?.length ? cmd.visibleAccessories : (existing?.visibleAccessories || []),
+        accessoriesChange: cmd.accessoriesChange?.length ? cmd.accessoriesChange : (existing?.accessoriesChange || []),
+        momentNotes: cmd.momentNotes || existing?.momentNotes || ""
       };
     }) || beat.characterMomentDetails;
 
