@@ -1,124 +1,89 @@
-# StoryFlow - Vibe Code Guide: Sửa UI “Thiết lập bối cảnh” để show đúng Screen Continuity + Beat Links
+# StoryFlow - Vibe Code Guide: Sửa UI Thiết lập bối cảnh không hiện kết quả sau khi paste JSON
 
 ## Mục tiêu
 
-Bước **Thiết lập bối cảnh / Screen Continuity** hiện đã được tách khỏi Beat Analysis. Đây là bước phân tích **theo screen**, nhưng app vẫn dùng `beatId` làm cơ sở cuối cùng cho:
+Sửa lỗi:
 
 ```txt
-Storyboard
-Prompt Engineering
-Final Result
-Export Image Prompt
+JSON Thiết lập bối cảnh đúng cấu trúc
+Paste vào app và lưu
+Nhưng UI không hiện kết quả
 ```
 
-Vì vậy UI của bước này phải hiển thị rõ:
+JSON đã đúng dạng mới:
+
+```json
+{
+  "screens": [
+    {
+      "screenId": "screen_001",
+      "beatIds": [1, 2, 3],
+      "startBeatId": 1,
+      "endBeatId": 3,
+      "screenState": "string",
+      "screenProps": ["string"],
+      "screenCharacterStates": [
+        {
+          "characterId": "char_001",
+          "characterName": "string",
+          "outfit": "string",
+          "outfitMainColor": "string",
+          "outfitAccentColor": "string",
+          "accessories": ["string"],
+          "handheldItems": ["string"],
+          "appearanceNotes": "string",
+          "stateChanges": ["string"]
+        }
+      ],
+      "continuityNotes": "string"
+    }
+  ]
+}
+```
+
+Vì vậy lỗi nằm ở UI/app flow, không phải do JSON.
+
+Nguyên nhân thường gặp:
 
 ```txt
-Screen Continuity này áp dụng cho những beat nào?
+1. UI stage Thiết lập bối cảnh đang render từ project.screens thay vì production.screenContinuity.
+2. production.screenContinuity đã lưu nhưng không có preview riêng.
+3. normalizeScreenContinuity chưa parse beatIds/startBeatId/endBeatId.
+4. replaceScreenContinuity chỉ merge vào screen đã có trong Beat Analysis, nên nếu Beat Analysis chưa đủ screen thì không thấy.
+5. Manual paste không validate beat link nên user tưởng đã lưu nhưng preview rỗng.
 ```
-
-Cần show các field mới:
-
-```txt
-beatIds
-startBeatId
-endBeatId
-screenState
-screenProps
-screenCharacterStates
-continuityNotes
-```
-
-Nếu UI chỉ show text/raw JSON hoặc chỉ merge vào ScreenStudioView chung, user sẽ khó kiểm tra dữ liệu đã đúng chưa.
 
 ---
 
-# 1. Vấn đề hiện tại
+# 1. Nguyên tắc sửa đúng
 
-## 1.1. Stage đã có nhưng preview chưa đủ rõ
-
-Sidebar đã có stage:
-
-```txt
-Thiết lập bối cảnh
-```
-
-Dữ liệu được lưu vào:
+Ở stage **Thiết lập bối cảnh**, UI preview phải render trực tiếp từ:
 
 ```ts
 production.screenContinuity
 ```
 
-Nhưng UI chưa có preview chuyên biệt cho Screen Continuity.
+Không phụ thuộc hoàn toàn vào:
 
-Kết quả:
+```ts
+project.screens
+```
+
+Vì `project.screens` chỉ là dữ liệu đã merge với Beat Analysis. Nếu Beat Analysis thiếu screen hoặc merge chưa chạy đúng, UI sẽ không hiện, dù JSON paste đã đúng.
+
+Đúng:
 
 ```txt
-- User paste JSON xong không biết app đã nhận đúng chưa.
-- Không thấy screen đó áp dụng cho beat nào.
-- Không thấy rõ outfit/accessory/props/continuityNotes theo screen.
-- Không kiểm tra được beatIds/startBeatId/endBeatId.
+Paste JSON
+→ lưu production.screenContinuity
+→ parse production.screenContinuity
+→ normalizeScreenContinuity
+→ render ScreenContinuityView
 ```
 
 ---
 
-## 1.2. ScreenStudioView không đủ cho stage này
-
-`ScreenStudioView` phù hợp cho **Phân tích nội dung** vì nó show:
-
-```txt
-Screen → Beat timeline
-```
-
-Nhưng Screen Continuity cần UI riêng để show:
-
-```txt
-Screen-level state
-Screen props
-Character outfit/accessory states
-Beat links
-```
-
-Do đó nên tạo component riêng:
-
-```txt
-components/storyflow/ScreenContinuityView.tsx
-```
-
----
-
-# 2. UI mong muốn
-
-Mỗi screen continuity card nên hiển thị:
-
-```txt
-Screen screen_001
-Applies to beats: 1, 2, 3, 4
-Beat range: 1–4
-
-Screen State
-Orderly corporate office with a large mahogany desk...
-
-Screen Props
-[mahogany executive desk] [share certificates] [fountain pen]
-
-Character States
-Lâm Tấn Hải
-- Outfit: bespoke midnight-blue business suit...
-- Main color: midnight blue
-- Accent color: white and dark silk
-- Accessories: gold watch, wedding ring
-- Handheld: fountain pen
-- Appearance: arrogant, seated behind the desk
-- State changes: none
-
-Continuity Notes
-Keep the executive desk, share certificates, and tense power distance consistent.
-```
-
----
-
-# 3. Files cần sửa / tạo
+# 2. Files cần sửa / tạo
 
 ## Tạo mới
 
@@ -134,11 +99,11 @@ types.ts
 services/finalResultBuilderService.ts
 ```
 
-Nếu đã có `ScreenContinuityItem` / `normalizeScreenContinuity`, chỉ cần cập nhật để hỗ trợ `beatIds/startBeatId/endBeatId`.
+Nếu đã có các file/helper này thì chỉ update.
 
 ---
 
-# 4. Update types.ts
+# 3. Update types.ts
 
 File:
 
@@ -146,7 +111,7 @@ File:
 types.ts
 ```
 
-## 4.1. Sửa ScreenContinuityItem
+## 3.1. Sửa ScreenContinuityItem
 
 ### Code cũ có thể là
 
@@ -167,8 +132,7 @@ export interface ScreenContinuityItem {
   screenId: string;
 
   /**
-   * Beat links allow this screen-level continuity data
-   * to attach back to beat-based workflows.
+   * Links this screen-level continuity back to beat-based stages.
    */
   beatIds?: number[];
   startBeatId?: number;
@@ -181,9 +145,34 @@ export interface ScreenContinuityItem {
 }
 ```
 
-## 4.2. Optional: add beatIds to StoryScreen
+---
 
-Nếu `StoryScreen` chưa có `beatIds`, có thể thêm optional:
+## 3.2. Sửa ScreenCharacterState nếu thiếu field
+
+Đảm bảo có đủ:
+
+```ts
+export interface ScreenCharacterState {
+  characterName: string;
+  characterId?: string;
+
+  outfit: string;
+  outfitMainColor?: string;
+  outfitAccentColor?: string;
+
+  accessories: string[];
+  handheldItems: string[];
+
+  appearanceNotes?: string;
+  stateChanges?: string[];
+}
+```
+
+---
+
+## 3.3. Optional: thêm beatIds vào StoryScreen
+
+Nếu muốn ScreenStudioView cũng show beat link sau khi merge:
 
 ```ts
 export interface StoryScreen {
@@ -213,7 +202,7 @@ export interface StoryScreen {
 
 ---
 
-# 5. Update normalizer
+# 4. Update normalizer
 
 File:
 
@@ -221,7 +210,7 @@ File:
 services/finalResultBuilderService.ts
 ```
 
-## 5.1. Thêm helper normalizeNumberArray
+## 4.1. Thêm normalizeNumberArray
 
 Nếu chưa có:
 
@@ -235,7 +224,9 @@ function normalizeNumberArray(value: unknown): number[] {
 }
 ```
 
-## 5.2. Sửa normalizeScreenContinuity
+---
+
+## 4.2. Sửa normalizeScreenContinuity
 
 ### Code cũ có thể là
 
@@ -288,7 +279,31 @@ export function normalizeScreenContinuity(raw: any): ScreenContinuityItem[] {
 
 ---
 
-# 6. Tạo component mới: ScreenContinuityView
+## 4.3. Đảm bảo normalizeScreenCharacterStates parse đủ field
+
+```ts
+export function normalizeScreenCharacterStates(raw: any): ScreenCharacterState[] {
+  const items = raw?.screenCharacterStates ?? raw?.screen_character_states ?? [];
+
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item: any) => ({
+    characterName: item.characterName ?? item.character_name ?? item.name ?? "",
+    characterId: item.characterId ?? item.character_id,
+    outfit: item.outfit ?? "",
+    outfitMainColor: item.outfitMainColor ?? item.outfit_main_color ?? "",
+    outfitAccentColor: item.outfitAccentColor ?? item.outfit_accent_color ?? "",
+    accessories: normalizeStringArray(item.accessories),
+    handheldItems: normalizeStringArray(item.handheldItems ?? item.handheld_items),
+    appearanceNotes: item.appearanceNotes ?? item.appearance_notes ?? "",
+    stateChanges: normalizeStringArray(item.stateChanges ?? item.state_changes),
+  }));
+}
+```
+
+---
+
+# 5. Tạo ScreenContinuityView
 
 Tạo file:
 
@@ -297,7 +312,7 @@ components/storyflow/ScreenContinuityView.tsx
 ```
 
 ```tsx
-import type { ScreenContinuityItem, ScreenCharacterState } from "../../types";
+import type { ScreenCharacterState, ScreenContinuityItem } from "../../types";
 
 interface ScreenContinuityViewProps {
   screens: ScreenContinuityItem[];
@@ -539,7 +554,7 @@ export function ScreenContinuityView({ screens }: ScreenContinuityViewProps) {
 
 ---
 
-# 7. Render ScreenContinuityView trong StoryFlow.tsx
+# 6. Render ScreenContinuityView trong StoryFlow.tsx
 
 File:
 
@@ -547,13 +562,17 @@ File:
 components/StoryFlow.tsx
 ```
 
-## 7.1. Import
+## 6.1. Import component
+
+Thêm:
 
 ```ts
 import { ScreenContinuityView } from "./storyflow/ScreenContinuityView";
 ```
 
-Đảm bảo cũng import normalizer:
+## 6.2. Import normalizer
+
+Đảm bảo có:
 
 ```ts
 import {
@@ -562,28 +581,13 @@ import {
 } from "../services/finalResultBuilderService";
 ```
 
-Nếu các helper đã import rồi thì không lặp.
+Nếu đã import từ service này rồi, chỉ thêm `normalizeScreenContinuity`.
 
-## 7.2. Tạo parsed data trong render
+---
 
-Gần khu vực render stage result:
+## 6.3. Render stage SCREEN_CONTINUITY từ production.screenContinuity
 
-```ts
-const screenContinuityData = parseJsonSafe(production.screenContinuity, {
-  screens: [],
-});
-
-const screenContinuityScreens =
-  normalizeScreenContinuity(screenContinuityData);
-```
-
-Nếu đang parse trong từng case, có thể đặt trong case `SCREEN_CONTINUITY`.
-
-## 7.3. Render stage SCREEN_CONTINUITY
-
-Tìm switch/render theo `stage` hoặc `currentStage`.
-
-### Code cũ có thể là
+Tìm khu vực render output theo stage, ví dụ:
 
 ```tsx
 {stage === ProductionStage.SCREEN_CONTINUITY && (
@@ -591,25 +595,99 @@ Tìm switch/render theo `stage` hoặc `currentStage`.
 )}
 ```
 
-hoặc đang dùng raw JSON.
+hoặc chỗ render preview cũ.
+
+### Code cũ có thể là
+
+```tsx
+{stage === ProductionStage.SCREEN_CONTINUITY && (
+  <ScreenStudioView project={project} />
+)}
+```
+
+hoặc:
+
+```tsx
+{stage === ProductionStage.SCREEN_CONTINUITY && (
+  <pre>{production.screenContinuity}</pre>
+)}
+```
 
 ### Code mới
 
 ```tsx
-{stage === ProductionStage.SCREEN_CONTINUITY && (
-  <div className="space-y-5">
-    <ScreenContinuityView screens={screenContinuityScreens} />
+{stage === ProductionStage.SCREEN_CONTINUITY && (() => {
+  const screenContinuityData = parseJsonSafe(production.screenContinuity, {
+    screens: [],
+  });
 
-    {showRawJson && (
-      <pre className="max-h-[640px] overflow-auto whitespace-pre-wrap rounded-3xl bg-slate-950 p-5 text-xs leading-relaxed text-slate-100">
-        {JSON.stringify(screenContinuityData, null, 2)}
-      </pre>
-    )}
-  </div>
+  const screenContinuityScreens =
+    normalizeScreenContinuity(screenContinuityData);
+
+  return (
+    <div className="space-y-5">
+      <ScreenContinuityView screens={screenContinuityScreens} />
+
+      {showRawJson && (
+        <pre className="max-h-[640px] overflow-auto whitespace-pre-wrap rounded-3xl bg-slate-950 p-5 text-xs leading-relaxed text-slate-100">
+          {JSON.stringify(screenContinuityData, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+})()}
+```
+
+Nếu không có `showRawJson`, dùng state/toggle hiện có. Nếu không có toggle, có thể tạm bỏ phần raw JSON:
+
+```tsx
+{stage === ProductionStage.SCREEN_CONTINUITY && (() => {
+  const screenContinuityData = parseJsonSafe(production.screenContinuity, {
+    screens: [],
+  });
+
+  const screenContinuityScreens =
+    normalizeScreenContinuity(screenContinuityData);
+
+  return <ScreenContinuityView screens={screenContinuityScreens} />;
+})()}
+```
+
+---
+
+# 7. Sửa lỗi inline IIFE nếu JSX không cho phép
+
+Nếu codebase không thích IIFE trong JSX, tạo biến trước return:
+
+```ts
+const screenContinuityData = parseJsonSafe(production.screenContinuity, {
+  screens: [],
+});
+
+const screenContinuityScreens = normalizeScreenContinuity(screenContinuityData);
+```
+
+Sau đó render:
+
+```tsx
+{stage === ProductionStage.SCREEN_CONTINUITY && (
+  <ScreenContinuityView screens={screenContinuityScreens} />
 )}
 ```
 
-Nếu app chưa có `showRawJson`, có thể bỏ raw JSON hoặc dùng toggle hiện có.
+Nếu sợ parse ở mọi stage, có thể dùng `useMemo`:
+
+```ts
+const screenContinuityScreens = useMemo(() => {
+  if (stage !== ProductionStage.SCREEN_CONTINUITY) return [];
+
+  const data = parseJsonSafe(production.screenContinuity, {
+    screens: [],
+  });
+
+  return normalizeScreenContinuity(data);
+}, [stage, production.screenContinuity]);
+```
 
 ---
 
@@ -676,9 +754,54 @@ if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
 
 ---
 
-# 9. Update ScreenStudioView nếu vẫn dùng chung
+# 9. Sau khi paste phải update production.screenContinuity
 
-Nếu bạn vẫn dùng `ScreenStudioView` để xem screen đã merge, nên thêm Beat Link vào screen header.
+Kiểm tra function lưu dữ liệu theo stage.
+
+Tìm:
+
+```ts
+updateProductionDataByStage
+```
+
+hoặc:
+
+```ts
+updateProjectDataByStage
+```
+
+Đảm bảo có:
+
+```ts
+if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
+  setProduction((prev) => ({
+    ...prev,
+    screenContinuity: finalValueToSave,
+  }));
+}
+```
+
+Nếu dùng switch:
+
+```ts
+case ProductionStage.SCREEN_CONTINUITY:
+  next.screenContinuity = value;
+  break;
+```
+
+Và project sync:
+
+```ts
+else if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
+  setProject((prev) => replaceScreenContinuity(prev, result));
+}
+```
+
+Quan trọng: **Preview phải đọc `production.screenContinuity`**, không chờ merge project thành công.
+
+---
+
+# 10. Sửa ScreenStudioView nếu vẫn dùng merged screen
 
 File:
 
@@ -686,7 +809,9 @@ File:
 components/storyflow/ScreenStudioView.tsx
 ```
 
-Trong `ScreenCard`, thêm gần stats hoặc continuity:
+Nếu app vẫn dùng `ScreenStudioView` ở một vài nơi, thêm Beat Link section để kiểm tra sau merge.
+
+Trong `ScreenCard`, thêm:
 
 ```tsx
 {(screen.beatIds?.length || screen.startBeatId || screen.endBeatId) && (
@@ -701,120 +826,161 @@ Trong `ScreenCard`, thêm gần stats hoặc continuity:
 )}
 ```
 
-Nếu TypeScript báo `beatIds` chưa có trong `StoryScreen`, thêm optional field vào `types.ts`.
+Nếu TS lỗi `beatIds`, thêm optional `beatIds?: number[]` vào `StoryScreen`.
 
 ---
 
-# 10. Prompt cho vibe coding agent
+# 11. Debug log tạm thời để xác nhận lưu đúng
+
+Trong quá trình sửa, có thể thêm tạm sau khi paste:
+
+```ts
+console.log("SCREEN_CONTINUITY saved", {
+  length: finalValueToSave.length,
+  parsed,
+});
+```
+
+Và trong render:
+
+```ts
+console.log("SCREEN_CONTINUITY render", {
+  raw: production.screenContinuity?.slice(0, 80),
+  count: screenContinuityScreens.length,
+});
+```
+
+Sau khi ổn thì xóa log.
+
+---
+
+# 12. Prompt cho vibe coding agent
 
 Copy prompt này đưa cho Codex/vibe code trong repo StoryFlow.
 
 ```txt
-Bạn đang sửa UI bước "Thiết lập bối cảnh / Screen Continuity" trong repo StoryFlow.
+Bạn đang sửa UI stage "Thiết lập bối cảnh / Screen Continuity" trong repo StoryFlow.
 
-Mục tiêu:
-Stage Screen Continuity đang lưu production.screenContinuity, nhưng UI chưa show đầy đủ dữ liệu theo workflow mới. Cần tạo preview riêng để user thấy screen continuity áp dụng cho những beat nào.
+Vấn đề:
+JSON Screen Continuity người dùng paste đã đúng cấu trúc:
+{ screens: [{ screenId, beatIds, startBeatId, endBeatId, screenState, screenProps, screenCharacterStates, continuityNotes }] }
+Nhưng sau khi paste/lưu, UI không hiện kết quả.
+
+Nguyên nhân cần xử lý:
+- UI đang không render trực tiếp từ production.screenContinuity.
+- Stage Screen Continuity chưa có preview chuyên biệt.
+- Normalizer có thể chưa parse beatIds/startBeatId/endBeatId.
+- Validate paste chưa bắt buộc beat link.
+- Nếu chỉ render từ project.screens sau merge, sẽ không hiện khi Analysis chưa có đủ screen hoặc merge chưa match.
 
 A. Update types.ts
-- ScreenContinuityItem phải có:
+- ScreenContinuityItem thêm:
   beatIds?: number[]
   startBeatId?: number
   endBeatId?: number
-- Nếu cần, StoryScreen thêm:
-  beatIds?: number[]
+- ScreenCharacterState phải có:
+  characterId?
+  characterName
+  outfit
+  outfitMainColor?
+  outfitAccentColor?
+  accessories
+  handheldItems
+  appearanceNotes?
+  stateChanges?
+- Nếu cần, StoryScreen thêm beatIds?: number[].
 
-B. Update normalizer
-- Trong services/finalResultBuilderService.ts:
-  add normalizeNumberArray nếu chưa có.
-  update normalizeScreenContinuity để parse:
-    beatIds / beat_ids
-    startBeatId / start_beat_id
-    endBeatId / end_beat_id
-  giữ screenId, screenState, screenProps, screenCharacterStates, continuityNotes.
+B. Update services/finalResultBuilderService.ts
+- Add normalizeNumberArray nếu chưa có.
+- Update normalizeScreenContinuity:
+  parse beatIds/beat_ids
+  parse startBeatId/start_beat_id
+  parse endBeatId/end_beat_id
+  parse screenState, screenProps, screenCharacterStates, continuityNotes.
+- Ensure normalizeScreenCharacterStates parses:
+  outfitMainColor, outfitAccentColor, handheldItems, appearanceNotes, stateChanges.
 
 C. Add component
-- Tạo components/storyflow/ScreenContinuityView.tsx
+- Create components/storyflow/ScreenContinuityView.tsx
 - Props: { screens: ScreenContinuityItem[] }
-- Render mỗi screen card:
+- Render:
   screenId
-  beatIds hoặc startBeatId-endBeatId
+  Applies to beats: beatIds or Beat range: startBeatId-endBeatId
   screenState
   screenProps chips
   continuityNotes
   screenCharacterStates cards
-- Character state card show:
-  characterId
-  characterName
-  outfit
-  outfitMainColor
-  outfitAccentColor
-  accessories
-  handheldItems
-  appearanceNotes
-  stateChanges
-- Nếu không có data, show empty state:
+- Character cards show:
+  characterId, characterName, outfit, outfitMainColor, outfitAccentColor, accessories, handheldItems, appearanceNotes, stateChanges.
+- Empty state:
   "Chưa có dữ liệu Thiết lập bối cảnh hoặc JSON chưa đúng schema."
 
-D. Update StoryFlow.tsx
+D. Update components/StoryFlow.tsx
 - Import ScreenContinuityView.
-- Khi stage === ProductionStage.SCREEN_CONTINUITY:
-  parse production.screenContinuity bằng parseJsonSafe
-  normalize bằng normalizeScreenContinuity
+- Import normalizeScreenContinuity.
+- In SCREEN_CONTINUITY stage render:
+  parse production.screenContinuity using parseJsonSafe(production.screenContinuity, { screens: [] })
+  normalize with normalizeScreenContinuity
   render <ScreenContinuityView screens={screenContinuityScreens} />
-- Raw JSON chỉ show nếu user bật toggle/debug, không làm preview chính.
+- Do NOT rely only on project.screens for this stage preview.
+- Raw JSON can be behind a toggle/debug only.
 
-E. Update manual paste validation
-- Trong validateStageJsonShape:
-  SCREEN_CONTINUITY cần { screens: [...] }
-  mỗi screen cần screenId
-  mỗi screen cần beatIds non-empty hoặc startBeatId/endBeatId
-  mỗi character state nên có characterName
-- Nếu thiếu, báo lỗi rõ.
+E. Manual paste validation
+- In validateStageJsonShape for SCREEN_CONTINUITY:
+  require parsed.screens array
+  require each screen.screenId
+  require each screen has beatIds non-empty OR startBeatId/endBeatId
+  require character states have characterName if present
+- Show clear Vietnamese error if invalid.
 
-F. Optional
-- Nếu ScreenStudioView vẫn render merged screens, thêm Beat Link section:
-  Applies to beats: ...
-  hoặc Beat range: ...
+F. Save flow
+- Ensure updateProductionDataByStage saves SCREEN_CONTINUITY into production.screenContinuity.
+- Ensure updateProjectDataByStage calls replaceScreenContinuity, but preview must work even if merge fails.
 
-G. Do not do
-- Không biến Screen Continuity thành per-beat output.
-- Không lặp screenState/outfit/accessory trên từng beat.
-- Không xóa raw JSON hoàn toàn nếu app đang có debug toggle.
-- Không phá ScreenStudioView/FinalResultStudioView hiện tại.
+G. Optional ScreenStudioView
+- If ScreenStudioView displays merged screens, add Beat Link section showing beatIds or start/end range.
 
-H. Test
+H. Do not do
+- Do not convert Screen Continuity into per-beat output.
+- Do not duplicate screenState/outfit data on every beat.
+- Do not require Beat Analysis screens to exist before previewing production.screenContinuity.
+- Do not hide all data behind raw JSON only.
+
+I. Test
 - npm run typecheck
 - npm run build
 - Manual:
-  1. Paste JSON Screen Continuity có beatIds.
-  2. UI hiển thị screenId.
-  3. UI hiển thị Applies to beats.
-  4. UI hiển thị screenState, props, continuityNotes.
-  5. UI hiển thị outfit/colors/accessories/handheld/appearance/stateChanges.
-  6. Paste JSON thiếu beatIds/startBeatId/endBeatId phải báo lỗi.
+  1. Go to Thiết lập bối cảnh.
+  2. Paste valid JSON with 21 screens and beatIds.
+  3. Save/apply.
+  4. UI shows 21 Screen Continuity cards.
+  5. Each card shows Applies to beats / Beat range.
+  6. Character states show outfit/colors/accessories.
+  7. Paste JSON missing beatIds/startBeatId/endBeatId shows error.
 ```
 
 ---
 
-# 11. Manual test checklist
+# 13. Manual test checklist
 
 ```txt
-[ ] Có component ScreenContinuityView.
-[ ] Stage Thiết lập bối cảnh render ScreenContinuityView.
-[ ] UI show screenId.
-[ ] UI show beatIds hoặc startBeatId-endBeatId.
-[ ] UI show screenState.
-[ ] UI show screenProps.
-[ ] UI show continuityNotes.
-[ ] UI show characterName.
-[ ] UI show characterId.
-[ ] UI show outfit.
-[ ] UI show outfitMainColor.
-[ ] UI show outfitAccentColor.
-[ ] UI show accessories.
-[ ] UI show handheldItems.
-[ ] UI show appearanceNotes.
-[ ] UI show stateChanges.
+[ ] Paste JSON đúng cấu trúc vào Thiết lập bối cảnh.
+[ ] production.screenContinuity có dữ liệu.
+[ ] ScreenContinuityView render từ production.screenContinuity.
+[ ] UI hiện 21 screen cards nếu JSON có 21 screens.
+[ ] Mỗi screen card hiện screenId.
+[ ] Mỗi screen card hiện beatIds hoặc startBeatId-endBeatId.
+[ ] Mỗi screen card hiện screenState.
+[ ] Mỗi screen card hiện screenProps.
+[ ] Mỗi screen card hiện continuityNotes.
+[ ] Character card hiện characterName.
+[ ] Character card hiện outfit.
+[ ] Character card hiện outfitMainColor.
+[ ] Character card hiện outfitAccentColor.
+[ ] Character card hiện accessories.
+[ ] Character card hiện handheldItems.
+[ ] Character card hiện appearanceNotes.
+[ ] Character card hiện stateChanges.
 [ ] Paste JSON thiếu screens báo lỗi.
 [ ] Paste JSON thiếu screenId báo lỗi.
 [ ] Paste JSON thiếu beat link báo lỗi.
@@ -824,33 +990,42 @@ H. Test
 
 ---
 
-# 12. Edge cases
+# 14. Edge cases
 
-## Case 1 - JSON có beatIds
-
-Expected:
-
-```txt
-UI show: Applies to beats: 1, 2, 3.
-```
-
-## Case 2 - JSON chỉ có startBeatId/endBeatId
+## Case 1 - production.screenContinuity có data nhưng project.screens không có screen tương ứng
 
 Expected:
 
 ```txt
-UI show: Beat range: 1–3.
+ScreenContinuityView vẫn hiển thị data từ production.screenContinuity.
 ```
 
-## Case 3 - Không có screenCharacterStates
+## Case 2 - JSON có 21 screens nhưng Beat Analysis chỉ có 6 screens
 
 Expected:
 
 ```txt
-UI show empty character state message, không crash.
+Thiết lập bối cảnh preview vẫn show 21 screens.
+Merge vào project có thể chỉ match một phần, nhưng preview không rỗng.
 ```
 
-## Case 4 - stateChanges rỗng
+## Case 3 - screenCharacterStates rỗng
+
+Expected:
+
+```txt
+Card screen vẫn hiện, character state section báo không có character state.
+```
+
+## Case 4 - beatIds rỗng nhưng có start/end
+
+Expected:
+
+```txt
+UI show Beat range.
+```
+
+## Case 5 - stateChanges là []
 
 Expected:
 
@@ -858,24 +1033,16 @@ Expected:
 UI show No changes.
 ```
 
-## Case 5 - paste JSON cũ thiếu beat link
-
-Expected:
-
-```txt
-App báo: cần beatIds hoặc startBeatId/endBeatId.
-```
-
 ---
 
-# 13. Definition of Done
+# 15. Definition of Done
 
 Task hoàn thành khi:
 
 ```txt
-[ ] User paste Screen Continuity JSON vào app và thấy preview đẹp.
-[ ] User biết screen continuity áp dụng cho beat nào.
-[ ] UI không còn cảm giác “dán vào nhưng không hiện”.
+[ ] UI Thiết lập bối cảnh không còn phụ thuộc hoàn toàn vào project.screens.
+[ ] JSON đúng cấu trúc paste vào là hiện preview ngay.
+[ ] User thấy rõ screen nào áp dụng cho beat nào.
 [ ] Validate chặn JSON thiếu beat link.
-[ ] Screen Continuity vẫn là dữ liệu cấp screen, không bị biến thành per-beat.
+[ ] Screen Continuity vẫn là dữ liệu cấp screen, không biến thành per-beat.
 ```

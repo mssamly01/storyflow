@@ -3668,6 +3668,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     const currentResult = stage === ProductionStage.ANALYSIS ? production.analysis 
                       : stage === ProductionStage.CHARACTER_LOCATION ? production.characterLocationAnalysis
+                      : stage === ProductionStage.SCREEN_CONTINUITY ? production.screenContinuity
+                      : stage === ProductionStage.BEAT_MOMENT ? production.beatMomentDetails
                       : stage === ProductionStage.STORYBOARD ? production.storyboard
                       : stage === ProductionStage.PROMPTS ? production.prompts
                       : stage === ProductionStage.QA ? production.qaReport
@@ -3698,6 +3700,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const currentResult = stage === ProductionStage.ANALYSIS ? production.analysis 
                       : stage === ProductionStage.CHARACTER_LOCATION ? production.characterLocationAnalysis
+                      : stage === ProductionStage.SCREEN_CONTINUITY ? production.screenContinuity
+                      : stage === ProductionStage.BEAT_MOMENT ? production.beatMomentDetails
                       : stage === ProductionStage.STORYBOARD ? production.storyboard
                       : stage === ProductionStage.PROMPTS ? production.prompts
                       : stage === ProductionStage.QA ? production.qaReport
