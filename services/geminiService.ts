@@ -802,7 +802,7 @@ FINAL CHECK BEFORE OUTPUT:
 - Does every visualPrompt contain Screen Continuity?
 - Does every visualPrompt use timeOfDay from APPROVED BEAT SOURCE?
 - Does every named character include full profile details?
-- Is every current outfit copied from APPROVED SCREEN CONTINUITY for the current screen?
+- Is every visible character's current outfit taken from APPROVED SCREEN CONTINUITY, using Character Library only for identity/default traits?
 - Did you include only the current beat/screen outfit, without alternate outfits or beat ranges?
 - Does every visualPrompt include posture, action, and interaction?
 - Does every visualPrompt include foreground, midground, and background when available?
