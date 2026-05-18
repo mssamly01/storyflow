@@ -56,6 +56,10 @@ const asNumber = (value: unknown, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const asOptionalNumber = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 const asString = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
 const asStringArray = (value: unknown): string[] => Array.isArray(value)
   ? value.map((item) => String(item)).filter(Boolean)
@@ -201,6 +205,9 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       beatId,
       screenId: asString(item.screenId ?? item.screen_id, "screen_001"),
       originalText: asString(item.originalText ?? item.original_text),
+      sourceSegmentIds: asStringArray(item.sourceSegmentIds ?? item.source_segment_ids),
+      sourceStartOffset: asOptionalNumber(item.sourceStartOffset ?? item.source_start_offset),
+      sourceEndOffset: asOptionalNumber(item.sourceEndOffset ?? item.source_end_offset),
       summary: asString(item.summary),
       characters: legacyCharacters,
       focusCharacters: focusCharacters.length ? focusCharacters : legacyCharacters,

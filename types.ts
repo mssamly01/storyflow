@@ -34,6 +34,9 @@ export interface BeatAnalysis {
   meta?: EditableMeta;
   beatId?: number;
   originalText: string;
+  sourceSegmentIds?: string[];
+  sourceStartOffset?: number;
+  sourceEndOffset?: number;
   actionAnalysis?: string;
   analysis?: string;
   charactersInvolved?: string[];
@@ -145,6 +148,14 @@ export interface BeatMomentDetail {
 
 export interface BeatMomentDetailResult {
   beatDetails: BeatMomentDetail[];
+}
+
+export interface SourceSegment {
+  sourceSegmentId: string;
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  role?: "title" | "body";
 }
 
 export interface CoverageCheck {

@@ -21,6 +21,10 @@ import {
   parseJsonSafe
 } from '../services/finalResultBuilderService';
 import {
+  hydrateBeatAnalysisOriginalText,
+  segmentSourceText
+} from '../services/sourceTextSegmentService';
+import {
   buildFinalResultFromProject,
   createInitialProject,
   hydrateStoryFlowProject,
@@ -779,6 +783,30 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return rawBeats ? rawBeats.map((beat: any, index: number) => normalizeBeatForUi(beat, index)) : null;
   };
 
+  const hydratePastedAnalysisIfNeeded = (analysisData: any) => {
+    const beats = getAnalysisBeatsFromParsed(analysisData);
+    const hasSourceSegmentIds = beats?.some((beat: any) =>
+      Array.isArray(beat.sourceSegmentIds) && beat.sourceSegmentIds.length > 0
+    );
+    const hasMissingOriginalText = beats?.some((beat: any) => !String(beat.originalText || "").trim());
+
+    if (!beats || !hasSourceSegmentIds || !hasMissingOriginalText || !inputData.script.trim()) {
+      return analysisData;
+    }
+
+    const payload = Array.isArray(analysisData)
+      ? { beats: analysisData }
+      : analysisData;
+
+    const hydrated = hydrateBeatAnalysisOriginalText(
+      payload,
+      inputData.script,
+      segmentSourceText(inputData.script)
+    );
+
+    return Array.isArray(analysisData) ? hydrated.beats : hydrated;
+  };
+
   const currentStepPrompt = useMemo(() => {
     const stylePrompt = getSelectedStylePrompt();
     switch(stage) {
@@ -917,9 +945,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     if (parsedJson && (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION)) {
       const pastedBeatAnalysis = getAnalysisBeatsFromParsed(parsedJson);
       if (stage === ProductionStage.ANALYSIS && pastedBeatAnalysis) {
-        const analysisPayload = Array.isArray(parsedJson)
-          ? pastedBeatAnalysis
+        const rawAnalysisPayload = Array.isArray(parsedJson)
+          ? parsedJson
           : { ...parsedJson, beats: pastedBeatAnalysis };
+        const analysisPayload = hydratePastedAnalysisIfNeeded(rawAnalysisPayload);
         setProduction(prev => ({
           ...prev,
           analysis: JSON.stringify(analysisPayload, null, 2)
@@ -941,7 +970,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           if (typeof val === 'string') return val;
           if (val === undefined || val === null) return '';
           const beats = getAnalysisBeatsFromParsed(val);
-          if (beats) return JSON.stringify(beats, null, 2);
+          if (beats) return JSON.stringify(hydratePastedAnalysisIfNeeded(val), null, 2);
           return JSON.stringify(val, null, 2);
         };
 
@@ -997,7 +1026,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const syncPhaseOneProjectData = (analysisValue: string, characterLocationValue: string) => {
-    const analysisData = parseJsonSafe<unknown>(analysisValue, []);
+    const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(analysisValue, []));
     const beats = normalizeBeats(analysisData);
     const parsedScreens = normalizeScreens(analysisData);
     const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
@@ -1012,7 +1041,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setProject(prev => {
       try {
         if (targetStage === ProductionStage.ANALYSIS) {
-          const analysisData = parseJsonSafe<unknown>(result, []);
+          const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(result, []));
           const beats = normalizeBeats(analysisData);
           const parsedScreens = normalizeScreens(analysisData);
           return replaceScreens(
