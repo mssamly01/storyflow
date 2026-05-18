@@ -5,11 +5,16 @@ import { mapLocationIdsToBeats } from "./locationContinuityService";
 import { createFallbackScreensFromBeats, normalizeBeats, normalizeScreens } from "./finalResultBuilderService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import { buildEngineerPromptsJsonWithResolver } from "./visualPromptResolverService";
+import {
+  hydrateBeatAnalysisOriginalText,
+  segmentSourceText
+} from "./sourceTextSegmentService";
 import type {
   BeatAnalysisResult,
   CharacterLocationLibraryResult,
   CharacterProfile,
   LocationProfile,
+  SourceSegment,
   StoryBeat
 } from "../types";
 
@@ -63,7 +68,201 @@ const parseJsonFallback = <T,>(rawText: string | undefined, fallback: T): T => {
   }
 };
 
-export const getBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
+export function compactJsonArrays(jsonStr: string | null | undefined): string {
+  if (!jsonStr) return "";
+  let text = jsonStr.trim();
+  if (!text) return "";
+  
+  // Compact number arrays: e.g. [ 1,\n 2,\n 3 ] -> [1, 2, 3]
+  text = text.replace(/\[\s*([\d\s,]+?)\s*\]/g, (match, p1) => {
+    const compacted = p1.replace(/\s+/g, ' ').replace(/,\s*$/, '').trim();
+    return `[${compacted}]`;
+  });
+  
+  // Compact short string arrays: e.g. [ "A",\n "B" ] -> ["A", "B"]
+  text = text.replace(/\[\s*((?:"[^"]*"\s*,\s*)*"[^"]*")\s*\]/g, (match, p1) => {
+    const compacted = p1.replace(/\s+/g, ' ').trim();
+    return `[${compacted}]`;
+  });
+
+  return text;
+}
+
+export function compactJson(value: any): string {
+  if (value === undefined || value === null) return "";
+  const jsonStr = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return compactJsonArrays(jsonStr);
+}
+
+function formatSourceSegmentsForPrompt(sourceSegments: SourceSegment[]): string {
+  return JSON.stringify(
+    sourceSegments.map((segment, index) => ({
+      sourceSegmentId: segment.sourceSegmentId,
+      order: index + 1,
+      role: segment.role || "body",
+      text: segment.text
+    })),
+    null,
+    2
+  );
+}
+
+export const getBeatAnalysisPrompt = (source: SourceSegment[] | string, artStyleDescription = "") => {
+  const sourceSegments = Array.isArray(source) ? source : segmentSourceText(source);
+  return `
+You are a professional story analyst for a vertical comic / visual storyboard generation app.
+
+Your ONLY task:
+Analyze the provided SOURCE SEGMENTS and group them into fine-grained image-ready beats.
+
+CRITICAL ORIGINAL TEXT RULE:
+- Do NOT output originalText.
+- Do NOT copy, rewrite, summarize, translate, polish, or shorten source text.
+- The app will build originalText deterministically from sourceSegmentIds after your response.
+- Your job is only to decide which exact sourceSegmentIds belong to each beat.
+
+SOURCE SEGMENT COVERAGE RULE - CRITICAL:
+1. Every source segment with role "body" must appear in exactly one beat.
+2. Keep sourceSegmentIds in source order.
+3. Do not skip body segments.
+4. Do not duplicate body segments across beats.
+5. Use role "title" segments as context only; do not include them unless the story genuinely needs a title-card beat.
+6. If a beat covers multiple adjacent source segments, list all of those IDs in sourceSegmentIds.
+7. Never invent segment IDs.
+
+A beat is not a paragraph.
+A beat is one clear visual moment that can be illustrated in one image.
+
+LIGHTWEIGHT BEAT ANALYSIS RULE - CRITICAL:
+This stage must only create the story skeleton.
+
+Do NOT generate:
+- screenCharacterStates
+- detailed outfit/accessory state
+- characterMomentDetails
+- detailed posture
+- detailed props
+- detailed locationState
+- long interaction descriptions
+
+Your job is to identify focus/visible/offscreen characters, location, time, short action, atmosphere, and visual focus.
+
+BEAT SPLITTING RULES - CRITICAL:
+1. Split the entire body source into continuous, fine-grained, image-ready beats.
+2. One beat = one drawable image moment.
+3. If a source segment group contains multiple actions, split it into multiple beats.
+4. If dialogue + reaction + movement create different images, split them.
+5. If present scene changes to memory/flashback/social media/phone screen, split them.
+6. Split when location, timeOfDay, POV, central character, or scene state changes.
+7. Internal monologue must be represented through drawable visual cues such as a phone screen, facial expression, object detail, silent posture, walking away, or ticket/notification.
+8. It is better to output more short beats than fewer long beats.
+
+SCREEN SKELETON RULE - CRITICAL:
+- Group consecutive beats into screens.
+- A screen is a continuous scene with the same location, timeOfDay, ongoing character presence.
+- Multiple beats can belong to one screen.
+- Do not analyze each beat as an isolated scene.
+- Use screenId to link beats to screens.
+- screenCharacters must include all characters physically present or directly involved in the screen.
+- A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
+
+ACTION FIELD RULE:
+- action must describe only one main drawable action.
+- Do not combine many actions with "and then".
+- If action needs several verbs for different moments, split the beat.
+
+SCENE-CUTTING RULES - CRITICAL:
+Split into a new beat immediately when:
+1. A different character starts a new action, line of dialogue, or thought.
+2. Narration interrupts actions/dialogue.
+3. Location or setting changes.
+4. A character moves from one place to another; separate the movement and the action at the destination.
+5. The target of interaction changes.
+6. Emotion, facial expression, or body action changes inside a long dialogue.
+7. A dialogue is longer than 3 sentences or contains multiple important ideas.
+8. The text switches between present scene and memory/flashback/social media/phone screen.
+9. timeOfDay changes.
+10. POV or central character changes.
+
+MERGE RULES - DO NOT OVER-SPLIT:
+Merge adjacent source segments into one beat when:
+1. Characters directly interact in the same space and there is no narration interruption.
+2. A short line of dialogue has one simple accompanying action.
+3. A sentence ending with a colon introduces the dialogue immediately after it.
+4. One short message/call question-answer pair belongs to the same visual moment.
+5. A filler sentence has no new visual value and supports the same emotion/action.
+
+FIELD RULES:
+- sourceSegmentIds: exact source segment IDs covered by this beat. This replaces originalText.
+- screens: screen-level continuity containers for shared location, time, layout, present characters.
+- screenId: stable link from each beat to its screen.
+- summary: short explanation of the beat, not copied from source text.
+- characters: legacy compatibility field; include visibleCharacters when possible.
+- focusCharacters: characters receiving narrative/camera focus in this beat.
+- visibleCharacters: characters visible in this beat's frame.
+- offscreenPresentCharacters: characters still present in the screen but not visible in this beat.
+- location: most specific known place, or "Unknown".
+- locationId: stable location id if inferable from consistent location naming, otherwise omit or use "".
+- action: main action.
+- visualFocus: what the image should focus on.
+- atmosphere: emotional mood.
+- timeOfDay: Early Morning, Morning, Mid-day, Afternoon, Golden Hour, Evening, Late Night, or Unknown.
+
+Selected art style context:
+${artStyleDescription || "No specific style selected."}
+
+Return ONLY valid JSON with this schema:
+
+{
+  "screens": [
+    {
+      "screenId": "screen_001",
+      "screenNumber": 1,
+      "screenName": "Concrete screen name",
+      "location": "Concrete location",
+      "locationId": "loc_001",
+      "timeOfDay": "Evening",
+      "screenCharacters": ["Character A", "Character B"],
+      "startBeatId": 1,
+      "endBeatId": 5,
+      "summary": "What happens in this screen"
+    }
+  ],
+  "beats": [
+    {
+      "beatId": 1,
+      "screenId": "screen_001",
+      "sourceSegmentIds": ["src_0001", "src_0002"],
+      "summary": "Short summary of this visual beat.",
+      "focusCharacters": ["Character A"],
+      "visibleCharacters": ["Character A", "Character B"],
+      "offscreenPresentCharacters": ["Character C"],
+      "characters": ["Character A", "Character B"],
+      "location": "Concrete location name",
+      "locationId": "loc_001",
+      "action": "One main action.",
+      "visualFocus": "Specific main image focus.",
+      "atmosphere": "Dominant mood.",
+      "timeOfDay": "Evening"
+    }
+  ]
+}
+
+FINAL CHECK BEFORE OUTPUT:
+- Did every body source segment appear in exactly one beat?
+- Did you avoid outputting originalText?
+- Did you avoid rewriting source text?
+- Did beat order follow source segment order?
+- Did you avoid placeholder fields like "..."?
+
+SOURCE SEGMENTS:
+\`\`\`json
+${formatSourceSegmentsForPrompt(sourceSegments)}
+\`\`\`
+`;
+};
+
+const getLegacyBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
 You are a professional story analyst for a vertical comic / visual storyboard generation app.
 
 Your ONLY task:
@@ -478,16 +677,17 @@ LOCATION RULES:
 - Do not include any image prompt field.
 
 APPROVED BEATS:
-${JSON.stringify(beats, null, 2)}
+${compactJson(beats)}
 
 APPROVED SCREENS:
-${JSON.stringify(screens, null, 2)}
+${compactJson(screens)}
 
 ORIGINAL SOURCE TEXT:
 ${originalText}
 `;
 
-export const getPhase1AnalysisPrompt = (script: string, style: string, _existingLibrary?: string) => getBeatAnalysisPrompt(script, style);
+export const getPhase1AnalysisPrompt = (script: string, style: string, _existingLibrary?: string) =>
+  getBeatAnalysisPrompt(segmentSourceText(script), style);
 
 const getLegacyStoryboardPrompt = (analysis: string, charLocAnalysis: string) => `
 You are an illustration artist and visual director. Based on the content analysis and the character/location library, draft a detailed storyboard.
@@ -639,15 +839,26 @@ SCREEN CONTINUITY FOR STORYBOARD:
 - Example: in a Hospital Nurse Station screen, if Lục Thư Vân is locked seated behind the counter at the right workstation chair and Khương Yến Ninh is locked standing at the visitor/front-left side of the counter, a close-up of Lục Thư Vân must not move Khương Yến Ninh into a background workstation; Khương Yến Ninh stays at the front-left anchor and may be off-frame.
 
 SOURCE BEATS:
-${JSON.stringify(beats, null, 2)}
+${compactJson(beats)}
 
 SOURCE SCREENS:
-${JSON.stringify(screens, null, 2)}
+${compactJson(screens)}
 
 CHARACTER LIBRARY:
-${JSON.stringify(library.characters || [], null, 2)}
+${compactJson(library.characters || [])}
 
-LOCATION LIBRARY:\r\n${JSON.stringify(library.locations || [], null, 2)}\r\n\r\nAPPROVED SCREEN CONTINUITY:\r\n${screenContinuity || "No screen continuity data provided."}\r\n\r\nAPPROVED BEAT MOMENT DETAILS:\r\n${beatMomentDetails || "No beat moment details provided."}\r\n\r\nART STYLE:\r\n${artStyleDescription || "No specific style selected."}\r\n`;
+LOCATION LIBRARY:
+${compactJson(library.locations || [])}
+
+APPROVED SCREEN CONTINUITY:
+${compactJson(screenContinuity) || "No screen continuity data provided."}
+
+APPROVED BEAT MOMENT DETAILS:
+${compactJson(beatMomentDetails) || "No beat moment details provided."}
+
+ART STYLE:
+${artStyleDescription || "No specific style selected."}
+`;
 };
 
 export interface EngineerPromptInput {
@@ -664,7 +875,7 @@ function safePromptJsonBlock(value: string | undefined | null): string {
   if (!text) {
     return "{ }";
   }
-  return text;
+  return compactJson(text);
 }
 
 export const getEngineerPromptsPrompt = ({
@@ -1104,10 +1315,10 @@ FIELD RULES:
 - continuityNotes: concise note for maintaining fixed layout, fixed anchors, outfit, props, and character positions across the screen.
 
 APPROVED BEAT SKELETON SOURCE:
-${analysis}
+${compactJson(analysis)}
 
 CHARACTER + LOCATION LIBRARY:
-${charLocAnalysis}
+${compactJson(charLocAnalysis)}
 
 ART STYLE:
 ${style}
@@ -1166,13 +1377,13 @@ Required JSON Schema:
 }
 
 APPROVED BEAT SKELETON SOURCE:
-${analysis}
+${compactJson(analysis)}
 
 SCREEN CONTINUITY:
-${screenContinuity}
+${compactJson(screenContinuity)}
 
 CHARACTER + LOCATION LIBRARY:
-${charLocAnalysis}
+${compactJson(charLocAnalysis)}
 
 ART STYLE:
 ${style}
@@ -1182,9 +1393,10 @@ ${style}
 
 export const analyzeBeats = async (text: string, artStyleDescription?: string): Promise<BeatAnalysisResult> => {
   const ai = getAI();
+  const sourceSegments = segmentSourceText(text);
   const response = await ai.models.generateContent({
     model: getModel(),
-    contents: getBeatAnalysisPrompt(text, artStyleDescription),
+    contents: getBeatAnalysisPrompt(sourceSegments, artStyleDescription),
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -1219,7 +1431,10 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
               properties: {
                 beatId: { type: "integer" },
                 screenId: { type: "string" },
-                originalText: { type: "string" },
+                sourceSegmentIds: {
+                  type: "array",
+                  items: { type: "string" }
+                },
                 summary: { type: "string" },
                 focusCharacters: {
                   type: "array",
@@ -1244,7 +1459,7 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
                 atmosphere: { type: "string" },
                 timeOfDay: { type: "string" }
               },
-              required: ["beatId", "screenId", "originalText", "summary", "focusCharacters", "visibleCharacters", "offscreenPresentCharacters", "characters", "location", "action", "visualFocus", "atmosphere", "timeOfDay"]
+              required: ["beatId", "screenId", "sourceSegmentIds", "summary", "focusCharacters", "visibleCharacters", "offscreenPresentCharacters", "characters", "location", "action", "visualFocus", "atmosphere", "timeOfDay"]
             }
           },
           coverageCheck: {
@@ -1262,7 +1477,11 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
     }
   });
 
-  return parseGeminiJson<BeatAnalysisResult>(response.text);
+  return hydrateBeatAnalysisOriginalText(
+    parseGeminiJson<BeatAnalysisResult>(response.text),
+    text,
+    sourceSegments
+  );
 };
 
 export const generateCharacterLocationLibrary = async (
