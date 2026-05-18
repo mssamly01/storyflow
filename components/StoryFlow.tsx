@@ -251,6 +251,72 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   }>({ open: false, title: '', subjectName: '', prompt: '' });
   const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
 
+  const [importedFileName, setImportedFileName] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const showToast = (message: string) => {
+    setToast({ message, visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const handleImportTxtFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const isTxtFile = file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt');
+    if (!isTxtFile) {
+      showToast("Chỉ hỗ trợ import file .txt.");
+      event.target.value = '';
+      return;
+    }
+
+    const MAX_TXT_SIZE_MB = 5;
+    if (file.size > MAX_TXT_SIZE_MB * 1024 * 1024) {
+      showToast(`File quá lớn. Vui lòng chọn file dưới ${MAX_TXT_SIZE_MB}MB.`);
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      setInputData(prev => ({ ...prev, script: text }));
+      setImportedFileName(file.name);
+      showToast(`Đã nhập thành công từ file: ${file.name}`);
+      event.target.value = '';
+    };
+    reader.onerror = () => {
+      showToast("Không thể đọc file .txt. Vui lòng thử lại.");
+      event.target.value = '';
+    };
+    reader.readAsText(file, "utf-8");
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setInputData(prev => ({ ...prev, script: text }));
+        setImportedFileName("");
+        showToast("Đã dán văn bản từ clipboard!");
+      } else {
+        showToast("Clipboard trống hoặc không chứa văn bản.");
+      }
+    } catch (err) {
+      showToast("Không thể đọc clipboard. Hãy dùng Ctrl+V trực tiếp vào ô nhập.");
+    }
+  };
+
+  const handleClearText = () => {
+    setInputData(prev => ({ ...prev, script: "" }));
+    setImportedFileName("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    showToast("Đã xóa nội dung ô nhập.");
+  };
+
+
   const [inputData, setInputData] = useState<ScriptData>({
     script: '',
     selectedStyle: 'manhua',
@@ -3647,19 +3713,70 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </div>
         </div>
         <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-          <div className="flex items-center justify-between mb-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,text/plain"
+            className="hidden"
+            onChange={handleImportTxtFile}
+          />
+          <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
             <div className="flex items-center gap-2">
               <FileText className="w-5 h-5 text-indigo-600" />
               <label className="text-lg font-bold text-slate-800">Nội dung tiểu thuyết</label>
             </div>
-            <button 
-              onClick={() => setShowLitLibraryModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-xl text-xs font-bold transition-all border border-purple-100 shadow-sm"
-            >
-              <Library className="w-3.5 h-3.5" /> Nhập từ LitStruct
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button 
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl text-xs font-bold transition-all border border-indigo-100 shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> IMPORT TXT
+              </button>
+
+              <button 
+                type="button"
+                onClick={handlePasteFromClipboard}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all border border-slate-200 shadow-sm"
+              >
+                <Copy className="w-3.5 h-3.5" /> PASTE
+              </button>
+
+              <button 
+                type="button"
+                onClick={handleClearText}
+                className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-xs font-bold transition-all border border-rose-100 shadow-sm"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> CLEAR
+              </button>
+
+              <div className="h-6 w-[1px] bg-slate-200 mx-1 hidden md:block"></div>
+
+              <button 
+                type="button"
+                onClick={() => setShowLitLibraryModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-xl text-xs font-bold transition-all border border-purple-100 shadow-sm"
+              >
+                <Library className="w-3.5 h-3.5" /> Nhập từ LitStruct
+              </button>
+            </div>
           </div>
           <textarea value={inputData.script} onChange={(e) => setInputData(prev => ({ ...prev, script: e.target.value }))} placeholder="Dán đoạn trích tiểu thuyết của bạn vào đây hoặc lấy từ thư viện..." className="w-full h-80 p-5 border border-slate-200 rounded-xl bg-slate-50 text-sm leading-relaxed outline-none" />
+          
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-slate-500 gap-2 px-1">
+            <div>
+              {importedFileName && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full font-medium shadow-sm animate-fade-in">
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                  Đã nhập: <strong className="font-bold">{importedFileName}</strong>
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-4">
+              <span>Số ký tự: <strong className="font-bold text-slate-700">{inputData.script.length.toLocaleString('vi-VN')}</strong></span>
+              <span>Số từ: <strong className="font-bold text-slate-700">{(inputData.script.trim() ? inputData.script.trim().split(/\s+/).length : 0).toLocaleString('vi-VN')}</strong></span>
+            </div>
+          </div>
         </div>
         <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
           <div className="flex flex-col">
