@@ -169,6 +169,11 @@ export interface BeatAnalysisResult {
   screens?: StoryScreen[];
   beats: StoryBeat[];
   coverageCheck?: CoverageCheck;
+  sourceSegmenterVersion?: string;
+  sourceTextHash?: string;
+  targetBeatWordMin?: number;
+  targetBeatWordMax?: number;
+  repairNotes?: string;
 }
 
 export interface CharacterLocationLibraryResult {

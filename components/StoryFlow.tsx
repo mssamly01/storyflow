@@ -163,7 +163,7 @@ const STYLE_OPTIONS = [
 
 const isLongBeatOriginalText = (originalText?: string) => {
   const wordCount = (originalText || "").trim().split(/\s+/).filter(Boolean).length;
-  return wordCount > 120;
+  return wordCount > 80;
 };
 
 interface StoryFlowProps {
@@ -786,11 +786,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const visibleCharacters = beat.visibleCharacters ?? beat.visible_characters ?? focusCharacters;
     const offscreenPresentCharacters = beat.offscreenPresentCharacters ?? beat.offscreen_present_characters ?? [];
     const props = beat.props ?? [];
+    const sourceSegmentIds = beat.sourceSegmentIds ?? beat.source_segment_ids ?? [];
 
     return {
       ...beat,
       beatId: beat.beatId ?? index + 1,
       screenId: beat.screenId || beat.screen_id || 'screen_001',
+      originalText: beat.originalText ?? beat.original_text ?? '',
+      sourceSegmentIds: Array.isArray(sourceSegmentIds) ? sourceSegmentIds.map(String).filter(Boolean) : [],
       actionAnalysis: beat.actionAnalysis || beat.analysis || beat.action || beat.summary || '',
       charactersInvolved: Array.isArray(characters) ? characters : [characters].filter(Boolean),
       focusCharacters: Array.isArray(focusCharacters) ? focusCharacters : [focusCharacters].filter(Boolean),
@@ -819,9 +822,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const hasSourceSegmentIds = beats?.some((beat: any) =>
       Array.isArray(beat.sourceSegmentIds) && beat.sourceSegmentIds.length > 0
     );
-    const hasMissingOriginalText = beats?.some((beat: any) => !String(beat.originalText || "").trim());
 
-    if (!beats || !hasSourceSegmentIds || !hasMissingOriginalText || !inputData.script.trim()) {
+    if (!beats || !hasSourceSegmentIds) {
       return analysisData;
     }
 
@@ -829,13 +831,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       ? { beats: analysisData }
       : analysisData;
 
+    if (!inputData.script.trim()) {
+      const warningPayload = {
+        ...payload,
+        repairNotes: "Cannot hydrate or auto-split originalText because the current project has no source script. Paste the original .txt/source text first, then import this Beat Analysis JSON again."
+      };
+      return warningPayload;
+    }
+
     const hydrated = hydrateBeatAnalysisOriginalText(
       payload,
       inputData.script,
-      segmentSourceText(inputData.script)
+      segmentSourceText(inputData.script),
+      { segmentMode: "auto", repairMissingSegments: true }
     );
 
-    return Array.isArray(analysisData) ? hydrated.beats : hydrated;
+    return hydrated;
   };
 
   const currentStepPrompt = useMemo(() => {
@@ -1032,7 +1043,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
       if (parsedJson.analysis || parsedJson.characterLocationAnalysis) {
         const formatValue = (val: any) => {
-          if (typeof val === 'string') return val;
+          if (typeof val === 'string') {
+            const parsedValue = parseJsonSafe<any>(val, null);
+            const beats = getAnalysisBeatsFromParsed(parsedValue);
+            if (beats) return JSON.stringify(hydratePastedAnalysisIfNeeded(parsedValue), null, 2);
+            return val;
+          }
           if (val === undefined || val === null) return '';
           const beats = getAnalysisBeatsFromParsed(val);
           if (beats) return JSON.stringify(hydratePastedAnalysisIfNeeded(val), null, 2);
@@ -2400,6 +2416,33 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 </button>
               </div>
             </div>
+            {(parsed?.repairNotes || parsed?.sourceSegmenterVersion || parsed?.sourceTextHash) && (
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Source Text Repair</span>
+                  {parsed?.sourceSegmenterVersion && (
+                    <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-indigo-700">
+                      {parsed.sourceSegmenterVersion}
+                    </span>
+                  )}
+                  {parsed?.targetBeatWordMin && parsed?.targetBeatWordMax && (
+                    <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-indigo-700">
+                      Target {parsed.targetBeatWordMin}-{parsed.targetBeatWordMax} words
+                    </span>
+                  )}
+                </div>
+                {parsed?.repairNotes && (
+                  <p className="text-xs font-semibold leading-relaxed text-indigo-900">
+                    {parsed.repairNotes}
+                  </p>
+                )}
+                {parsed?.sourceTextHash && (
+                  <p className="mt-2 text-[10px] font-mono text-indigo-500">
+                    sourceTextHash: {parsed.sourceTextHash}
+                  </p>
+                )}
+              </div>
+            )}
             {parsed?.coverageCheck && (
               <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -2582,7 +2625,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                         <div className="space-y-4">
                           {hasLongOriginalText && (
                             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold leading-relaxed text-amber-800">
-                              Beat này có originalText khá dài. Nên regenerate Beat Analysis chi tiết hơn để mỗi beat chỉ là một khoảnh khắc có thể vẽ.
+                              Beat này có originalText vượt 80 từ. Nên regenerate Beat Analysis chi tiết hơn để mỗi beat chỉ là một khoảnh khắc có thể vẽ.
                             </div>
                           )}
                           <p className="text-slate-800 text-sm leading-relaxed italic border-l-4 border-indigo-200 pl-4 mb-4">{beat.originalText || beat.text || beat}</p>

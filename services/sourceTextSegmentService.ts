@@ -6,8 +6,28 @@ import type {
   StoryScreen
 } from "../types";
 
-const MAX_SEGMENT_CHARS = 700;
+export const SOURCE_SEGMENTER_VERSION = "source-segmenter-v2-word-limit";
+export const LEGACY_LINE_SEGMENTER_VERSION = "legacy-line-v1";
+export const TARGET_BEAT_WORD_MIN = 40;
+export const TARGET_BEAT_WORD_MAX = 80;
+
+const MAX_SEGMENT_CHARS = 520;
+const MAX_SEGMENT_WORDS = TARGET_BEAT_WORD_MAX;
+const TARGET_SEGMENT_WORDS = 60;
 const SOURCE_SEGMENT_PREFIX = "src_";
+
+type SourceSegmenterMode = "current" | "legacyLine" | "auto";
+
+interface HydrationOptions {
+  repairMissingSegments?: boolean;
+  segmentMode?: SourceSegmenterMode;
+}
+
+interface ResolvedSourceSegments {
+  segments: SourceSegment[];
+  version: string;
+  notes?: string;
+}
 const SENTENCE_BOUNDARY_CHARS = new Set([".", "!", "?", "。", "！", "？", "…", "】"]);
 const CLOSING_CHARS = new Set(["”", "’", "'", "\"", "」", "』", "）", ")", "]", "】"]);
 
@@ -21,6 +41,23 @@ function trimRange(sourceText: string, startOffset: number, endOffset: number) {
   while (start < end && /\s/.test(sourceText[start])) start += 1;
   while (end > start && /\s/.test(sourceText[end - 1])) end -= 1;
   return { startOffset: start, endOffset: end };
+}
+
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export function hashSourceText(sourceText: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < sourceText.length; index += 1) {
+    hash ^= sourceText.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function rangeWordCount(sourceText: string, startOffset: number, endOffset: number): number {
+  return countWords(sourceText.slice(startOffset, endOffset));
 }
 
 function isDecimalPoint(sourceText: string, index: number): boolean {
@@ -39,7 +76,10 @@ function isSentenceBoundary(sourceText: string, index: number): boolean {
 }
 
 function splitLongRange(sourceText: string, startOffset: number, endOffset: number): Array<{ startOffset: number; endOffset: number }> {
-  if (endOffset - startOffset <= MAX_SEGMENT_CHARS) {
+  if (
+    endOffset - startOffset <= MAX_SEGMENT_CHARS &&
+    rangeWordCount(sourceText, startOffset, endOffset) <= MAX_SEGMENT_WORDS
+  ) {
     return [trimRange(sourceText, startOffset, endOffset)].filter((range) => range.endOffset > range.startOffset);
   }
 
@@ -62,11 +102,25 @@ function splitLongRange(sourceText: string, startOffset: number, endOffset: numb
   const tail = trimRange(sourceText, currentStart, endOffset);
   if (tail.endOffset > tail.startOffset) ranges.push(tail);
 
-  if (ranges.length <= 1 && endOffset - startOffset > MAX_SEGMENT_CHARS) {
+  if (
+    ranges.length <= 1 &&
+    (
+      endOffset - startOffset > MAX_SEGMENT_CHARS ||
+      rangeWordCount(sourceText, startOffset, endOffset) > MAX_SEGMENT_WORDS
+    )
+  ) {
     return splitRangeByWhitespace(sourceText, startOffset, endOffset);
   }
 
-  return ranges;
+  return ranges.flatMap((range) => {
+    if (
+      range.endOffset - range.startOffset <= MAX_SEGMENT_CHARS &&
+      rangeWordCount(sourceText, range.startOffset, range.endOffset) <= MAX_SEGMENT_WORDS
+    ) {
+      return [range];
+    }
+    return splitRangeByWhitespace(sourceText, range.startOffset, range.endOffset);
+  });
 }
 
 function splitRangeByWhitespace(sourceText: string, startOffset: number, endOffset: number): Array<{ startOffset: number; endOffset: number }> {
@@ -74,7 +128,7 @@ function splitRangeByWhitespace(sourceText: string, startOffset: number, endOffs
   let currentStart = startOffset;
 
   while (currentStart < endOffset) {
-    const targetEnd = Math.min(currentStart + MAX_SEGMENT_CHARS, endOffset);
+    const targetEnd = findWhitespaceSplitEnd(sourceText, currentStart, endOffset);
     let splitEnd = targetEnd;
 
     if (targetEnd < endOffset) {
@@ -92,6 +146,37 @@ function splitRangeByWhitespace(sourceText: string, startOffset: number, endOffs
   }
 
   return ranges;
+}
+
+function findWhitespaceSplitEnd(sourceText: string, startOffset: number, endOffset: number): number {
+  let words = 0;
+  let inWord = false;
+  let lastWhitespaceAfterTarget = -1;
+  const maxCharEnd = Math.min(startOffset + MAX_SEGMENT_CHARS, endOffset);
+
+  for (let index = startOffset; index < endOffset && index <= maxCharEnd; index += 1) {
+    const char = sourceText[index] || "";
+    const isWhitespace = /\s/.test(char);
+    if (isWhitespace) {
+      if (inWord) {
+        words += 1;
+        inWord = false;
+        if (words >= TARGET_SEGMENT_WORDS) lastWhitespaceAfterTarget = index;
+        if (words >= MAX_SEGMENT_WORDS) return lastWhitespaceAfterTarget > startOffset ? lastWhitespaceAfterTarget : index;
+      }
+      continue;
+    }
+    inWord = true;
+  }
+
+  if (endOffset <= maxCharEnd) return endOffset;
+  if (lastWhitespaceAfterTarget > startOffset) return lastWhitespaceAfterTarget;
+
+  for (let index = maxCharEnd; index > startOffset + Math.floor(MAX_SEGMENT_CHARS * 0.5); index -= 1) {
+    if (/\s/.test(sourceText[index])) return index;
+  }
+
+  return maxCharEnd;
 }
 
 function isLikelyTitleSegment(segment: SourceSegment, index: number, segments: SourceSegment[]): boolean {
@@ -136,6 +221,39 @@ export function segmentSourceText(sourceText: string): SourceSegment[] {
   }));
 }
 
+export function segmentSourceTextByLegacyLines(sourceText: string): SourceSegment[] {
+  const ranges: Array<{ startOffset: number; endOffset: number }> = [];
+  let cursor = sourceText.charCodeAt(0) === 0xfeff ? 1 : 0;
+
+  while (cursor < sourceText.length) {
+    const nextLineBreakMatch = /\r\n|\n|\r/g;
+    nextLineBreakMatch.lastIndex = cursor;
+    const match = nextLineBreakMatch.exec(sourceText);
+    const lineEnd = match ? match.index : sourceText.length;
+    const nextCursor = match ? match.index + match[0].length : sourceText.length;
+    const trimmedLine = trimRange(sourceText, cursor, lineEnd);
+
+    if (trimmedLine.endOffset > trimmedLine.startOffset) {
+      ranges.push(trimmedLine);
+    }
+
+    cursor = nextCursor;
+  }
+
+  const segments = ranges.map<SourceSegment>((range, index) => ({
+    sourceSegmentId: padSegmentId(index + 1),
+    text: sourceText.slice(range.startOffset, range.endOffset),
+    startOffset: range.startOffset,
+    endOffset: range.endOffset,
+    role: "body"
+  }));
+
+  return segments.map((segment, index) => ({
+    ...segment,
+    role: isLikelyTitleSegment(segment, index, segments) ? "title" : "body"
+  }));
+}
+
 function getSegmentIndexById(segments: SourceSegment[]): Map<string, number> {
   const map = new Map<string, number>();
   segments.forEach((segment, index) => map.set(segment.sourceSegmentId, index));
@@ -150,6 +268,21 @@ function normalizeSourceSegmentIds(value: unknown, segmentById: Map<string, Sour
     .map((item) => String(item).trim())
     .filter((id) => id && segmentById.has(id) && !seen.has(id) && seen.add(id))
     .sort((left, right) => (indexById.get(left) ?? Number.MAX_SAFE_INTEGER) - (indexById.get(right) ?? Number.MAX_SAFE_INTEGER));
+}
+
+function getSourceSegmentNumericId(id: string): number {
+  const match = id.match(/^src_(\d+)$/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function collectSourceSegmentIds(beats: Array<Partial<StoryBeat>>): string[] {
+  const ids = new Set<string>();
+  beats.forEach((beat) => (beat.sourceSegmentIds || []).forEach((id) => ids.add(id)));
+  return Array.from(ids);
+}
+
+function normalizeForCompare(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function hydrateOriginalTextFromIds(sourceText: string, sourceSegmentIds: string[], segments: SourceSegment[], indexById: Map<string, number>): {
@@ -177,6 +310,76 @@ function hydrateOriginalTextFromIds(sourceText: string, sourceSegmentIds: string
     sourceStartOffset,
     sourceEndOffset
   };
+}
+
+function scoreOriginalTextMatches(
+  beats: Array<Partial<StoryBeat>>,
+  sourceText: string,
+  segments: SourceSegment[]
+): number {
+  const indexById = getSegmentIndexById(segments);
+  return beats.reduce((score, beat) => {
+    const originalText = normalizeForCompare(beat.originalText || "");
+    if (!originalText || !beat.sourceSegmentIds?.length) return score;
+    const hydrated = normalizeForCompare(
+      hydrateOriginalTextFromIds(sourceText, beat.sourceSegmentIds, segments, indexById).originalText
+    );
+    if (!hydrated) return score;
+    if (hydrated === originalText) return score + 4;
+    if (hydrated.includes(originalText) || originalText.includes(hydrated)) return score + 2;
+    if (hydrated.slice(0, 90) === originalText.slice(0, 90)) return score + 1;
+    return score;
+  }, 0);
+}
+
+function resolveSourceSegments(
+  parsed: BeatAnalysisResult,
+  sourceText: string,
+  currentSegments: SourceSegment[],
+  mode: SourceSegmenterMode
+): ResolvedSourceSegments {
+  const parsedVersion = parsed.sourceSegmenterVersion;
+  if (mode === "current" || parsedVersion === SOURCE_SEGMENTER_VERSION) {
+    return { segments: currentSegments, version: SOURCE_SEGMENTER_VERSION };
+  }
+
+  const legacySegments = segmentSourceTextByLegacyLines(sourceText);
+  if (mode === "legacyLine" || parsedVersion === LEGACY_LINE_SEGMENTER_VERSION) {
+    return { segments: legacySegments, version: LEGACY_LINE_SEGMENTER_VERSION };
+  }
+
+  const ids = collectSourceSegmentIds(parsed.beats || []);
+  const maxId = Math.max(0, ...ids.map(getSourceSegmentNumericId));
+  if (maxId > legacySegments.length && maxId <= currentSegments.length) {
+    return { segments: currentSegments, version: SOURCE_SEGMENTER_VERSION };
+  }
+  if (maxId > currentSegments.length && maxId <= legacySegments.length) {
+    return {
+      segments: legacySegments,
+      version: LEGACY_LINE_SEGMENTER_VERSION,
+      notes: "Auto-selected legacy line-based source segment IDs because pasted JSON references IDs outside the current segmenter range."
+    };
+  }
+
+  const currentScore = scoreOriginalTextMatches(parsed.beats || [], sourceText, currentSegments);
+  const legacyScore = scoreOriginalTextMatches(parsed.beats || [], sourceText, legacySegments);
+  if (legacyScore > currentScore) {
+    return {
+      segments: legacySegments,
+      version: LEGACY_LINE_SEGMENTER_VERSION,
+      notes: "Auto-selected legacy line-based source segment IDs because they match the pasted originalText more closely."
+    };
+  }
+
+  if (!parsedVersion && currentSegments.length !== legacySegments.length && maxId <= legacySegments.length) {
+    return {
+      segments: legacySegments,
+      version: LEGACY_LINE_SEGMENTER_VERSION,
+      notes: "Auto-selected legacy line-based source segment IDs for metadata-free pasted JSON."
+    };
+  }
+
+  return { segments: currentSegments, version: SOURCE_SEGMENTER_VERSION };
 }
 
 function findSourceOrder(beat: Partial<StoryBeat>, indexById: Map<string, number>, fallback: number): number {
@@ -209,17 +412,22 @@ function chunkSegmentGroupByLength(group: SourceSegment[]): SourceSegment[][] {
   const chunks: SourceSegment[][] = [];
   let current: SourceSegment[] = [];
   let currentLength = 0;
+  let currentWords = 0;
 
   for (const segment of group) {
+    const segmentWords = countWords(segment.text);
     const nextLength = currentLength + segment.text.length + (current.length ? 1 : 0);
-    if (current.length && nextLength > MAX_SEGMENT_CHARS) {
+    const nextWords = currentWords + segmentWords;
+    if (current.length && (nextLength > MAX_SEGMENT_CHARS || nextWords > MAX_SEGMENT_WORDS)) {
       chunks.push(current);
       current = [];
       currentLength = 0;
+      currentWords = 0;
     }
 
     current.push(segment);
     currentLength += segment.text.length + (current.length > 1 ? 1 : 0);
+    currentWords += segmentWords;
   }
 
   if (current.length) chunks.push(current);
@@ -278,6 +486,39 @@ function insertMissingSegmentFallbackBeats(beats: Array<Partial<StoryBeat>>, seg
   return [...beats, ...fallbackBeats];
 }
 
+function splitBeatByOriginalTextLength(
+  beat: Partial<StoryBeat>,
+  sourceText: string,
+  segments: SourceSegment[],
+  indexById: Map<string, number>
+): Array<Partial<StoryBeat>> {
+  const ids = beat.sourceSegmentIds || [];
+  if (ids.length <= 1) return [beat];
+
+  const chunks: string[][] = [];
+  let current: string[] = [];
+
+  for (const id of ids) {
+    const candidate = [...current, id];
+    const candidateText = hydrateOriginalTextFromIds(sourceText, candidate, segments, indexById).originalText;
+    if (current.length && countWords(candidateText) > MAX_SEGMENT_WORDS) {
+      chunks.push(current);
+      current = [id];
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current.length) chunks.push(current);
+  if (chunks.length <= 1) return [beat];
+
+  return chunks.map((sourceSegmentIds, index) => ({
+    ...beat,
+    sourceSegmentIds,
+    summary: index === 0 ? beat.summary : `${beat.summary || "Continuation of visual beat"} (${index + 1})`
+  }));
+}
+
 function repairScreensWithBeatIds(screens: StoryScreen[] | undefined, beats: StoryBeat[]): StoryScreen[] | undefined {
   if (!screens?.length) return screens;
   return screens.map((screen) => {
@@ -327,10 +568,19 @@ export function hydrateBeatAnalysisOriginalText(
   parsed: BeatAnalysisResult,
   sourceText: string,
   segments: SourceSegment[],
-  options: { repairMissingSegments?: boolean } = { repairMissingSegments: true }
+  options: HydrationOptions = { repairMissingSegments: true, segmentMode: "current" }
 ): BeatAnalysisResult {
-  const segmentById = new Map(segments.map((segment) => [segment.sourceSegmentId, segment]));
-  const indexById = getSegmentIndexById(segments);
+  const sourceTextHash = hashSourceText(sourceText);
+  const resolved = resolveSourceSegments(parsed, sourceText, segments, options.segmentMode || "current");
+  const activeSegments = resolved.segments;
+  const segmentById = new Map(activeSegments.map((segment) => [segment.sourceSegmentId, segment]));
+  const indexById = getSegmentIndexById(activeSegments);
+  const notes: string[] = [];
+
+  if (parsed.sourceTextHash && parsed.sourceTextHash !== sourceTextHash) {
+    notes.push("Source text hash mismatch; regenerated originalText from the current script, but Beat Analysis should be regenerated if the source text changed.");
+  }
+  if (resolved.notes) notes.push(resolved.notes);
 
   const preparedBeats = (parsed.beats || []).map((beat) => ({
     ...beat,
@@ -338,15 +588,31 @@ export function hydrateBeatAnalysisOriginalText(
   }));
 
   const beatsWithFallbacks = options.repairMissingSegments
-    ? insertMissingSegmentFallbackBeats(preparedBeats, segments, indexById)
+    ? insertMissingSegmentFallbackBeats(preparedBeats, activeSegments, indexById)
     : preparedBeats;
 
-  const sortedBeats = [...beatsWithFallbacks].sort((left, right) =>
+  const fallbackBeatCount = Math.max(0, beatsWithFallbacks.length - preparedBeats.length);
+  if (fallbackBeatCount) {
+    notes.push(`Added ${fallbackBeatCount} fallback beat(s) for source segments the AI did not assign.`);
+  }
+
+  let splitSourceBeatCount = 0;
+  const lengthRepairedBeats = beatsWithFallbacks.flatMap((beat) => {
+    const parts = splitBeatByOriginalTextLength(beat, sourceText, activeSegments, indexById);
+    if (parts.length > 1) splitSourceBeatCount += 1;
+    return parts;
+  });
+  const addedSplitBeatCount = Math.max(0, lengthRepairedBeats.length - beatsWithFallbacks.length);
+  if (splitSourceBeatCount) {
+    notes.push(`Auto-split ${splitSourceBeatCount} long beat(s) into ${splitSourceBeatCount + addedSplitBeatCount} beat(s) to keep originalText near ${TARGET_BEAT_WORD_MIN}-${TARGET_BEAT_WORD_MAX} words.`);
+  }
+
+  const sortedBeats = [...lengthRepairedBeats].sort((left, right) =>
     findSourceOrder(left, indexById, 0) - findSourceOrder(right, indexById, 0)
   );
 
   const hydratedBeats = sortedBeats.map<StoryBeat>((beat, index) => {
-    const hydrated = hydrateOriginalTextFromIds(sourceText, beat.sourceSegmentIds || [], segments, indexById);
+    const hydrated = hydrateOriginalTextFromIds(sourceText, beat.sourceSegmentIds || [], activeSegments, indexById);
     return {
       ...beat,
       beatId: index + 1,
@@ -356,10 +622,22 @@ export function hydrateBeatAnalysisOriginalText(
     } as StoryBeat;
   });
 
+  const remainingLongBeats = hydratedBeats.filter((beat) => countWords(beat.originalText) > TARGET_BEAT_WORD_MAX);
+  if (remainingLongBeats.length) {
+    notes.push(`${remainingLongBeats.length} beat(s) still exceed ${TARGET_BEAT_WORD_MAX} words because their mapped source segment is already too long or cannot be split by sourceSegmentIds.`);
+  }
+
+  const repairNotes = [parsed.repairNotes, ...notes].filter(Boolean).join(" ");
+
   return {
     ...parsed,
     beats: hydratedBeats,
     screens: repairScreensWithBeatIds(parsed.screens, hydratedBeats),
-    coverageCheck: validateSourceTextCoverage(hydratedBeats, segments)
+    coverageCheck: validateSourceTextCoverage(hydratedBeats, activeSegments),
+    sourceSegmenterVersion: resolved.version,
+    sourceTextHash,
+    targetBeatWordMin: TARGET_BEAT_WORD_MIN,
+    targetBeatWordMax: TARGET_BEAT_WORD_MAX,
+    repairNotes
   };
 }

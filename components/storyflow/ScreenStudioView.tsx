@@ -58,6 +58,14 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{children}</p>;
 }
 
+function countWords(text?: string): number {
+  return (text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function isOverBeatWordLimit(text?: string): boolean {
+  return countWords(text) > 80;
+}
+
 function beatBelongsToScreen(beat: StoryBeat, screen: StoryScreen): boolean {
   if (beat.screenId && screen.screenId && beat.screenId === screen.screenId) return true;
   if (Array.isArray(screen.beatIds) && screen.beatIds.includes(beat.beatId)) return true;
@@ -103,9 +111,14 @@ function createOrphanScreen(screenId: string, beats: StoryBeat[], screenNumber: 
 function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded: boolean; onToggle: () => void }) {
   const focusCharacters = beat.focusCharacters?.length ? beat.focusCharacters : beat.characters || beat.charactersInvolved;
   const visibleCharacters = beat.visibleCharacters?.length ? beat.visibleCharacters : focusCharacters;
+  const originalTextWordCount = countWords(beat.originalText);
+  const isOriginalTextTooLong = originalTextWordCount > 80;
 
   return (
-    <article className="relative rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+    <article className={cx(
+      "relative rounded-3xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+      isOriginalTextTooLong ? "border-rose-200 ring-2 ring-rose-50" : "border-slate-200"
+    )}>
       <div className="absolute -left-[34px] top-6 flex h-8 w-8 items-center justify-center rounded-full border-4 border-white bg-violet-600 text-xs font-black text-white shadow">
         {beat.beatId}
       </div>
@@ -116,6 +129,11 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
             <Chip tone="violet">Beat #{beat.beatId}</Chip>
             {beat.atmosphere && <Chip tone="amber">{beat.atmosphere}</Chip>}
             {beat.timeOfDay && <Chip tone="sky">{beat.timeOfDay}</Chip>}
+            {beat.originalText && (
+              <Chip tone={isOriginalTextTooLong ? "rose" : "slate"}>
+                {originalTextWordCount} words
+              </Chip>
+            )}
           </div>
 
           <h4 className="mt-3 text-base font-extrabold leading-snug text-slate-950">
@@ -126,6 +144,11 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
             <p className="mt-2 max-h-36 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm italic leading-relaxed text-slate-600">
               {beat.originalText}
             </p>
+          )}
+          {isOriginalTextTooLong && (
+            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold leading-relaxed text-rose-700">
+              originalText vượt 80 từ. Nên tách beat này thành nhiều visual moments nhỏ hơn để mỗi ảnh chỉ thể hiện một khoảnh khắc rõ ràng.
+            </div>
           )}
         </div>
 
@@ -405,6 +428,10 @@ export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
       beatsByScreen: map
     };
   }, [beats, screens]);
+  const longBeats = useMemo(
+    () => beats.filter((beat) => isOverBeatWordLimit(beat.originalText)),
+    [beats]
+  );
 
   if (!beats.length) {
     return (
@@ -416,6 +443,17 @@ export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
 
   return (
     <div className="space-y-8">
+      {longBeats.length > 0 && (
+        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-rose-800">
+          <p className="text-[10px] font-black uppercase tracking-widest">Beat length warning</p>
+          <p className="mt-2 text-sm font-bold">
+            {longBeats.length} beat có originalText vượt 80 từ: {longBeats.map((beat) => `#${beat.beatId}`).join(", ")}.
+          </p>
+          <p className="mt-1 text-xs font-medium leading-relaxed">
+            Target mới là 40-80 từ/beat. Hãy regenerate Beat Analysis hoặc tách thủ công các beat này để mỗi ảnh chỉ cần diễn một visual moment.
+          </p>
+        </div>
+      )}
       {displayScreens.map((screen) => (
         <div key={screen.screenId} className="contents">
           <ScreenCard screen={screen} beats={beatsByScreen.get(screen.screenId) ?? []} />

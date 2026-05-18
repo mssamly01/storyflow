@@ -134,6 +134,7 @@ CRITICAL ORIGINAL TEXT RULE:
 - Do NOT copy, rewrite, summarize, translate, polish, or shorten source text.
 - The app will build originalText deterministically from sourceSegmentIds after your response.
 - Your job is only to decide which exact sourceSegmentIds belong to each beat.
+- Do NOT output sourceSegmenterVersion, sourceTextHash, targetBeatWordMin, targetBeatWordMax, or repairNotes; the app attaches that metadata after validation.
 
 SOURCE SEGMENT COVERAGE RULE - CRITICAL:
 1. Every source segment with role "body" must appear in exactly one beat.
@@ -170,6 +171,15 @@ BEAT SPLITTING RULES - CRITICAL:
 6. Split when location, timeOfDay, POV, central character, or scene state changes.
 7. Internal monologue must be represented through drawable visual cues such as a phone screen, facial expression, object detail, silent posture, walking away, or ticket/notification.
 8. It is better to output more short beats than fewer long beats.
+
+BEAT LENGTH RULE - CRITICAL:
+- The app will build originalText by joining sourceSegmentIds. Choose sourceSegmentIds so each resulting originalText is 40-80 Vietnamese words whenever possible.
+- 40-80 words is the production target because one image should represent one clear visual moment.
+- If the next source segment would push the beat over 80 words, split into a new beat unless the segment is inseparable and still one visual moment.
+- A beat under 40 words is allowed when it is a strong visual moment, a short dialogue hit, a reaction, or a scene transition.
+- Do not create any beat over 80 words just to preserve a paragraph; split by action, emotion, dialogue idea, reaction, object reveal, or camera focus.
+- Before adding any sourceSegmentId to an existing beat, check whether that added source text creates a new drawable action, reaction, emotional turn, object reveal, phone/comment screen, flashback, or camera focus. If yes, start a new beat.
+- Prefer several short adjacent beats over one broad beat. The app can repair long groups, but your output should already be image-ready.
 
 SCREEN SKELETON RULE - CRITICAL:
 - Group consecutive beats into screens.
@@ -267,6 +277,9 @@ FINAL CHECK BEFORE OUTPUT:
 - Did you avoid outputting originalText?
 - Did you avoid rewriting source text?
 - Did beat order follow source segment order?
+- Did each beat target 40-80 words after sourceSegmentIds are joined?
+- Did you split every likely over-80-word beat unless it is truly inseparable?
+- Did you avoid broad sourceSegmentId ranges that combine multiple visual moments?
 - Did you avoid placeholder fields like "..."?
 
 SOURCE SEGMENTS:
@@ -332,7 +345,7 @@ ORIGINAL TEXT RULE:
 - Keep complete sentences. Never cut in the middle of a sentence.
 - Preferred length: 1-3 short source sentences.
 - Ideal length: 40-80 Vietnamese words per beat.
-- Hard warning: if originalText would exceed 120 words, split it unless it is truly one single visual moment.
+- Hard maximum: if originalText would exceed 80 words, split it unless it is truly one inseparable visual moment.
 
 ORIGINAL TEXT QUALITY RULE:
 - originalText should be copied from the source story as exactly as possible.
@@ -488,7 +501,8 @@ ORIGINAL TEXT COVERAGE GUIDELINES:
 
 BEAT CUTTING RULES:
 - A beat is one visual moment that can be illustrated as one storyboard panel.
-- Recommended length: 40-120 Vietnamese words per beat.
+- Recommended length: 40-80 Vietnamese words per beat.
+- Hard maximum: 80 Vietnamese words per beat; split longer beats by action, emotion, dialogue idea, reaction, object reveal, or camera focus.
 - Visual integrity is more important than word count.
 - Never cut in the middle of a sentence.
 
@@ -529,6 +543,7 @@ FINAL CHECK BEFORE OUTPUT:
 - Did you avoid intentionally rewriting or summarizing originalText?
 - Did you avoid placeholder ellipsis?
 - Did you split long source segments instead of shortening them?
+- Did you keep every originalText around 40-80 words, with no beat over 80 words unless truly inseparable?
 - Did you avoid using placeholder fields like "..."?
 
 SOURCE TEXT:
@@ -1863,7 +1878,8 @@ export const analyzeBeats = async (text: string, artStyleDescription?: string): 
   return hydrateBeatAnalysisOriginalText(
     parseGeminiJson<BeatAnalysisResult>(response.text),
     text,
-    sourceSegments
+    sourceSegments,
+    { segmentMode: "current", repairMissingSegments: true }
   );
 };
 
