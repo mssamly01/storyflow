@@ -280,7 +280,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? "");
-      setInputData(prev => ({ ...prev, script: text }));
+      const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      setInputData(prev => ({ ...prev, script: text, title: baseName }));
       setImportedFileName(file.name);
       showToast(`Đã nhập thành công từ file: ${file.name}`);
       event.target.value = '';
