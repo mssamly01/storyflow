@@ -341,12 +341,21 @@ function buildLocationContinuity(
   screen: StoryScreen | undefined
 ): string {
   const copyReady = cleanCopyReadyText(location?.continuityPrompt);
+  const screenSpatialLayout = cleanCopyReadyText(screen?.screenSpatialLayout);
+  const screenFixedElements = unique(screen?.screenFixedElements || []);
+  const screenLockDetails = compact([
+    screenSpatialLayout ? `keep this fixed screen layout: ${screenSpatialLayout}` : "",
+    screenFixedElements.length ? `keep these fixed element positions: ${screenFixedElements.join("; ")}` : ""
+  ], "; ");
+
   if (copyReady) {
-    return `Location Continuity: ${copyReady}`;
+    return `Location Continuity: ${copyReady}${screenLockDetails ? `; ${screenLockDetails}` : ""}`;
   }
 
   const locationName = location?.name || screen?.location || "the established location";
   const details = compact([
+    screenSpatialLayout,
+    screenFixedElements.length ? screenFixedElements.join(", ") : "",
     location?.layout,
     location?.keyObjects?.length ? location.keyObjects.join(", ") : "",
     location?.lighting || location?.lightingDefault,
@@ -439,18 +448,21 @@ function buildResolvedOutfit(
     || cleanOutfitBase(profile?.outfitPrompt)
     || cleanOutfitBase(profile?.outfit)
     || "current outfit";
+
+  return expandGenericOutfit(base);
+}
+
+function buildOutfitColorNote(
+  screenState: ScreenCharacterState | undefined,
+  profile: CharacterProfile | undefined
+): string {
   const mainColor = cleanCopyReadyText(screenState?.outfitMainColor || profile?.outfitMainColor);
   const accentColor = cleanCopyReadyText(screenState?.outfitAccentColor || profile?.outfitAccentColor);
 
-  let outfit = base;
-  if (mainColor && !colorIsRepresented(mainColor, outfit)) {
-    outfit = `${mainColor} ${outfit}`;
-  }
-  if (accentColor && !colorIsRepresented(accentColor, outfit)) {
-    outfit = `${outfit} with ${accentColor} accents`;
-  }
-
-  return expandGenericOutfit(outfit);
+  return compact([
+    mainColor ? `main color ${mainColor}` : "",
+    accentColor ? `accent color ${accentColor}` : ""
+  ]);
 }
 
 function buildCharacterIdentity(profile: CharacterProfile | undefined): string[] {
@@ -550,6 +562,7 @@ function buildCharacterProfileLine(params: {
   const { characterName, profile, screenState, moment, blocking, position, panel, beat, useBeatPostureFallback } = params;
   const identity = buildCharacterIdentity(profile);
   const outfit = buildResolvedOutfit(screenState, profile);
+  const outfitColorNote = buildOutfitColorNote(screenState, profile);
   const accessories = unique([
     ...(profile?.signatureAccessories || []),
     ...(screenState?.accessories || []),
@@ -574,6 +587,7 @@ function buildCharacterProfileLine(params: {
     posture ? `Posture: ${posture}` : "",
     expression ? `Expression: ${expression}` : "",
     outfit ? `Outfit top-down inner-to-outer: ${outfit}` : "",
+    outfitColorNote ? `Outfit colors: ${outfitColorNote}` : "",
     `Accessories with exact position: ${formatList(accessories)}`,
     `Handheld or variable items with current position: ${formatList(handheld)}`
   ].filter(Boolean);

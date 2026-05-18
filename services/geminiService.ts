@@ -701,6 +701,23 @@ When generating a visualPrompt for a beat:
 2. If screenId does not match or is empty, use beatId against beatIds/startBeatId/endBeatId inside the Screen Continuity items.
 3. Do not invent screen continuity if no match exists.
 
+SCREEN LAYOUT LOCK RULE - CRITICAL:
+For every beat in the same screen, reuse the exact same screenSpatialLayout from APPROVED SCREEN CONTINUITY.
+Every visualPrompt must include the fixed screenSpatialLayout as natural language inside Location Continuity or a separate Screen Spatial Lock sentence.
+Do not rewrite the room differently across beats.
+Do not move fixed objects from screenFixedElements.
+Do not simplify fixed elements into vague labels.
+Bad: "keep monitors and signage consistent".
+Good: "keep the curved white reception counter across the foreground/right side, desktop monitors behind the counter, wall signage on the rear wall, file shelves behind the counter, and the long hallway receding into the background".
+Camera may zoom, crop, pan, or rotate slightly, but the spatial relationship must remain the same.
+
+CHARACTER ANCHOR LOCK RULE - CRITICAL:
+For every visible character, use their approved screenCharacterPositions anchor as the base position.
+Do not move a character to another workstation, another side of the counter, another sofa, another hallway, or another table unless BEAT MOMENT DETAILS explicitly says they moved.
+If a close-up crops a character out, mention they remain at the approved anchor but outside the frame.
+Storyboard blocking can crop or frame the anchor, but cannot create a new anchor.
+If Storyboard blocking conflicts with screenCharacterPositions, screenCharacterPositions wins.
+
 ACCESSORY SELECTION RULE - CRITICAL:
 When constructing the visualPrompt for a beat:
 1. Start with the character's core stable identity from Character Library.
@@ -758,8 +775,9 @@ If colorPalette exists, convert it into natural color words and never include ra
 
 3. LOCATION CONTINUITY BLOCK:
 Every visualPrompt must include this block right after Location:
-"Location Continuity: keep [important layout elements], [important furniture/objects], and [lighting/material cues] consistent across this screen."
+"Location Continuity: keep [screenSpatialLayout], [screenFixedElements with fixed positions], and [lighting/material cues] consistent across this screen."
 Do not include locationId, raw IDs, debug labels, or hex colors.
+Use fixed positions from screenFixedElements, not vague object labels.
 
 4. SCREEN CONTINUITY SENTENCE:
 Each visualPrompt must include a Screen Continuity sentence after Location Continuity:
@@ -782,7 +800,10 @@ Mention offscreen characters only briefly in the Screen Continuity sentence.
 Do not describe hair, outfit, face, accessories, or posture for offscreen characters, because that may cause the image generator to draw them.
 
 Required visible character profile format:
-"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Posture: [current posture], Outfit: [outfitMainColor] [outfitAccentColor if available] [copy screen outfit exactly], Accessories: [visible signatureAccessories + screen-level accessories], Handheld: [currently visible handheld items only; use Beat Moment Details first, then Screen Continuity if the item persists across the screen])"
+"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Position Lock: [approved screenCharacterPositions anchor if available], Posture: [current posture], Outfit: [copy screen outfit exactly], Outfit colors: main color [outfitMainColor], accent color [outfitAccentColor if available], Accessories: [visible signatureAccessories + screen-level accessories with exact positions], Handheld: [currently visible handheld items only; use Beat Moment Details first, then Screen Continuity if the item persists across the screen])"
+
+Do NOT prepend outfitMainColor or outfitAccentColor before the outfit wording.
+The screen outfit is already copy-ready; copy it exactly and put colors in the separate Outfit colors phrase.
 
 If a profile field is missing, use available fields only. Do not invent new appearance details.
 
