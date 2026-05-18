@@ -623,7 +623,7 @@ export function buildFinalResultFromProject(project: StoryFlowProject): FinalRes
     beats: mergedBeats,
     panels: project.storyboardPanels,
     engineerPrompts: project.engineerPrompts,
-    qaResults: project.qaResults,
+    qaResults: [],
     characters: project.characters,
     locations: project.locations
   });

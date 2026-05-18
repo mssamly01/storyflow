@@ -58,6 +58,48 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">{children}</p>;
 }
 
+function beatBelongsToScreen(beat: StoryBeat, screen: StoryScreen): boolean {
+  if (beat.screenId && screen.screenId && beat.screenId === screen.screenId) return true;
+  if (Array.isArray(screen.beatIds) && screen.beatIds.includes(beat.beatId)) return true;
+  if (
+    screen.startBeatId != null &&
+    screen.endBeatId != null &&
+    beat.beatId >= screen.startBeatId &&
+    beat.beatId <= screen.endBeatId
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function createOrphanScreen(screenId: string, beats: StoryBeat[], screenNumber: number): StoryScreen {
+  const first = beats[0];
+  return {
+    screenId,
+    screenNumber,
+    screenName: first
+      ? `${first.location || first.locationName || "Unknown Location"} - ${first.timeOfDay || "Unknown Time"}`
+      : "Unlinked Beats",
+    location: first?.location || first?.locationName || "",
+    locationId: first?.locationId,
+    timeOfDay: first?.timeOfDay || "",
+    screenState: first?.locationState || "",
+    screenCharacters: Array.from(new Set(beats.flatMap((beat) => [
+      ...(beat.focusCharacters || []),
+      ...(beat.visibleCharacters || []),
+      ...(beat.offscreenPresentCharacters || []),
+      ...(beat.characters || []),
+      ...(beat.charactersInvolved || [])
+    ]).filter(Boolean))),
+    screenProps: Array.from(new Set(beats.flatMap((beat) => beat.props || []).filter(Boolean))),
+    startBeatId: first?.beatId || 0,
+    endBeatId: beats.at(-1)?.beatId || first?.beatId || 0,
+    beatIds: beats.map((beat) => beat.beatId),
+    summary: `Auto-created display group for unlinked beats ${first?.beatId || "?"}-${beats.at(-1)?.beatId || "?"}`,
+    continuityNotes: "Generated only for UI display because these beats were not linked to any provided screen."
+  };
+}
+
 function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded: boolean; onToggle: () => void }) {
   const focusCharacters = beat.focusCharacters?.length ? beat.focusCharacters : beat.characters || beat.charactersInvolved;
   const visibleCharacters = beat.visibleCharacters?.length ? beat.visibleCharacters : focusCharacters;
@@ -328,16 +370,41 @@ function ScreenCard({ screen, beats }: { screen: StoryScreen; beats: StoryBeat[]
 }
 
 export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
-  const beatsByScreen = useMemo(() => {
+  const { displayScreens, beatsByScreen } = useMemo(() => {
     const map = new Map<string, StoryBeat[]>();
-    for (const beat of beats) {
-      const screenId = beat.screenId || "screen_001";
-      const list = map.get(screenId) ?? [];
-      list.push(beat);
-      map.set(screenId, list);
+    const assignedBeatIds = new Set<number>();
+
+    for (const screen of screens) {
+      map.set(screen.screenId, []);
     }
-    return map;
-  }, [beats]);
+
+    for (const beat of beats) {
+      const screen = screens.find((item) => beatBelongsToScreen(beat, item));
+      if (!screen) continue;
+      map.set(screen.screenId, [...(map.get(screen.screenId) || []), beat]);
+      assignedBeatIds.add(beat.beatId);
+    }
+
+    const orphanGroups = new Map<string, StoryBeat[]>();
+    for (const beat of beats) {
+      if (assignedBeatIds.has(beat.beatId)) continue;
+      const key = beat.screenId || `${beat.location || beat.locationName || "Unknown"}|${beat.timeOfDay || "Unknown"}`;
+      orphanGroups.set(key, [...(orphanGroups.get(key) || []), beat]);
+    }
+
+    const orphanScreens = Array.from(orphanGroups.entries()).map(([key, group], index) =>
+      createOrphanScreen(key.startsWith("screen_") ? key : `unlinked_screen_${index + 1}`, group, screens.length + index + 1)
+    );
+
+    for (const screen of orphanScreens) {
+      map.set(screen.screenId, orphanGroups.get(screen.screenId) ?? screen.beatIds!.map((beatId) => beats.find((beat) => beat.beatId === beatId)).filter((beat): beat is StoryBeat => Boolean(beat)));
+    }
+
+    return {
+      displayScreens: [...screens, ...orphanScreens],
+      beatsByScreen: map
+    };
+  }, [beats, screens]);
 
   if (!beats.length) {
     return (
@@ -349,7 +416,7 @@ export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
 
   return (
     <div className="space-y-8">
-      {screens.map((screen) => (
+      {displayScreens.map((screen) => (
         <div key={screen.screenId} className="contents">
           <ScreenCard screen={screen} beats={beatsByScreen.get(screen.screenId) ?? []} />
         </div>

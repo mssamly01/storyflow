@@ -12,10 +12,11 @@ import {
   createFallbackScreensFromBeats,
   ensureVisualPromptHasNegativePrompt,
   getFinalResultMissingInputs,
+  mergeBeatMomentDetailsIntoBeats,
+  mergeScreenContinuityIntoScreens,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
   normalizeEngineerPrompts,
-  normalizeQAResults,
   normalizeScreens,
   normalizeScreenContinuity,
   parseJsonSafe
@@ -36,7 +37,6 @@ import {
   replaceCharacterLocationLibrary,
   replaceEngineerPrompts,
   replaceFinalResult,
-  replaceQAResults,
   replaceScreens,
   replaceStoryboardPanels,
   serializeProjectForStorage,
@@ -361,7 +361,6 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     if (prod.beatMomentDetails) set.add(ProductionStage.BEAT_MOMENT);
     if (prod.storyboard) set.add(ProductionStage.STORYBOARD);
     if (prod.prompts) set.add(ProductionStage.PROMPTS);
-    if (prod.qaReport) set.add(ProductionStage.QA);
     if (prod.finalResult) set.add(ProductionStage.FINAL);
     if (currentStage !== ProductionStage.LIBRARY) set.add(currentStage);
     return Array.from(set);
@@ -420,17 +419,46 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   // Save temporary state to localStorage
   useEffect(() => {
     if (!isLoaded) return;
-    
+    const projectForStorage = serializeProjectForStorage(project);
     const stateToSave = {
       stage,
       inputData,
       production,
-      project: serializeProjectForStorage(project),
+      project: projectForStorage,
       unlockedStages,
       isManualMode,
       isGlobalManualMode
     };
-    localStorage.setItem('storyflow_temp_state', JSON.stringify(stateToSave));
+
+    try {
+      localStorage.setItem('storyflow_temp_state', JSON.stringify(stateToSave));
+    } catch (error) {
+      console.warn("Failed to persist full StoryFlow temp state. Retrying with compact state.", error);
+      const compactState = {
+        ...stateToSave,
+        production: {
+          ...production,
+          finalResult: undefined
+        },
+        project: {
+          id: projectForStorage.id,
+          title: projectForStorage.title,
+          sourceText: projectForStorage.sourceText,
+          selectedStyleId: projectForStorage.selectedStyleId,
+          screenContinuity: projectForStorage.screenContinuity,
+          beatMomentDetails: projectForStorage.beatMomentDetails,
+          workflow: projectForStorage.workflow,
+          createdAt: projectForStorage.createdAt,
+          updatedAt: projectForStorage.updatedAt
+        }
+      };
+
+      try {
+        localStorage.setItem('storyflow_temp_state', JSON.stringify(compactState));
+      } catch (compactError) {
+        console.warn("Failed to persist compact StoryFlow temp state. Skipping temp persistence.", compactError);
+      }
+    }
   }, [isLoaded, stage, inputData, production, project, unlockedStages, isManualMode, isGlobalManualMode]);
 
   useEffect(() => {
@@ -464,7 +492,6 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     { id: ProductionStage.BEAT_MOMENT, label: "Chi tiết hành động", icon: Table },
     { id: ProductionStage.STORYBOARD, label: "Phác thảo minh họa", icon: Layout },
     { id: ProductionStage.PROMPTS, label: "Prompt Engineering", icon: Zap },
-    { id: ProductionStage.QA, label: "QA & Consistency", icon: ShieldCheck },
     { id: ProductionStage.FINAL, label: "Kết quả cuối cùng", icon: Sparkles }
   ];
 
@@ -664,7 +691,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     if (s === ProductionStage.BEAT_MOMENT) return !!production.beatMomentDetails;
     if (s === ProductionStage.STORYBOARD) return !!production.storyboard;
     if (s === ProductionStage.PROMPTS) return !!production.prompts;
-    if (s === ProductionStage.QA) return !!production.qaReport;
     if (s === ProductionStage.FINAL) return !!production.finalResult;
     return false;
   };
@@ -676,7 +702,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     if (s === ProductionStage.BEAT_MOMENT) return project.workflow.beatMomentDetails.status;
     if (s === ProductionStage.STORYBOARD) return project.workflow.storyboard.status;
     if (s === ProductionStage.PROMPTS) return project.workflow.promptEngineering.status;
-    if (s === ProductionStage.QA) return project.workflow.qa.status;
     if (s === ProductionStage.FINAL) return project.workflow.finalResult.status;
     return null;
   };
@@ -779,7 +804,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const getAnalysisBeatsFromParsed = (parsed: any) => {
-    const rawBeats = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.beats) ? parsed.beats : null);
+    const nestedAnalysis = typeof parsed?.analysis === "string"
+      ? parseJsonSafe<any>(parsed.analysis, null)
+      : parsed?.analysis;
+    const source = Array.isArray(parsed) || Array.isArray(parsed?.beats)
+      ? parsed
+      : nestedAnalysis;
+    const rawBeats = Array.isArray(source) ? source : (Array.isArray(source?.beats) ? source.beats : null);
     return rawBeats ? rawBeats.map((beat: any, index: number) => normalizeBeatForUi(beat, index)) : null;
   };
 
@@ -843,16 +874,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           storyboardJson: production.storyboard || '',
           style: stylePrompt,
         });
-      case ProductionStage.QA: 
-        return gemini.getQAPrompt(
-          production.prompts || '', 
-          production.characterLocationAnalysis || '', 
-          stylePrompt, 
-          production.storyboard || '', 
-          production.analysis || '',
-          production.screenContinuity || '',
-          production.beatMomentDetails || ''
-        );
       case ProductionStage.FINAL:
         return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
       default: return '';
@@ -875,8 +896,19 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   }, [stage, production.finalResult]);
 
   const parsedFinalResult = useMemo<FinalResult | null>(() => {
-    const parsed = parseJsonSafe<FinalResult | null>(production.finalResult, null);
-    return parsed && Array.isArray(parsed.panels) ? parsed : null;
+    const parsed = parseJsonSafe<any>(production.finalResult, null);
+    if (parsed && Array.isArray(parsed.panels)) return parsed as FinalResult;
+    if (Array.isArray(parsed)) {
+      return {
+        panels: parsed.filter((item) => item && typeof item === "object"),
+        metadata: {
+          totalPanels: parsed.length,
+          generatedAt: "",
+          source: "code-builder"
+        }
+      } as FinalResult;
+    }
+    return null;
   }, [production.finalResult]);
 
   const finalResultParseError = useMemo(() => {
@@ -885,38 +917,70 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   }, [production.finalResult, parsedFinalResult]);
 
   const finalBuildData = useMemo(() => {
-    const analysisData = parseJsonSafe<unknown>(production.analysis, {});
-    const storyboardData = parseJsonSafe<unknown>(production.storyboard, {});
-    const promptData = parseJsonSafe<unknown>(production.prompts, {});
-    const qaData = parseJsonSafe<unknown>(production.qaReport, {});
-    const libraryData = normalizeCharacterLocationLibrary(
-      parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
-    );
-    const parsedScreens = normalizeScreens(analysisData);
-    const parsedBeats = normalizeBeats(analysisData);
+    try {
+      const analysisData = parseJsonSafe<unknown>(production.analysis, {});
+      const storyboardData = parseJsonSafe<unknown>(production.storyboard, {});
+      const promptData = parseJsonSafe<unknown>(production.prompts, {});
+      const libraryData = normalizeCharacterLocationLibrary(
+        parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
+      );
+      const parsedScreens = normalizeScreens(analysisData);
+      const parsedBeats = normalizeBeats(analysisData);
+      const projectBeats = normalizeBeats({ beats: Array.isArray(project.beats) ? project.beats : [] });
+      const projectScreens = normalizeScreens({ screens: Array.isArray(project.screens) ? project.screens : [] });
+      const projectPanels = normalizeStoryboardPanels({ panels: Array.isArray(project.storyboardPanels) ? project.storyboardPanels : [] });
+      const projectPrompts = normalizeEngineerPrompts({ engineerPrompts: Array.isArray(project.engineerPrompts) ? project.engineerPrompts : [] });
+      const beats = projectBeats.length ? projectBeats : parsedBeats;
+      const baseScreens = projectScreens.length
+        ? projectScreens
+        : parsedScreens.length
+          ? parsedScreens
+          : createFallbackScreensFromBeats(beats);
+      const screens = mergeScreenContinuityIntoScreens(
+        baseScreens,
+        production.screenContinuity || project.screenContinuity || ""
+      );
+      const beatsWithMoments = mergeBeatMomentDetailsIntoBeats(
+        beats,
+        production.beatMomentDetails || project.beatMomentDetails || ""
+      );
 
-    return {
-      screens: project.screens?.length ? project.screens : (parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(project.beats?.length ? project.beats : parsedBeats)),
-      beats: project.beats?.length ? project.beats : parsedBeats,
-      panels: project.storyboardPanels?.length ? project.storyboardPanels : normalizeStoryboardPanels(storyboardData),
-      engineerPrompts: project.engineerPrompts?.length ? project.engineerPrompts : normalizeEngineerPrompts(promptData),
-      qaResults: project.qaResults?.length ? project.qaResults : normalizeQAResults(qaData),
-      characters: project.characters?.length ? project.characters : libraryData.characters,
-      locations: project.locations?.length ? project.locations : libraryData.locations
-    };
+      return {
+        screens,
+        beats: beatsWithMoments,
+        panels: projectPanels.length ? projectPanels : normalizeStoryboardPanels(storyboardData),
+        engineerPrompts: projectPrompts.length ? projectPrompts : normalizeEngineerPrompts(promptData),
+        qaResults: [],
+        characters: project.characters?.length ? project.characters : libraryData.characters,
+        locations: project.locations?.length ? project.locations : libraryData.locations
+      };
+    } catch (error) {
+      console.error("Failed to prepare Final Result build data:", error);
+      return {
+        screens: [],
+        beats: [],
+        panels: [],
+        engineerPrompts: [],
+        qaResults: [],
+        characters: [],
+        locations: []
+      };
+    }
   }, [
     project.beats,
     project.screens,
     project.storyboardPanels,
     project.engineerPrompts,
-    project.qaResults,
     project.characters,
     project.locations,
     production.analysis,
     production.storyboard,
     production.prompts,
-    production.qaReport,
-    production.characterLocationAnalysis
+    production.characterLocationAnalysis,
+    production.screenContinuity,
+    production.beatMomentDetails,
+    project.screenContinuity,
+    project.beatMomentDetails
   ]);
 
   const finalBuildCheck = useMemo(
@@ -944,7 +1008,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     if (parsedJson && (stage === ProductionStage.ANALYSIS || stage === ProductionStage.CHARACTER_LOCATION)) {
       const pastedBeatAnalysis = getAnalysisBeatsFromParsed(parsedJson);
-      if (stage === ProductionStage.ANALYSIS && pastedBeatAnalysis) {
+      const isPhaseOneCombinedPayload = parsedJson.analysis !== undefined || parsedJson.characterLocationAnalysis !== undefined;
+      if (stage === ProductionStage.ANALYSIS && pastedBeatAnalysis && !isPhaseOneCombinedPayload) {
         const rawAnalysisPayload = Array.isArray(parsedJson)
           ? parsedJson
           : { ...parsedJson, beats: pastedBeatAnalysis };
@@ -1004,6 +1069,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const finalValueToSave = parsedJson ? JSON.stringify(parsedJson, null, 2) : manualInputValue;
     updateProductionDataByStage(finalValueToSave, stage);
     setManualInputValue('');
+
     setIsManualMode(false);
     
     const nextIndex = steps.findIndex(s => s.id === stage) + 1;
@@ -1067,9 +1133,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         if (targetStage === ProductionStage.PROMPTS) {
           return replaceEngineerPrompts(prev, normalizeEngineerPrompts(parseJsonSafe<unknown>(result, [])));
         }
-        if (targetStage === ProductionStage.QA) {
-          return replaceQAResults(prev, normalizeQAResults(parseJsonSafe<unknown>(result, [])));
-        }
         if (targetStage === ProductionStage.FINAL) {
           const finalResult = parseJsonSafe<FinalResult | null>(result, null);
           return finalResult ? replaceFinalResult(prev, finalResult) : prev;
@@ -1113,7 +1176,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       else if (targetStage === ProductionStage.BEAT_MOMENT) updated.beatMomentDetails = result;
       else if (targetStage === ProductionStage.STORYBOARD) updated.storyboard = result;
       else if (targetStage === ProductionStage.PROMPTS) updated.prompts = result;
-      else if (targetStage === ProductionStage.QA) updated.qaReport = result;
       else if (targetStage === ProductionStage.FINAL) updated.finalResult = result;
       return updated;
     });
@@ -1201,7 +1263,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const handleProcess = async () => {
-    if (isManualMode) return;
+    if (isManualMode && stage !== ProductionStage.PROMPTS) return;
     
     const currentIndex = steps.findIndex(s => s.id === stage);
     const nextStep = steps[currentIndex + 1];
@@ -1297,22 +1359,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           style: getSelectedStylePrompt(),
         });
         targetStage = ProductionStage.PROMPTS;
-      } else if (stage === ProductionStage.QA) {
-        result = await gemini.runQA(
-          production.prompts || '',
-          production.characterLocationAnalysis || '',
-          getSelectedStylePrompt(),
-          production.storyboard || '',
-          production.analysis || '',
-          production.screenContinuity || '',
-          production.beatMomentDetails || ''
-        );
-        targetStage = ProductionStage.QA;
-      } else if (stage === ProductionStage.FINAL || (stage === ProductionStage.QA && !production.finalResult)) {
+      } else if (stage === ProductionStage.FINAL) {
         const analysisData = parseJsonSafe<unknown>(production.analysis, []);
         const storyboardData = parseJsonSafe<unknown>(production.storyboard, { panels: [] });
         const promptData = parseJsonSafe<unknown>(production.prompts, []);
-        const qaData = parseJsonSafe<unknown>(production.qaReport, []);
         const libraryData = normalizeCharacterLocationLibrary(
           parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
         );
@@ -1324,7 +1374,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           beats,
           storyboardPanels: project.storyboardPanels.length ? project.storyboardPanels : normalizeStoryboardPanels(storyboardData),
           engineerPrompts: project.engineerPrompts.length ? project.engineerPrompts : normalizeEngineerPrompts(promptData),
-          qaResults: project.qaResults.length ? project.qaResults : normalizeQAResults(qaData),
+          qaResults: [],
           characters: project.characters.length ? project.characters : libraryData.characters,
           locations: project.locations.length ? project.locations : libraryData.locations,
           screenContinuity: production.screenContinuity || "",
@@ -1466,27 +1516,19 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const buildFinalResultFromCurrentProject = useCallback(() => {
     if (!finalBuildCheck.canBuild) return null;
 
-    const finalResult = buildFinalResult(finalBuildData);
-    setProduction((prev) => ({
-      ...prev,
-      finalResult: JSON.stringify(finalResult, null, 2),
-    }));
-    return finalResult;
+    try {
+      const finalResult = buildFinalResult(finalBuildData);
+      setProduction((prev) => ({
+        ...prev,
+        finalResult: JSON.stringify(finalResult, null, 2),
+      }));
+      return finalResult;
+    } catch (error: any) {
+      console.error("Failed to build Final Result:", error);
+      setError(error?.message ? `Không thể build Final Result: ${error.message}` : "Không thể build Final Result.");
+      return null;
+    }
   }, [finalBuildCheck.canBuild, finalBuildData]);
-
-  useEffect(() => {
-    const isFinalStage = stage === ProductionStage.FINAL;
-    if (!isFinalStage) return;
-    if (hasTextValue(production.finalResult)) return;
-    if (!finalBuildCheck.canBuild) return;
-
-    buildFinalResultFromCurrentProject();
-  }, [
-    stage,
-    production.finalResult,
-    finalBuildCheck.canBuild,
-    buildFinalResultFromCurrentProject,
-  ]);
 
   const handleExportSRT = () => {
     const subtitleItems = getSubtitleItems();
@@ -1713,13 +1755,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return items.join(', ');
   };
 
-  const getFinalQaBadgeClass = (status?: string) => {
-    if (status === 'pass') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    if (status === 'warning') return 'bg-amber-100 text-amber-700 border-amber-200';
-    if (status === 'fail') return 'bg-rose-100 text-rose-700 border-rose-200';
-    return 'bg-slate-100 text-slate-600 border-slate-200';
-  };
-
   const getPanelVisualPrompt = (panel: FinalResultPanel) => {
     const legacy = panel as unknown as { visualPrompt?: string; negative_prompt?: string };
     return ensureVisualPromptHasNegativePrompt(panel.prompt?.visualPrompt || legacy.visualPrompt || '', legacy.negative_prompt);
@@ -1781,14 +1816,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const renderManualView = () => (
     <div className="max-w-5xl mx-auto space-y-6">
       <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
-        <div className="bg-slate-800 px-6 py-3 flex justify-between items-center border-b border-slate-700">
+        <div className="bg-slate-800 px-6 py-3 flex flex-wrap justify-between items-center gap-3 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-indigo-400" />
-            <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Prompt cho AI bên ngoài</span>
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+              Prompt cho AI bên ngoài
+            </span>
           </div>
-          <button onClick={() => copyToClipboard(currentStepPrompt)} className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-400 hover:text-white transition-colors">
-            <Copy className="w-3 h-3" /> COPY PROMPT
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <button onClick={() => copyToClipboard(currentStepPrompt)} className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-400 hover:text-white transition-colors">
+              <Copy className="w-3 h-3" /> COPY PROMPT
+            </button>
+          </div>
         </div>
         <div className="p-6">
           <pre className="text-xs text-slate-400 whitespace-pre-wrap font-mono leading-relaxed h-48 overflow-y-auto">
@@ -1824,7 +1863,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const renderFinalPanelCard = (panel: FinalResultPanel) => {
     const source = panel.source;
     const storyboard = panel.storyboard;
-    const qa = panel.qa;
     const visualPrompt = getPanelVisualPrompt(panel);
 
     return (
@@ -1834,9 +1872,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Final Beat</p>
             <h4 className="mt-1 text-xl font-black text-slate-900">Beat #{panel.beatId || 'N/A'}</h4>
           </div>
-          <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${getFinalQaBadgeClass(qa?.status)}`}>
-            QA: {qa?.status || 'unchecked'}
-          </span>
         </div>
 
         <section className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
@@ -1910,15 +1945,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </pre>
         </section>
 
-        {qa?.issues?.length > 0 && (
-          <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <h5 className="mb-2 text-[10px] font-black uppercase tracking-widest text-amber-700">QA Issues</h5>
-            <ul className="list-inside list-disc space-y-1 text-xs text-amber-800">
-              {qa.issues.map((issue) => <li key={issue}>{issue}</li>)}
-            </ul>
-          </section>
-        )}
-
         <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
           <button
             onClick={() => copyToClipboard(visualPrompt)}
@@ -1955,8 +1981,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       { label: 'Storyboard Beats', ok: finalBuildData.panels.length > 0, count: finalBuildData.panels.length, required: true },
       { label: 'Prompt Engineering', ok: finalBuildData.engineerPrompts.length > 0, count: finalBuildData.engineerPrompts.length, required: true },
       { label: 'Character Library', ok: finalBuildData.characters.length > 0, count: finalBuildData.characters.length, required: false },
-      { label: 'Location Library', ok: finalBuildData.locations.length > 0, count: finalBuildData.locations.length, required: false },
-      { label: 'QA Results', ok: finalBuildData.qaResults.length > 0, count: finalBuildData.qaResults.length, required: false }
+      { label: 'Location Library', ok: finalBuildData.locations.length > 0, count: finalBuildData.locations.length, required: false }
     ];
 
     return (
@@ -1969,7 +1994,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             <div>
               <h3 className="text-lg font-black text-slate-900">Final Result được build local</h3>
               <p className="mt-2 max-w-3xl text-sm leading-relaxed text-indigo-900">
-                Bước này không gọi Gemini và không cần dán kết quả AI. App sẽ tổng hợp dữ liệu hiện có từ Beat Analysis, Character/Location Library, Storyboard, Prompt Engineering và QA thành JSON cuối cùng.
+                Final Result is built locally from Beat Analysis, Character/Location Library, Storyboard, and Prompt Engineering. QA is no longer part of the active pipeline.
               </p>
             </div>
           </div>
@@ -2095,7 +2120,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
               </div>
             </div>
             {finalResultViewMode === 'panels' ? (
-              renderFinalPanelView()
+              <StageRenderBoundary stage={ProductionStage.FINAL} resetKey={production.finalResult || ''}>
+                {renderFinalPanelView()}
+              </StageRenderBoundary>
             ) : (
               <textarea
                 value={production.finalResult || 'Chưa có Final Result. Bấm "Build Final Result" để tạo JSON cuối cùng.'}
@@ -2670,9 +2697,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   return (
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                     <div className="mb-3 flex items-start justify-between gap-3">
-                      <div>
-                        <h4 className="font-bold text-indigo-600">{char.name}</h4>
-                        <div className="mt-1">{renderLockSummary(projectChar)}</div>
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 px-2 text-[10px] font-black text-indigo-600 ring-1 ring-indigo-100">
+                          #{i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-indigo-600">{char.name}</h4>
+                          <div className="mt-1">{renderLockSummary(projectChar)}</div>
+                        </div>
                       </div>
                       {characterKey && (
                         <button
@@ -2737,12 +2769,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <p className="text-[10px] font-mono text-indigo-100 leading-tight line-clamp-3">
                         Character reference sheet with turnaround views, expression grid, head details, pose variations, hand gestures, wardrobe/accessory panels, prop reference, and color palette.
                       </p>
-                      <button
-                        onClick={() => openCharacterReferenceSheetPrompt(char)}
-                        className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-500 transition-colors"
-                      >
-                        <Sparkles className="w-3 h-3" /> Generate Reference Sheet Prompt
-                      </button>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() => openCharacterReferenceSheetPrompt(char)}
+                          className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-indigo-500 transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3" /> Generate Reference Sheet Prompt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(buildCharacterReferenceSheetPrompt(char, getSelectedStylePrompt()))}
+                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-100 hover:bg-white/20 hover:text-white transition-colors"
+                          title="Copy Character Reference Sheet Prompt"
+                        >
+                          <Copy className="w-3 h-3" /> Copy
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -2759,9 +2801,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   return (
                   <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                     <div className="mb-3 flex items-start justify-between gap-3">
-                      <div>
-                        <h4 className="font-bold text-emerald-600">{loc.name}</h4>
-                        <div className="mt-1">{renderLockSummary(projectLoc)}</div>
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 px-2 text-[10px] font-black text-emerald-600 ring-1 ring-emerald-100">
+                          #{i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-emerald-600">{loc.name}</h4>
+                          <div className="mt-1">{renderLockSummary(projectLoc)}</div>
+                        </div>
                       </div>
                       {locationKey && (
                         <button
@@ -2829,12 +2876,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <p className="text-[10px] font-mono text-emerald-100 leading-tight line-clamp-3">
                         Location reference sheet with establishing view, side views, top-down layout, key object close-ups, lighting reference, and fixed spatial continuity.
                       </p>
-                      <button
-                        onClick={() => openLocationReferenceSheetPrompt(loc)}
-                        className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-500 transition-colors"
-                      >
-                        <Sparkles className="w-3 h-3" /> Generate Location Reference Prompt
-                      </button>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() => openLocationReferenceSheetPrompt(loc)}
+                          className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-500 transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3" /> Generate Location Reference Prompt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(buildLocationReferenceSheetPrompt(loc, getSelectedStylePrompt()))}
+                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-100 hover:bg-white/20 hover:text-white transition-colors"
+                          title="Copy Location Reference Sheet Prompt"
+                        >
+                          <Copy className="w-3 h-3" /> Copy
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -3255,32 +3312,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </div>
         );
 
-      case ProductionStage.QA:
-        if (!Array.isArray(parsed)) return <div className="text-slate-800 text-sm whitespace-pre-wrap">{JSON.stringify(parsed, null, 2)}</div>;
-        const failedPanels = parsed.filter((item: any) => !item.qaNotes?.toLowerCase().includes('pass'));
-        if (failedPanels.length === 0) {
-          return (
-            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-8 text-center">
-              <div className="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 className="w-6 h-6 text-emerald-600" /></div>
-              <h4 className="text-emerald-900 font-bold mb-1">Tất cả Beat đã vượt qua kiểm tra</h4>
-              <p className="text-emerald-600 text-xs">Không có lỗi hoặc thay đổi nào cần xử lý.</p>
-            </div>
-          );
-        }
-        return (
-          <div className="space-y-4">
-            {failedPanels.map((item: any, i: number) => (
-              <div key={i} className="bg-white border border-amber-200 rounded-xl overflow-hidden shadow-sm">
-                <div className="px-4 py-2 flex justify-between items-center border-b bg-amber-50 border-amber-100">
-                  <span className="text-[10px] font-black text-slate-400 uppercase">Beat {item.beatId || item.panelNumber || i + 1}</span>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-700">{item.qaNotes}</span>
-                </div>
-                <div className="p-4"><p className="text-xs font-mono text-slate-600 leading-relaxed">{item.visualPrompt}</p></div>
-              </div>
-            ))}
-          </div>
-        );
-
       default:
         return <div className="text-slate-800 text-sm whitespace-pre-wrap font-sans leading-relaxed">{JSON.stringify(parsed, null, 2)}</div>;
     }
@@ -3571,6 +3602,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const renderAnalysisModeModal = () => {
     if (!showAnalysisModeModal) return null;
+    const isPromptEngineeringStage = stage === ProductionStage.PROMPTS;
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
         <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 animate-in fade-in zoom-in duration-200">
@@ -3581,12 +3613,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           <div className="space-y-4">
             <button onClick={() => startAnalysis('auto')} className="w-full p-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl transition-all group flex items-center gap-4 text-left shadow-lg shadow-indigo-200">
               <div className="bg-white/20 p-3 rounded-xl group-hover:scale-110 transition-transform"><Sparkles className="w-6 h-6" /></div>
-              <div><div className="font-bold text-lg">Phân tích tự động</div><div className="text-indigo-100 text-xs mt-0.5">Sử dụng Gemini API</div></div>
+              <div>
+                <div className="font-bold text-lg">{isPromptEngineeringStage ? "Build visual prompts" : "Phân tích tự động"}</div>
+                <div className="text-indigo-100 text-xs mt-0.5">{isPromptEngineeringStage ? "Local resolver from approved fields" : "Sử dụng Gemini API"}</div>
+              </div>
             </button>
-            <button onClick={() => startAnalysis('manual')} className="w-full p-6 bg-white border-2 border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/50 text-slate-700 rounded-2xl transition-all group flex items-center gap-4 text-left">
-              <div className="bg-slate-100 p-3 rounded-xl group-hover:bg-indigo-100 group-hover:scale-110 transition-all"><Terminal className="w-6 h-6 text-slate-600 group-hover:text-indigo-600" /></div>
-              <div><div className="font-bold text-lg text-slate-800">Phân tích thủ công</div><div className="text-slate-500 text-xs mt-0.5">Copy prompt và dán kết quả</div></div>
-            </button>
+            {!isPromptEngineeringStage && (
+              <button onClick={() => startAnalysis('manual')} className="w-full p-6 bg-white border-2 border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/50 text-slate-700 rounded-2xl transition-all group flex items-center gap-4 text-left">
+                <div className="bg-slate-100 p-3 rounded-xl group-hover:bg-indigo-100 group-hover:scale-110 transition-all"><Terminal className="w-6 h-6 text-slate-600 group-hover:text-indigo-600" /></div>
+                <div>
+                  <div className="font-bold text-lg text-slate-800">Phân tích thủ công</div>
+                  <div className="text-slate-500 text-xs mt-0.5">Copy prompt và dán kết quả</div>
+                </div>
+              </button>
+            )}
           </div>
           <button onClick={() => setShowAnalysisModeModal(false)} className="mt-6 w-full py-3 text-slate-400 font-bold hover:text-slate-600 transition-colors text-sm">Hủy bỏ</button>
         </div>
@@ -3831,12 +3871,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       : stage === ProductionStage.BEAT_MOMENT ? production.beatMomentDetails
                       : stage === ProductionStage.STORYBOARD ? production.storyboard
                       : stage === ProductionStage.PROMPTS ? production.prompts
-                      : stage === ProductionStage.QA ? production.qaReport
                       : production.finalResult;
 
     if (stage === ProductionStage.FINAL) return renderFinalBuilderView();
 
-    if (isManualMode || (isGlobalManualMode && !currentResult)) return renderManualView();
+    if (stage !== ProductionStage.PROMPTS && (isManualMode || (isGlobalManualMode && !currentResult))) return renderManualView();
 
     const missingPromptInputs = getPromptEngineeringMissingInputs(production);
 
@@ -3853,16 +3892,28 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
               Còn thiếu các bước: <span className="font-mono font-bold text-indigo-600">{missingPromptInputs.join(", ")}</span>.
             </p>
             <p className="mt-1 text-xs text-amber-700 leading-relaxed">
-              Nếu bạn sao chép prompt sang cửa sổ chat mới khi thiếu các dữ liệu này, AI bên ngoài sẽ không có đủ ngữ cảnh JSON của các bước trước để tạo visualPrompt chính xác theo kịch bản của bạn.
+              Resolver local cần các dữ liệu này để gom đúng location, character, screen lock, storyboard và beat moment thành visualPrompt cuối.
             </p>
           </div>
         )}
-        {!currentResult && !isLoading && !isGlobalManualMode ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>
+        {!currentResult && !isLoading && (!isGlobalManualMode || stage === ProductionStage.PROMPTS) ? (
+          stage === ProductionStage.PROMPTS ? (
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-12 text-center h-full flex flex-col items-center justify-center">
+              <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+                <Zap className="h-8 w-8" />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900">Build visual prompts bằng local resolver</h3>
+              <p className="mt-3 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
+                Bước này không gọi AI, không cần copy prompt và không cần dán JSON. App sẽ gom các field đã duyệt từ những bước trước để tạo `engineerPrompts[]`.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>
+          )
         ) : (
           <div className="bg-slate-50/30 rounded-3xl">
             {isLoading ? (
-              <div className="flex flex-col items-center justify-center min-h-[400px] text-indigo-600 gap-4"><Loader2 className="w-12 h-12 animate-spin" /><p className="font-bold animate-pulse">AI đang làm việc...</p></div>
+              <div className="flex flex-col items-center justify-center min-h-[400px] text-indigo-600 gap-4"><Loader2 className="w-12 h-12 animate-spin" /><p className="font-bold animate-pulse">{stage === ProductionStage.PROMPTS ? "Đang gom field bằng local resolver..." : "AI đang làm việc..."}</p></div>
             ) : (
               <StageRenderBoundary stage={stage} resetKey={String(currentResult || '')}>
                 {renderDataView(currentResult, stage)}
@@ -3880,15 +3931,17 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       : stage === ProductionStage.BEAT_MOMENT ? production.beatMomentDetails
                       : stage === ProductionStage.STORYBOARD ? production.storyboard
                       : stage === ProductionStage.PROMPTS ? production.prompts
-                      : stage === ProductionStage.QA ? production.qaReport
                       : production.finalResult;
 
-  const isShowingManual = stage !== ProductionStage.FINAL && (isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT));
+  const isShowingManual = stage !== ProductionStage.FINAL
+    && stage !== ProductionStage.PROMPTS
+    && (isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT));
   const btn = isLoading ? { label: "Đang xử lý...", icon: <Loader2 className="w-5 h-5 animate-spin" />, color: "bg-indigo-600" } 
              : isShowingManual ? { label: "Xác nhận dữ liệu", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
              : stage === ProductionStage.INPUT ? { label: "Bắt đầu phân tích", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
              : stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL) ? { label: "Dự án hoàn tất", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
              : stage === ProductionStage.FINAL ? { label: "Tổng hợp kết quả", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
+             : stage === ProductionStage.PROMPTS ? { label: "Build visual prompts", icon: <Zap className="w-5 h-5" />, color: "bg-indigo-600" }
              : { label: isGlobalManualMode ? "Tiếp tục" : "Tiếp tục với AI", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" };
 
   return (
@@ -3963,7 +4016,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 >
                   <Save className="w-4 h-4" /> LƯU DỰ ÁN
                 </button>
-                {stage !== ProductionStage.INPUT && stage !== ProductionStage.FINAL && (
+                {stage !== ProductionStage.INPUT && stage !== ProductionStage.FINAL && stage !== ProductionStage.PROMPTS && (
                   <button 
                     onClick={() => setIsManualMode(!isManualMode)} 
                     className={`flex items-center gap-3 px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 shadow-sm ${isShowingManual ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:shadow-md"}`}

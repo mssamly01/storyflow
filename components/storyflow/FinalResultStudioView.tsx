@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Download, Copy, ChevronDown, ChevronUp, FileJson, AlertCircle, Layout, Sparkles, CheckCircle2, Info, User, MapPin, Clock } from 'lucide-react';
+import { Download, Copy, ChevronDown, ChevronUp, FileJson, Layout, Sparkles, CheckCircle2, Info, User, MapPin, Clock } from 'lucide-react';
 import type { FinalResultPanel, FinalResult } from "../../types";
 
 interface FinalResultStudioViewProps {
@@ -9,6 +9,42 @@ interface FinalResultStudioViewProps {
 
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
+}
+
+function toDisplayText(value: unknown, fallback = ""): string {
+  if (value == null) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => toDisplayText(item)).filter(Boolean).join(", ") || fallback;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferred =
+      record.name ??
+      record.characterName ??
+      record.character_name ??
+      record.label ??
+      record.title ??
+      record.value ??
+      record.text ??
+      record.description;
+    if (preferred != null) return toDisplayText(preferred, fallback);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function toDisplayList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => toDisplayText(item)).filter(Boolean);
+  }
+  const text = toDisplayText(value);
+  return text ? [text] : [];
 }
 
 interface ChipProps {
@@ -46,7 +82,7 @@ const Chip: React.FC<ChipProps> = ({
 };
 
 interface ChipListProps {
-  items?: string[];
+  items?: unknown;
   tone: "slate" | "violet" | "emerald" | "amber" | "rose" | "sky" | "indigo";
   empty?: string;
   icon?: any;
@@ -58,14 +94,14 @@ const ChipList: React.FC<ChipListProps> = ({
   empty = "None",
   icon
 }) => {
-  const safeItems = items?.filter(Boolean) ?? [];
+  const safeItems = toDisplayList(items);
 
   if (safeItems.length === 0) return <Chip tone="slate">{empty}</Chip>;
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      {safeItems.map((item) => (
-        <Chip key={item} tone={tone} icon={icon}>
+      {safeItems.map((item, index) => (
+        <Chip key={`${item}-${index}`} tone={tone} icon={icon}>
           {item}
         </Chip>
       ))}
@@ -118,7 +154,14 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
   onCopyPrompt,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const qaStatus = item.qa?.status ?? "unchecked";
+  const originalText = toDisplayText(item.source?.originalText);
+  const summary = toDisplayText(item.source?.summary || item.source?.visualFocus, "Untitled final beat");
+  const action = toDisplayText(item.source?.action, "No action");
+  const posture = toDisplayText(item.source?.posture);
+  const shotType = toDisplayText(item.storyboard?.shotType, "Standard Shot");
+  const cameraAngle = toDisplayText(item.storyboard?.cameraAngle, "Eye Level");
+  const composition = toDisplayText(item.storyboard?.composition, "Balanced");
+  const visualPrompt = toDisplayText(item.prompt?.visualPrompt);
 
   return (
     <article className="group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm transition-all hover:shadow-md hover:border-slate-300">
@@ -129,31 +172,17 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
               {item.panelNumber}
             </span>
             <Chip tone="violet" icon={Sparkles}>Beat #{item.beatId}</Chip>
-            <Chip
-              icon={qaStatus === 'pass' ? CheckCircle2 : AlertCircle}
-              tone={
-                qaStatus === "fail"
-                  ? "rose"
-                  : qaStatus === "warning"
-                    ? "amber"
-                    : qaStatus === "pass"
-                      ? "emerald"
-                      : "slate"
-              }
-            >
-              QA: {qaStatus}
-            </Chip>
           </div>
 
           <h4 className="mt-4 text-base font-black text-slate-900 leading-tight">
-            {item.source?.summary || item.source?.visualFocus || "Untitled final beat"}
+            {summary}
           </h4>
 
-          {item.source?.originalText && (
+          {originalText && (
             <div className="mt-3 relative">
               <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-100 rounded-full" />
               <p className="pl-4 text-xs italic leading-relaxed text-slate-500 font-medium">
-                "{item.source.originalText}"
+                "{originalText}"
               </p>
             </div>
           )}
@@ -196,24 +225,24 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
         <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 transition-colors group-hover:bg-indigo-50/60">
           <SectionLabel>Action & Posture</SectionLabel>
           <p className="mt-2 text-xs font-bold leading-relaxed text-slate-700">
-            {item.source?.action || "No action"}
-            {item.source?.posture && <span className="block mt-1 font-medium text-slate-500 italic">Posture: {item.source.posture}</span>}
+            {action}
+            {posture && <span className="block mt-1 font-medium text-slate-500 italic">Posture: {posture}</span>}
           </p>
         </div>
 
         <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4 transition-colors group-hover:bg-sky-50/60">
           <SectionLabel>Storyboard</SectionLabel>
           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold text-slate-700">
-            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{item.storyboard?.shotType || 'Standard Shot'}</span>
-            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{item.storyboard?.cameraAngle || 'Eye Level'}</span>
-            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{item.storyboard?.composition || 'Balanced'}</span>
+            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{shotType}</span>
+            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{cameraAngle}</span>
+            <span className="px-2 py-0.5 bg-white rounded-md border border-sky-100 shadow-sm">{composition}</span>
           </div>
         </div>
       </div>
 
       <div className="mt-6">
         <PromptBox
-          value={item.prompt?.visualPrompt ?? ""}
+          value={visualPrompt}
           onCopy={onCopyPrompt}
         />
       </div>
@@ -224,14 +253,14 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
             <div>
               <SectionLabel>Atmosphere & Style</SectionLabel>
               <p className="mt-2 text-xs font-medium leading-relaxed text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                {item.source?.atmosphere || "No atmosphere defined"}
+                {toDisplayText(item.source?.atmosphere, "No atmosphere defined")}
               </p>
             </div>
 
             <div>
               <SectionLabel>Visual Focus</SectionLabel>
               <p className="mt-2 text-xs font-medium leading-relaxed text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                {item.source?.visualFocus || "Standard focus"}
+                {toDisplayText(item.source?.visualFocus, "Standard focus")}
               </p>
             </div>
           </div>
@@ -241,26 +270,26 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
             <div className="mt-2 flex items-center gap-3 text-xs font-bold">
               <div className="flex-1 p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <span className="text-[9px] text-slate-400 block mb-1">Foreground</span>
-                {item.storyboard?.foreground || "-"}
+                {toDisplayText(item.storyboard?.foreground, "-")}
               </div>
               <div className="flex-1 p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <span className="text-[9px] text-slate-400 block mb-1">Midground</span>
-                {item.storyboard?.midground || "-"}
+                {toDisplayText(item.storyboard?.midground, "-")}
               </div>
               <div className="flex-1 p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <span className="text-[9px] text-slate-400 block mb-1">Background</span>
-                {item.storyboard?.background || "-"}
+                {toDisplayText(item.storyboard?.background, "-")}
               </div>
             </div>
           </div>
 
-          {item.source?.characterMomentDetails && item.source.characterMomentDetails.length > 0 && (
+          {Array.isArray(item.source?.characterMomentDetails) && item.source.characterMomentDetails.length > 0 && (
             <div>
               <SectionLabel>Beat Moment Details</SectionLabel>
               <div className="grid gap-4 sm:grid-cols-2 mt-2">
-                {item.source.characterMomentDetails.map((moment) => (
-                  <div key={moment.characterName} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                    <p className="text-xs font-extrabold text-slate-900">{moment.characterName}</p>
+                {item.source.characterMomentDetails.map((moment, index) => (
+                  <div key={`${toDisplayText(moment.characterName, "character")}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                    <p className="text-xs font-extrabold text-slate-900">{toDisplayText(moment.characterName, "Character")}</p>
                     {moment.visibleAccessories && moment.visibleAccessories.length > 0 && (
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <span className="text-[9px] font-bold text-slate-400 font-bold">Accessories:</span>
@@ -275,12 +304,12 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
                     )}
                     {moment.accessoriesChange && moment.accessoriesChange.length > 0 && (
                       <p className="mt-1 text-[9px] text-slate-600 font-medium">
-                        <span className="font-bold text-slate-400 font-bold">Change:</span> {moment.accessoriesChange.join(", ")}
+                        <span className="font-bold text-slate-400 font-bold">Change:</span> {toDisplayList(moment.accessoriesChange).join(", ")}
                       </p>
                     )}
                     {moment.momentNotes && (
                       <p className="mt-1 text-[9px] text-slate-500 italic">
-                        Note: {moment.momentNotes}
+                        Note: {toDisplayText(moment.momentNotes)}
                       </p>
                     )}
                   </div>
@@ -289,24 +318,6 @@ const FinalBeatCard: React.FC<FinalBeatCardProps> = ({
             </div>
           )}
 
-          {qaStatus !== 'pass' && (item.qa?.issues ?? []).length > 0 && (
-            <div>
-              <SectionLabel>QA Issues & Recommendations</SectionLabel>
-              <div className="mt-2 bg-rose-50 border border-rose-100 rounded-xl p-4">
-                <ul className="list-disc space-y-1 pl-4 text-xs text-rose-800 font-bold">
-                  {item.qa?.issues.map((issue, index) => (
-                    <li key={`${issue}-${index}`}>{issue}</li>
-                  ))}
-                </ul>
-                {item.qa?.suggestedPromptPatch && (
-                  <div className="mt-3 p-3 bg-white/50 rounded-lg border border-rose-200">
-                    <p className="text-[10px] uppercase font-black text-rose-400 mb-1">Suggested Patch</p>
-                    <p className="text-xs font-mono text-rose-900">{item.qa.suggestedPromptPatch}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </article>
@@ -317,13 +328,13 @@ export function FinalResultStudioView({
   finalResult,
   onCopyPrompt,
 }: FinalResultStudioViewProps) {
-  const items = finalResult?.panels ?? [];
+  const items = Array.isArray(finalResult?.panels) ? finalResult.panels : [];
 
   const grouped = useMemo(() => {
     const map = new Map<string, FinalResultPanel[]>();
 
     for (const item of items) {
-      const screenId = item.screenId ?? item.refs?.screenId ?? "screen_001";
+      const screenId = toDisplayText(item.screenId ?? item.refs?.screenId, "screen_001");
       const list = map.get(screenId) ?? [];
       list.push(item);
       map.set(screenId, list);
@@ -373,13 +384,13 @@ export function FinalResultStudioView({
               </div>
               
               <h3 className="text-3xl font-black tracking-tight leading-tight">
-                {screen?.screenName || `Screen ${index + 1}`}
+                {toDisplayText(screen?.screenName, `Screen ${index + 1}`)}
               </h3>
               
               <div className="mt-6 flex flex-wrap gap-2">
                 <Chip tone="sky" icon={Layout}>{screenItems.length} panels</Chip>
-                {screen?.timeOfDay && <Chip tone="amber" icon={Clock}>{screen.timeOfDay}</Chip>}
-                {screen?.location && <Chip tone="emerald" icon={MapPin}>{screen.location}</Chip>}
+                {toDisplayText(screen?.timeOfDay) && <Chip tone="amber" icon={Clock}>{toDisplayText(screen?.timeOfDay)}</Chip>}
+                {toDisplayText(screen?.location) && <Chip tone="emerald" icon={MapPin}>{toDisplayText(screen?.location)}</Chip>}
               </div>
             </div>
           </div>
@@ -404,19 +415,19 @@ export function FinalResultStudioView({
                 </div>
               </div>
 
-              {screen.screenCharacterStates && screen.screenCharacterStates.length > 0 && (
+              {Array.isArray(screen.screenCharacterStates) && screen.screenCharacterStates.length > 0 && (
                 <div className="mt-6 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
                   <div className="flex items-center gap-2 mb-3">
                     <User className="w-3.5 h-3.5 text-indigo-500" />
                     <SectionLabel>Screen Character Outfits & Accessories</SectionLabel>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mt-3">
-                    {screen.screenCharacterStates.map((charState) => (
-                      <div key={charState.characterName} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                        <p className="text-xs font-extrabold text-slate-900">{charState.characterName}</p>
+                    {screen.screenCharacterStates.map((charState, charIndex) => (
+                      <div key={`${toDisplayText(charState.characterName, "character")}-${charIndex}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                        <p className="text-xs font-extrabold text-slate-900">{toDisplayText(charState.characterName, "Character")}</p>
                         {charState.outfit && (
                           <p className="mt-1 text-[11px] text-slate-700 font-medium">
-                            <span className="font-bold text-slate-400 font-bold">Outfit:</span> {charState.outfit}
+                            <span className="font-bold text-slate-400 font-bold">Outfit:</span> {toDisplayText(charState.outfit)}
                           </p>
                         )}
                         {charState.accessories && charState.accessories.length > 0 && (
@@ -444,8 +455,8 @@ export function FinalResultStudioView({
                     <SectionLabel>Continuity & State</SectionLabel>
                   </div>
                   <div className="text-xs font-bold leading-relaxed text-slate-600 space-y-2">
-                    {screen.screenState && <p className="bg-indigo-50/50 p-2 rounded-lg">{screen.screenState}</p>}
-                    {screen.continuityNotes && <p className="bg-slate-50 p-2 rounded-lg italic">Note: {screen.continuityNotes}</p>}
+                    {screen.screenState && <p className="bg-indigo-50/50 p-2 rounded-lg">{toDisplayText(screen.screenState)}</p>}
+                    {screen.continuityNotes && <p className="bg-slate-50 p-2 rounded-lg italic">Note: {toDisplayText(screen.continuityNotes)}</p>}
                   </div>
                 </div>
               )}

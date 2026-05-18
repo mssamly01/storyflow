@@ -51,7 +51,11 @@ export function parseJsonSafe<T>(value: unknown, fallback: T): T {
 }
 
 const normalizeText = (value?: string) => (value || "").trim().toLowerCase();
-const asArray = (value: unknown): UnknownRecord[] => Array.isArray(value) ? value as UnknownRecord[] : [];
+const isRecord = (value: unknown): value is UnknownRecord =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
+const asArray = (value: unknown): UnknownRecord[] => Array.isArray(value)
+  ? value.filter(isRecord)
+  : [];
 const asNumber = (value: unknown, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -71,12 +75,18 @@ const asNumberArray = (value: unknown): number[] => {
 };
 
 function getItems(raw: unknown, keys: string[]): UnknownRecord[] {
-  if (Array.isArray(raw)) return raw as UnknownRecord[];
+  if (Array.isArray(raw)) return asArray(raw);
   if (!raw || typeof raw !== "object") return [];
   const record = raw as UnknownRecord;
   for (const key of keys) {
     const items = asArray(record[key]);
     if (items.length) return items;
+  }
+  const nestedAnalysis = typeof record.analysis === "string"
+    ? parseJsonSafe<unknown>(record.analysis, null)
+    : record.analysis;
+  if (nestedAnalysis && typeof nestedAnalysis === "object" && nestedAnalysis !== raw) {
+    return getItems(nestedAnalysis, keys);
   }
   return [];
 }
@@ -465,7 +475,7 @@ export function buildFinalResultPanel(params: {
   const prompt = findEngineerPromptForPanel(panel, engineerPrompts);
   const qa = findQAResultForPanel(panel, qaResults);
   const finalVisualPrompt = ensureVisualPromptHasNegativePrompt(cleanVisualPrompt(
-    qa?.visualPrompt || prompt?.visualPrompt || ""
+    prompt?.visualPrompt || ""
   ));
   const qaStatus = qa?.status || "unchecked";
   const qaIssues = qa?.issues || [];
@@ -568,7 +578,7 @@ export function buildFinalResultPanel(params: {
     location_cues: source.locationName,
     lighting: panel.lightingDirection || panel.lighting || bundle.location?.lighting || "",
     visualPrompt: finalVisualPrompt,
-    qaNotes: [qaStatus, ...qaIssues, qaPatch].filter(Boolean).join("; ")
+    qaNotes: qa ? [qaStatus, ...qaIssues, qaPatch].filter(Boolean).join("; ") : undefined
   };
 }
 
@@ -618,7 +628,6 @@ export function getFinalResultMissingInputs(params: {
   if (!params.engineerPrompts?.length) missingInputs.push("Prompt Engineering");
   if (!params.characters?.length) warnings.push("Character Library is empty.");
   if (!params.locations?.length) warnings.push("Location Library is empty.");
-  if (!params.qaResults?.length) warnings.push("QA results are empty. Final Result can still be built, but QA status will be unchecked.");
 
   return {
     canBuild: missingInputs.length === 0,

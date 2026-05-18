@@ -614,12 +614,10 @@ function buildScreenContinuityLine(
   return `Screen Continuity: ${formatList(screenCharacters, "approved characters")} remain present in or around ${locationName}; this shot visually frames ${formatList(visibleNames, "the active subject")}; focus stays on ${formatList(focus, "the active subject")}; ${offscreenNames.length ? `${offscreenNames.join(", ")} stay nearby but outside the frame` : "no extra characters are added"}.`;
 }
 
-function buildSceneLine(beat: StoryBeat, panel: StoryboardPanel): string {
+function buildSceneLine(panel: StoryboardPanel): string {
   const scene = compact([
     panel.shotType,
     panel.cameraAngle,
-    panel.cameraDistance,
-    panel.lensFeel,
     panel.composition
   ]) || "storyboard-directed shot";
   return `Scene: ${scene}. This is a crop, zoom, or pan from the locked screen layout; it must not relocate characters or rebuild the setting`;
@@ -667,10 +665,7 @@ function buildLayerLines(panel: StoryboardPanel): string[] {
     panel.foreground ? `Foreground: ${panel.foreground}` : "",
     panel.midground ? `Midground: ${panel.midground}` : "",
     panel.background ? `Background: ${panel.background}` : "",
-    panel.depthAndPerspective ? `Depth and perspective: ${panel.depthAndPerspective}` : "",
-    panel.visualEmphasis ? `Visual emphasis: ${panel.visualEmphasis}` : "",
-    panel.lightingDirection || panel.lighting ? `Shot lighting: ${panel.lightingDirection || panel.lighting}` : "",
-    panel.cameraNotes ? `Camera continuity: ${panel.cameraNotes}` : ""
+    panel.visualEmphasis ? `Visual emphasis: ${panel.visualEmphasis}` : ""
   ].filter(Boolean);
 }
 
@@ -684,12 +679,11 @@ function buildPromptForPanel(params: {
 }): EngineerPrompt {
   const { beat, screen, panel, characters, locations, style } = params;
   const location = findLocationForBeat(beat, screen, locations);
-  const locationName = location?.name || beat.location || beat.locationName || screen?.location || "Unknown Location";
+  const locationName = location?.name || screen?.location || beat.location || beat.locationName || "Unknown Location";
   const locationDescription = buildLocationDescription(location, locationName);
   const timeOfDay = beat.timeOfDay || screen?.timeOfDay || panel.timeOfDay || "Unknown time";
   const locationLighting = compact([
-    location?.lighting || location?.lightingDefault,
-    panel.lightingDirection || panel.lighting
+    location?.lighting || location?.lightingDefault
   ]) || "established lighting";
   const visibleNames = resolveVisibleCharacterNames(beat, panel, characters);
   const screenContinuityLine = buildScreenContinuityLine(beat, screen, visibleNames, locationName);
@@ -723,7 +717,7 @@ function buildPromptForPanel(params: {
     sentence(screenSpatialLockLine),
     sentence(characterPositionLockLine),
     sentence(screenContinuityLine),
-    sentence(buildSceneLine(beat, panel)),
+    sentence(buildSceneLine(panel)),
     characterLines.map(sentence).join(" "),
     sentence(buildActionLine(beat, visibleNames, panel, characters, screen)),
     buildLayerLines(panel).map(sentence).join(" "),

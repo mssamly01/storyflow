@@ -2,7 +2,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { getConfig } from "./configService";
 import { mapLocationIdsToBeats } from "./locationContinuityService";
-import { createFallbackScreensFromBeats, normalizeBeats, normalizeScreens } from "./finalResultBuilderService";
+import {
+  createFallbackScreensFromBeats,
+  normalizeBeatMomentDetails,
+  normalizeBeats,
+  normalizeScreenContinuity,
+  normalizeScreens
+} from "./finalResultBuilderService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import { buildEngineerPromptsJsonWithResolver } from "./visualPromptResolverService";
 import {
@@ -92,6 +98,14 @@ export function compactJson(value: any): string {
   if (value === undefined || value === null) return "";
   const jsonStr = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   return compactJsonArrays(jsonStr);
+}
+
+function normalize(value?: string | null): string {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 function formatSourceSegmentsForPrompt(sourceSegments: SourceSegment[]): string {
@@ -710,6 +724,449 @@ DESCRIPTION RULES - CRITICAL:
 4. BACKGROUND CHARACTERS: For crowds or side characters, describe their concrete action and gaze direction.
 5. LOCATION: Repeat important location details needed to preserve spatial continuity.
 `;
+
+function uniqueStrings(items: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const clean = String(item || "").trim();
+    const key = normalize(clean);
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
+}
+
+function beatIdSet(beats: StoryBeat[]): Set<number> {
+  return new Set(beats.map((beat) => beat.beatId).filter(Boolean));
+}
+
+function intersectsSelectedBeats(item: any, selectedBeatIds: Set<number>): boolean {
+  const beatId = Number(item?.beatId ?? item?.beat_id);
+  if (Number.isFinite(beatId) && selectedBeatIds.has(beatId)) return true;
+  const ids = Array.isArray(item?.beatIds ?? item?.beat_ids) ? (item.beatIds ?? item.beat_ids) : [];
+  if (ids.some((id: unknown) => selectedBeatIds.has(Number(id)))) return true;
+  const start = Number(item?.startBeatId ?? item?.start_beat_id);
+  const end = Number(item?.endBeatId ?? item?.end_beat_id);
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    return Array.from(selectedBeatIds).some((id) => id >= start && id <= end);
+  }
+  return false;
+}
+
+function compactStoryboardBeat(beat: StoryBeat) {
+  return {
+    beatId: beat.beatId,
+    screenId: beat.screenId,
+    summary: beat.summary,
+    focusCharacters: beat.focusCharacters || [],
+    visibleCharacters: beat.visibleCharacters || [],
+    offscreenPresentCharacters: beat.offscreenPresentCharacters || [],
+    characters: beat.characters || beat.charactersInvolved || [],
+    location: beat.location || beat.locationName,
+    locationId: beat.locationId,
+    locationState: beat.locationState,
+    action: beat.action || beat.actionAnalysis,
+    interaction: beat.interaction,
+    posture: beat.posture,
+    props: beat.props || [],
+    visualFocus: beat.visualFocus,
+    atmosphere: beat.atmosphere,
+    timeOfDay: beat.timeOfDay
+  };
+}
+
+function compactStoryboardScreen(screen: ReturnType<typeof normalizeScreens>[number]) {
+  return {
+    screenId: screen.screenId,
+    screenNumber: screen.screenNumber,
+    screenName: screen.screenName,
+    location: screen.location,
+    locationId: screen.locationId,
+    timeOfDay: screen.timeOfDay,
+    screenCharacters: screen.screenCharacters || [],
+    screenProps: screen.screenProps || [],
+    screenState: screen.screenState,
+    screenSpatialLayout: screen.screenSpatialLayout,
+    screenFixedElements: screen.screenFixedElements || [],
+    screenCharacterPositions: screen.screenCharacterPositions || [],
+    beatIds: screen.beatIds,
+    startBeatId: screen.startBeatId,
+    endBeatId: screen.endBeatId,
+    summary: screen.summary,
+    continuityNotes: screen.continuityNotes
+  };
+}
+
+function compactStoryboardCharacter(character: CharacterProfile) {
+  return {
+    characterId: character.characterId,
+    name: character.name,
+    aliases: character.aliases || [],
+    role: character.role,
+    gender: character.gender,
+    age: character.age,
+    height: character.height,
+    bodyType: character.bodyType,
+    appearancePrompt: character.appearancePrompt,
+    face: character.face,
+    hair: character.hair,
+    hairColor: character.hairColor,
+    eyes: character.eyes,
+    eyeColor: character.eyeColor,
+    personalityVisualCues: character.personalityVisualCues,
+    gestureSet: character.gestureSet || [],
+    continuityNotes: character.continuityNotes
+  };
+}
+
+function compactStoryboardLocation(location: LocationProfile) {
+  return {
+    locationId: location.locationId,
+    name: location.name,
+    aliases: location.aliases || [],
+    locationPrompt: location.locationPrompt,
+    description: location.description || location.details,
+    layout: location.layout,
+    keyObjects: location.keyObjects || [],
+    lighting: location.lighting || location.lightingDefault,
+    atmosphere: location.atmosphere || location.atmosphereDefault,
+    baseState: location.baseState,
+    continuityNotes: location.continuityNotes,
+    continuityPrompt: location.continuityPrompt
+  };
+}
+
+function getScreenBeatIds(screen: ReturnType<typeof normalizeScreens>[number], beats: StoryBeat[]): number[] {
+  if (screen.beatIds?.length) return screen.beatIds;
+  const byScreenId = beats
+    .filter((beat) => beat.screenId && beat.screenId === screen.screenId)
+    .map((beat) => beat.beatId);
+  if (byScreenId.length) return byScreenId;
+  return beats
+    .filter((beat) => beat.beatId >= screen.startBeatId && beat.beatId <= screen.endBeatId)
+    .map((beat) => beat.beatId);
+}
+
+function collectContextKeys(
+  beats: StoryBeat[],
+  screens: ReturnType<typeof normalizeScreens>,
+  screenContinuityItems: ReturnType<typeof normalizeScreenContinuity> = []
+) {
+  const characterKeys = new Set<string>();
+  const locationIds = new Set<string>();
+  const locationKeys = new Set<string>();
+
+  for (const beat of beats) {
+    [
+      ...(beat.characters || []),
+      ...(beat.charactersInvolved || []),
+      ...(beat.focusCharacters || []),
+      ...(beat.visibleCharacters || []),
+      ...(beat.offscreenPresentCharacters || [])
+    ].forEach((name) => characterKeys.add(normalize(String(name))));
+    if (beat.locationId) locationIds.add(beat.locationId);
+    if (beat.location || beat.locationName) locationKeys.add(normalize(beat.location || beat.locationName));
+  }
+
+  for (const screen of screens) {
+    (screen.screenCharacters || []).forEach((name) => characterKeys.add(normalize(String(name))));
+    (screen.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+    if (screen.locationId) locationIds.add(screen.locationId);
+    if (screen.location) locationKeys.add(normalize(screen.location));
+  }
+
+  for (const item of screenContinuityItems) {
+    (item.screenCharacterStates || []).forEach((state) => characterKeys.add(normalize(state.characterName)));
+    (item.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+  }
+
+  return { characterKeys, locationIds, locationKeys };
+}
+
+function selectLibraryItems(
+  library: CharacterLocationLibraryResult,
+  selectedBeatIds: Set<number>,
+  keys: ReturnType<typeof collectContextKeys>
+) {
+  const selectedCharacters = (library.characters || []).filter((character) => {
+    const names = [character.name, ...(character.aliases || [])].map((name) => normalize(name));
+    const appearsInBeat = (character.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
+    return appearsInBeat || names.some((name) => keys.characterKeys.has(name));
+  });
+  const selectedLocations = (library.locations || []).filter((location) => {
+    if (location.locationId && keys.locationIds.has(location.locationId)) return true;
+    const names = [location.name, ...(location.aliases || [])].map((name) => normalize(name));
+    const appearsInBeat = (location.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
+    return appearsInBeat || names.some((name) => keys.locationKeys.has(name));
+  });
+
+  return {
+    characters: selectedCharacters.length ? selectedCharacters : (library.characters || []),
+    locations: selectedLocations.length ? selectedLocations : (library.locations || [])
+  };
+}
+
+function compactScreenContinuityBeat(beat: StoryBeat) {
+  return {
+    beatId: beat.beatId,
+    screenId: beat.screenId,
+    focusCharacters: beat.focusCharacters || [],
+    visibleCharacters: beat.visibleCharacters || [],
+    offscreenPresentCharacters: beat.offscreenPresentCharacters || [],
+    characters: beat.characters || beat.charactersInvolved || [],
+    location: beat.location || beat.locationName,
+    locationId: beat.locationId,
+    action: beat.action || beat.actionAnalysis,
+    visualFocus: beat.visualFocus,
+    atmosphere: beat.atmosphere,
+    timeOfDay: beat.timeOfDay
+  };
+}
+
+function compactScreenContinuityScreen(screen: ReturnType<typeof normalizeScreens>[number], beats: StoryBeat[]) {
+  const beatIds = getScreenBeatIds(screen, beats);
+  return {
+    screenId: screen.screenId,
+    screenName: screen.screenName,
+    location: screen.location,
+    locationId: screen.locationId,
+    timeOfDay: screen.timeOfDay,
+    screenCharacters: screen.screenCharacters || [],
+    beatIds,
+    startBeatId: beatIds[0] ?? screen.startBeatId,
+    endBeatId: beatIds.at(-1) ?? screen.endBeatId,
+    summary: screen.summary
+  };
+}
+
+function compactScreenContinuityCharacter(character: CharacterProfile) {
+  return {
+    characterId: character.characterId,
+    name: character.name,
+    aliases: character.aliases || [],
+    gender: character.gender,
+    age: character.age,
+    appearancePrompt: character.appearancePrompt,
+    outfitPrompt: character.outfitPrompt,
+    outfit: character.outfit,
+    outfitMainColor: character.outfitMainColor,
+    outfitAccentColor: character.outfitAccentColor,
+    signatureAccessories: character.signatureAccessories || [],
+    continuityNotes: character.continuityNotes
+  };
+}
+
+function compactScreenContinuityLocation(location: LocationProfile) {
+  return {
+    locationId: location.locationId,
+    name: location.name,
+    aliases: location.aliases || [],
+    locationPrompt: location.locationPrompt,
+    layout: location.layout,
+    keyObjects: location.keyObjects || [],
+    lighting: location.lighting || location.lightingDefault,
+    continuityPrompt: location.continuityPrompt,
+    baseState: location.baseState
+  };
+}
+
+function compactBeatMomentCharacter(character: CharacterProfile) {
+  return {
+    characterId: character.characterId,
+    name: character.name,
+    aliases: character.aliases || [],
+    signatureAccessories: character.signatureAccessories || [],
+    gestureSet: character.gestureSet || [],
+    expressionSet: character.expressionSet || [],
+    continuityNotes: character.continuityNotes
+  };
+}
+
+function compactBeatMomentLocation(location: LocationProfile) {
+  return {
+    locationId: location.locationId,
+    name: location.name,
+    baseState: location.baseState,
+    keyObjects: location.keyObjects || [],
+    layout: location.layout
+  };
+}
+
+function compactStoryboardScreenContinuity(item: ReturnType<typeof normalizeScreenContinuity>[number]) {
+  return {
+    screenId: item.screenId,
+    beatIds: item.beatIds || [],
+    startBeatId: item.startBeatId,
+    endBeatId: item.endBeatId,
+    screenState: item.screenState,
+    screenProps: item.screenProps || [],
+    screenSpatialLayout: item.screenSpatialLayout,
+    screenFixedElements: item.screenFixedElements || [],
+    screenCharacterPositions: item.screenCharacterPositions || [],
+    screenCharacterStates: (item.screenCharacterStates || []).map((state) => ({
+      characterId: state.characterId,
+      characterName: state.characterName,
+      outfit: state.outfit,
+      outfitMainColor: state.outfitMainColor,
+      outfitAccentColor: state.outfitAccentColor,
+      accessories: state.accessories || [],
+      handheldItems: state.handheldItems || [],
+      appearanceNotes: state.appearanceNotes,
+      stateChanges: state.stateChanges || []
+    })),
+    continuityNotes: item.continuityNotes
+  };
+}
+
+function compactStoryboardBeatMoment(item: any) {
+  return {
+    beatId: item.beatId,
+    screenId: item.screenId,
+    locationState: item.locationState,
+    posture: item.posture,
+    interaction: item.interaction,
+    props: item.props || [],
+    characterMomentDetails: (item.characterMomentDetails || []).map((detail: any) => ({
+      characterId: detail.characterId,
+      characterName: detail.characterName,
+      poseRefinement: detail.poseRefinement,
+      expression: detail.expression,
+      momentNotes: detail.momentNotes,
+      handheldItems: detail.handheldItems || [],
+      visibleAccessories: detail.visibleAccessories || [],
+      accessoriesChange: detail.accessoriesChange || []
+    }))
+  };
+}
+
+function buildStoryboardPromptContext(
+  analysis: string,
+  charLocAnalysis: string,
+  screenContinuity: string,
+  beatMomentDetails: string
+) {
+  const analysisData = parseJsonFallback<unknown>(analysis, []);
+  const beats = normalizeBeats(analysisData);
+  const selectedBeatIds = beatIdSet(beats);
+  const parsedScreens = normalizeScreens(analysisData);
+  const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+  const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
+    characters: [],
+    locations: []
+  });
+  const screenIds = new Set(uniqueStrings([
+    ...beats.map((beat) => beat.screenId),
+    ...screens.map((screen) => screen.screenId)
+  ]));
+  const characterKeys = new Set<string>();
+  const locationIds = new Set<string>();
+  const locationKeys = new Set<string>();
+
+  for (const beat of beats) {
+    [
+      ...(beat.characters || []),
+      ...(beat.charactersInvolved || []),
+      ...(beat.focusCharacters || []),
+      ...(beat.visibleCharacters || []),
+      ...(beat.offscreenPresentCharacters || [])
+    ].forEach((name) => characterKeys.add(normalize(String(name))));
+    if (beat.locationId) locationIds.add(beat.locationId);
+    if (beat.location || beat.locationName) locationKeys.add(normalize(beat.location || beat.locationName));
+  }
+
+  for (const screen of screens) {
+    (screen.screenCharacters || []).forEach((name) => characterKeys.add(normalize(String(name))));
+    (screen.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+    if (screen.locationId) locationIds.add(screen.locationId);
+    if (screen.location) locationKeys.add(normalize(screen.location));
+  }
+
+  const screenContinuityItems = normalizeScreenContinuity(parseJsonFallback<unknown>(screenContinuity, { screens: [] }))
+    .filter((item) => screenIds.has(item.screenId) || intersectsSelectedBeats(item, selectedBeatIds));
+  for (const item of screenContinuityItems) {
+    (item.screenCharacterStates || []).forEach((state) => characterKeys.add(normalize(state.characterName)));
+    (item.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+  }
+
+  const beatMomentItems = normalizeBeatMomentDetails(parseJsonFallback<unknown>(beatMomentDetails, { beatDetails: [] }))
+    .filter((item) => selectedBeatIds.has(Number(item.beatId)));
+  for (const item of beatMomentItems) {
+    (item.characterMomentDetails || []).forEach((detail: any) => characterKeys.add(normalize(detail.characterName)));
+  }
+
+  const selectedCharacters = (library.characters || []).filter((character) => {
+    const names = [character.name, ...(character.aliases || [])].map((name) => normalize(name));
+    const appearsInBeat = (character.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
+    return appearsInBeat || names.some((name) => characterKeys.has(name));
+  });
+  const selectedLocations = (library.locations || []).filter((location) => {
+    if (location.locationId && locationIds.has(location.locationId)) return true;
+    const names = [location.name, ...(location.aliases || [])].map((name) => normalize(name));
+    const appearsInBeat = (location.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
+    return appearsInBeat || names.some((name) => locationKeys.has(name));
+  });
+
+  return {
+    beats: beats.map(compactStoryboardBeat),
+    screens: screens.map(compactStoryboardScreen),
+    characters: (selectedCharacters.length ? selectedCharacters : (library.characters || [])).map(compactStoryboardCharacter),
+    locations: (selectedLocations.length ? selectedLocations : (library.locations || [])).map(compactStoryboardLocation),
+    screenContinuity: { screens: screenContinuityItems.map(compactStoryboardScreenContinuity) },
+    beatMomentDetails: { beatDetails: beatMomentItems.map(compactStoryboardBeatMoment) }
+  };
+}
+
+function buildScreenContinuityPromptContext(analysis: string, charLocAnalysis: string) {
+  const analysisData = parseJsonFallback<unknown>(analysis, []);
+  const beats = normalizeBeats(analysisData);
+  const selectedBeatIds = beatIdSet(beats);
+  const parsedScreens = normalizeScreens(analysisData);
+  const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+  const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
+    characters: [],
+    locations: []
+  });
+  const keys = collectContextKeys(beats, screens);
+  const selectedLibrary = selectLibraryItems(library, selectedBeatIds, keys);
+
+  return {
+    screens: screens.map((screen) => compactScreenContinuityScreen(screen, beats)),
+    beats: beats.map(compactScreenContinuityBeat),
+    characters: selectedLibrary.characters.map(compactScreenContinuityCharacter),
+    locations: selectedLibrary.locations.map(compactScreenContinuityLocation)
+  };
+}
+
+function buildBeatMomentPromptContext(
+  analysis: string,
+  charLocAnalysis: string,
+  screenContinuity: string
+) {
+  const analysisData = parseJsonFallback<unknown>(analysis, []);
+  const beats = normalizeBeats(analysisData);
+  const selectedBeatIds = beatIdSet(beats);
+  const parsedScreens = normalizeScreens(analysisData);
+  const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+  const screenContinuityItems = normalizeScreenContinuity(
+    parseJsonFallback<unknown>(screenContinuity, { screens: [] })
+  );
+  const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
+    characters: [],
+    locations: []
+  });
+  const keys = collectContextKeys(beats, screens, screenContinuityItems);
+  const selectedLibrary = selectLibraryItems(library, selectedBeatIds, keys);
+
+  return {
+    beats: beats.map(compactStoryboardBeat),
+    screenContinuity: { screens: screenContinuityItems.map(compactStoryboardScreenContinuity) },
+    characters: selectedLibrary.characters.map(compactBeatMomentCharacter),
+    locations: selectedLibrary.locations.map(compactBeatMomentLocation)
+  };
+}
+
 export const getStoryboardPrompt = (
   analysis: string,
   charLocAnalysis: string,
@@ -717,14 +1174,7 @@ export const getStoryboardPrompt = (
   screenContinuity = "",
   beatMomentDetails = ""
 ) => {
-  const analysisData = parseJsonFallback<unknown>(analysis, []);
-  const beats = normalizeBeats(analysisData);
-  const parsedScreens = normalizeScreens(analysisData);
-  const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
-  const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
-    characters: [],
-    locations: []
-  });
+  const context = buildStoryboardPromptContext(analysis, charLocAnalysis, screenContinuity, beatMomentDetails);
 
   return `You are a professional storyboard director for a vertical comic / visual illustration app.
 
@@ -839,22 +1289,22 @@ SCREEN CONTINUITY FOR STORYBOARD:
 - Example: in a Hospital Nurse Station screen, if Lục Thư Vân is locked seated behind the counter at the right workstation chair and Khương Yến Ninh is locked standing at the visitor/front-left side of the counter, a close-up of Lục Thư Vân must not move Khương Yến Ninh into a background workstation; Khương Yến Ninh stays at the front-left anchor and may be off-frame.
 
 SOURCE BEATS:
-${compactJson(beats)}
+${compactJson(context.beats)}
 
 SOURCE SCREENS:
-${compactJson(screens)}
+${compactJson(context.screens)}
 
 CHARACTER LIBRARY:
-${compactJson(library.characters || [])}
+${compactJson(context.characters)}
 
 LOCATION LIBRARY:
-${compactJson(library.locations || [])}
+${compactJson(context.locations)}
 
 APPROVED SCREEN CONTINUITY:
-${compactJson(screenContinuity) || "No screen continuity data provided."}
+${compactJson(context.screenContinuity) || "No screen continuity data provided."}
 
 APPROVED BEAT MOMENT DETAILS:
-${compactJson(beatMomentDetails) || "No beat moment details provided."}
+${compactJson(context.beatMomentDetails) || "No beat moment details provided."}
 
 ART STYLE:
 ${artStyleDescription || "No specific style selected."}
@@ -885,150 +1335,57 @@ export const getEngineerPromptsPrompt = ({
   beatMomentDetailsJson,
   storyboardJson,
   style,
-}: EngineerPromptInput): string => `
-You are a senior Prompt Engineering specialist. Convert the approved storyboard/beat data into 16:9 AI image-generation prompts under EXTREME CONSISTENCY rules.
+}: EngineerPromptInput): string => {
+  return `
+MANUAL FALLBACK ONLY:
+The StoryFlow app normally builds Prompt Engineering locally with deterministic code. Use this prompt only when the user explicitly needs an external/manual fallback.
 
 TASK:
-Create one copy-ready visualPrompt for each storyboard item / beat.
-Each output item must be linked only by beatId.
-Do not use panelId or panelNumber.
-Each visualPrompt must be detailed enough to paste directly into an AI image generator.
-Each visualPrompt must contain both the positive prompt and a final full "Negative prompt:" section.
+Assemble existing approved fields into final copy-ready visualPrompt strings. Do not analyze the novel again. Do not summarize, paraphrase, reinterpret, or invent source data.
+Return one output item per beatId.
 
-SOURCE PRIORITIES (CRITICAL SOURCE OF TRUTH RULES):
-To ensure absolute character identity and layout permanence across prompts, apply this strict priority hierarchy:
-1. APPROVED BEAT SKELETON SOURCE: For basic scene structure, screen list, and beat list.
-2. CHARACTER + LOCATION LIBRARY: For core character details, hair, face, eye color, signature accessories, and base location setting.
-3. APPROVED SCREEN CONTINUITY: For screen-level character outfits, outfit colors, screen props, persistent handheld items, and layout changes.
-4. APPROVED BEAT MOMENT DETAILS: For beat-specific active posture, interactions, active props, active handheld items, visible accessories, and momentary expressions.
-5. APPROVED STORYBOARD VISUAL DIRECTION: Strictly for framing, shot type, camera angle, composition, foreground, midground, and background.
+SOURCE FIELD MAP:
+- Location: use Location Library locationPrompt by locationId first, then name/alias fallback.
+- Location Continuity: combine Location Library continuityPrompt, screenSpatialLayout, and screenFixedElements.
+- Screen Spatial Lock: copy screenSpatialLayout; if missing, fallback to location layout/keyObjects/screenProps.
+- Character Position Lock: use screenCharacterPositions first. Storyboard blocking may crop/frame the anchor but cannot create a new anchor.
+- Screen Continuity: mention only approved screen characters as visible or off-frame. Do not draw off-frame characters.
+- Visible character identity: use Character Library appearancePrompt; fallback to gender, age, height, face, hair, eyes, body/style notes.
+- Outfit: use current screenCharacterStates.outfit first; fallback to Character Library outfitPrompt/outfit. Do not prepend outfit colors before the outfit wording.
+- Accessories: include visible signature accessories, screen-level accessories, and beat-level visible accessories with exact body position.
+- Handheld/variable items: use Beat Moment Details first, then screen-level handheld items only if still visible in this beat.
+- Scene: use Storyboard shotType, cameraAngle, and composition.
+- Layers: use Storyboard foreground, midground, background, and visualEmphasis.
+- Beat action: use Beat Skeleton + Beat Moment Details for action, interaction, posture, expression, temporary props, and temporary locationState.
+- originalText is for UI/debug only. Do not use originalText to rewrite visualPrompt.
 
-Do not invent visual details that violate this hierarchy.
+OUTPUT TEMPLATE ORDER:
+Style.
+Location.
+Location Continuity.
+Screen Spatial Lock.
+Character Position Lock.
+Screen Continuity.
+Scene.
+Visible character profile lines only.
+Action and interaction.
+Foreground. Midground. Background. Visual emphasis.
+no text, no speech bubbles, no captions, no subtitles, no watermark, no logo.
+Negative prompt.
 
-SCREEN CONTINUITY LINKING RULE:
-Screen Continuity is screen-level data, but each item may include beatIds/startBeatId/endBeatId.
-When generating a visualPrompt for a beat:
-1. Use beat.screenId to find the matching Screen Continuity item.
-2. If screenId does not match or is empty, use beatId against beatIds/startBeatId/endBeatId inside the Screen Continuity items.
-3. Do not invent screen continuity if no match exists.
-
-SCREEN LAYOUT LOCK RULE - CRITICAL:
-For every beat in the same screen, reuse the exact same screenSpatialLayout from APPROVED SCREEN CONTINUITY.
-Every visualPrompt must include the fixed screenSpatialLayout as natural language inside Location Continuity or a separate Screen Spatial Lock sentence.
-Do not rewrite the room differently across beats.
-Do not move fixed objects from screenFixedElements.
-Do not simplify fixed elements into vague labels.
-Bad: "keep monitors and signage consistent".
-Good: "keep the curved white reception counter across the foreground/right side, desktop monitors behind the counter, wall signage on the rear wall, file shelves behind the counter, and the long hallway receding into the background".
-Camera may zoom, crop, pan, or rotate slightly, but the spatial relationship must remain the same.
-
-CHARACTER ANCHOR LOCK RULE - CRITICAL:
-For every visible character, use their approved screenCharacterPositions anchor as the base position.
-Do not move a character to another workstation, another side of the counter, another sofa, another hallway, or another table unless BEAT MOMENT DETAILS explicitly says they moved.
-If a close-up crops a character out, mention they remain at the approved anchor but outside the frame.
-Storyboard blocking can crop or frame the anchor, but cannot create a new anchor.
-If Storyboard blocking conflicts with screenCharacterPositions, screenCharacterPositions wins.
-
-ACCESSORY SELECTION RULE - CRITICAL:
-When constructing the visualPrompt for a beat:
-1. Start with the character's core stable identity from Character Library.
-2. Overlay the screen-level outfit, accessories, and persistent handheld items from APPROVED SCREEN CONTINUITY.
-3. Apply beat-level momentary changes or handheld items from APPROVED BEAT MOMENT DETAILS only if they are visible in this exact beat.
-4. Do NOT list accessories or outfits from other screens or other beats.
-5. Do NOT list every known accessory. Include only:
-   - signature accessories that are currently visible,
-   - current screen-level accessories,
-   - current screen-level handheld items only if still visible/held,
-   - current beat-level handheld items or changes.
-
-OUTFIT SELECTION RULE - CRITICAL:
-Choose only the outfit specified in the current screen's APPROVED SCREEN CONTINUITY for this character.
-Do not include outfits from other screens.
-Use Character Library only for identity/default traits, not the current outfit if Screen Continuity provides one.
-
-CHARACTER COLOR DETAIL RULE - CRITICAL:
-For every visible character included in visualPrompt, always describe them with explicit, natural-language color descriptions for:
-- Hair color
-- Eye color
-- Outfit color
-
-Do not write vague appearance descriptions without color.
-
-COLOR WORDING RULE:
-Use natural language color descriptions in visualPrompt.
-Do NOT use hex codes like #FFD700 or #000000.
-
-CLEAN VISUAL PROMPT RULE - CRITICAL:
-visualPrompt must be clean, natural, and copy-ready for an image generator.
-Do NOT include internal metadata in visualPrompt:
-- no locationId, screenId, beatId, panelId, sourceUsage
-- no raw IDs like loc_001, screen_001, char_001, or panel_001
-- no beat ranges like "(beats 1-164)"
-- no raw hex color codes
-- no schema/debug labels such as "base description:", "spatial layout:", "key objects to preserve:", "current beat state:", or "color palette:"
-Use internal IDs only to look up data. Never print them in visualPrompt.
+CONSISTENCY GUARDS:
+- Never let Storyboard foreground/midground/background replace Location.
+- Never move fixed objects from screenFixedElements.
+- Never move a character away from screenCharacterPositions unless Beat Moment Details explicitly says the character moved.
+- If a close-up crops a character out, say the character remains at the approved anchor but outside the frame.
+- Do not include full profile details for off-frame characters.
+- Do not include internal IDs, raw hex colors, beat ranges, sourceUsage, panelId, panelNumber, or debug labels.
 
 VISUAL STYLE:
 ${style || "Modern Manhua style, Chinese webtoon aesthetic, elegant character designs, vibrant digital coloring, clean line art, beautiful lighting, polished look, contemporary manhua inspired."}
 
-VISUAL PROMPT CONSTRUCTION RULES - MUST FOLLOW ORDER:
-
-1. STYLE FIRST:
-Start every visualPrompt exactly with the selected visual style.
-
-2. LOCATION FIRST:
-Immediately after style, write:
-"Location: [location name] ([full location description from Location Library]), [timeOfDay from APPROVED BEAT SKELETON SOURCE], [lighting/material from Location Library + Storyboard]."
-Use location/locationId/locationState from APPROVED BEAT SKELETON SOURCE.
-Match Location Library by locationId first, then name/aliases.
-Use description, layout, keyObjects, and lighting where available.
-If colorPalette exists, convert it into natural color words and never include raw hex codes.
-
-3. LOCATION CONTINUITY BLOCK:
-Every visualPrompt must include this block right after Location:
-"Location Continuity: keep [screenSpatialLayout], [screenFixedElements with fixed positions], and [lighting/material cues] consistent across this screen."
-Do not include locationId, raw IDs, debug labels, or hex colors.
-Use fixed positions from screenFixedElements, not vague object labels.
-
-4. SCREEN CONTINUITY SENTENCE:
-Each visualPrompt must include a Screen Continuity sentence after Location Continuity:
-"Screen Continuity: [screen characters] remain present in/around [location]; this shot focuses on [focusCharacters], while [visible supporting characters] remain [background position/action], and [offscreen characters] stay nearby but outside the frame."
-Do not include screenId or raw screen metadata.
-Do not draw every screen character in every beat.
-Only draw characters listed in visibleCharacters or required by Storyboard blocking.
-Screen characters not in visibleCharacters should be mentioned only as offscreen continuity if relevant.
-
-5. SCENE + POSTURE + INTERACTION:
-After Screen Continuity, write:
-"Scene: [shotType/cameraAngle from Storyboard], [composition], [detailed posture, action, and interaction of every visible character from BEAT MOMENT DETAILS + Storyboard blocking]."
-Always describe posture for each visible character.
-Use specific character names.
-
-6. FULL CHARACTER PROFILE:
-Every visible named character mentioned in visualPrompt must include a full profile immediately after the name, including foreground characters, background characters, and visible body parts.
-Offscreen characters must NOT receive a full visual profile.
-Mention offscreen characters only briefly in the Screen Continuity sentence.
-Do not describe hair, outfit, face, accessories, or posture for offscreen characters, because that may cause the image generator to draw them.
-
-Required visible character profile format:
-"CharacterName (Gender: [gender], Age: [age], Height: [height], Face: [face], Hair: [hairColor] [hair], Eyes: [eyeColor] [eyes], Position Lock: [approved screenCharacterPositions anchor if available], Posture: [current posture], Outfit: [copy screen outfit exactly], Outfit colors: main color [outfitMainColor], accent color [outfitAccentColor if available], Accessories: [visible signatureAccessories + screen-level accessories with exact positions], Handheld: [currently visible handheld items only; use Beat Moment Details first, then Screen Continuity if the item persists across the screen])"
-
-Do NOT prepend outfitMainColor or outfitAccentColor before the outfit wording.
-The screen outfit is already copy-ready; copy it exactly and put colors in the separate Outfit colors phrase.
-
-If a profile field is missing, use available fields only. Do not invent new appearance details.
-
-7. FOREGROUND / MIDGROUND / BACKGROUND:
-Use Storyboard fields foreground, midground, background, depthAndPerspective, visualEmphasis, lightingDirection, but never alter source fields from Beat.
-
-8. STRICT NO TEXT RULE:
-End the positive part with:
-"no text, no speech bubbles, no captions, no subtitles, no watermark, no logo."
-
-9. NEGATIVE PROMPT INSIDE visualPrompt:
-Every visualPrompt must end with this full section:
-"Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows."
-Do not put negativePrompt in a separate field.
+NEGATIVE PROMPT TEXT:
+Negative prompt: low quality, blurry, low resolution, bad anatomy, extra fingers, missing fingers, deformed hands, distorted face, inconsistent character design, wrong outfit, changed hairstyle, changed eye color, random extra characters, missing approved characters, random furniture, changed location layout, inconsistent background, missing key objects, unreadable text, speech bubbles, captions, subtitles, watermark, logo, heavy shadows.
 
 APPROVED BEAT SKELETON SOURCE:
 \`\`\`json
@@ -1076,6 +1433,8 @@ FINAL CHECK BEFORE OUTPUT:
 - Does every visualPrompt start with the selected style?
 - Does every visualPrompt contain Location?
 - Does every visualPrompt contain Location Continuity?
+- Does every visualPrompt contain Screen Spatial Lock?
+- Does every visualPrompt contain Character Position Lock?
 - Does every visualPrompt contain Screen Continuity?
 - Does every visualPrompt use timeOfDay from APPROVED BEAT SKELETON SOURCE?
 - Does every visible named character include full profile details?
@@ -1086,7 +1445,12 @@ FINAL CHECK BEFORE OUTPUT:
 - Does every visualPrompt include no text, no speech bubbles, no captions, no subtitles?
 - Does every visualPrompt include the full final "Negative prompt:" section?
 `;
+};
 
+/**
+ * @deprecated QA is no longer part of the active StoryFlow pipeline because Prompt Engineering is deterministic.
+ * Keep this as a legacy/manual fallback for old projects.
+ */
 export const getQAPrompt = (data: string, charLocAnalysis: string, style: string, storyboard = "", analysis = "", screenContinuity = "", beatMomentDetails = "") => `
 You are a QA checker for an illustrated story prompt pipeline.
 
@@ -1153,13 +1517,13 @@ SOURCE OF TRUTH RULES:
 - Do not re-analyze the story.
 - Do not rewrite originalText.
 - Do not infer new location or characters.
-- Do not modify visual prompts except applying explicit QA patches when provided.
+- Do not modify visual prompts.
 - Beat Analysis is the source of truth for story fields.
 - Character Library is the source of truth for character identity and continuity.
 - Location Library is the source of truth for location identity and continuity.
 - Storyboard is the source of truth only for camera and composition.
 - Engineer Prompts are the source of truth for visualPrompt.
-- QA is the source of truth for fixes and notes.
+- QA patches are legacy optional notes only; do not use QA to override Engineer Prompts.
 
 Return ONLY valid JSON. No markdown. No commentary.
 
@@ -1199,7 +1563,10 @@ QA PATCHES / NOTES:
 ${qaReport}
 `;
 
-export const getScreenContinuityPrompt = (analysis: string, charLocAnalysis: string, style = "") => `
+export const getScreenContinuityPrompt = (analysis: string, charLocAnalysis: string, style = "") => {
+  const context = buildScreenContinuityPromptContext(analysis, charLocAnalysis);
+
+  return `
 You are a master of visual continuity for sequential storytelling (comics, storyboards, webtoons).
 
 Your ONLY task:
@@ -1252,6 +1619,7 @@ SCREEN CONTINUITY RULES:
    - screenState must describe only screen-level layout/status changes.
    - Do not turn beat-specific camera focus such as "glass table surface", "floor near sofa", "hallway visible", or "eyes close-up" into a new location.
 12. Return ONLY a valid JSON object. No markdown. No commentary.
+13. The compact input below intentionally does not include originalText. Do not ask for originalText and do not recreate it.
 
 Required JSON Schema:
 {
@@ -1314,17 +1682,27 @@ FIELD RULES:
 - stateChanges: array of screen-level clothing/accessory changes. If none, return [].
 - continuityNotes: concise note for maintaining fixed layout, fixed anchors, outfit, props, and character positions across the screen.
 
-APPROVED BEAT SKELETON SOURCE:
-${compactJson(analysis)}
+APPROVED COMPACT SCREENS:
+${compactJson(context.screens)}
 
-CHARACTER + LOCATION LIBRARY:
-${compactJson(charLocAnalysis)}
+APPROVED COMPACT BEATS:
+${compactJson(context.beats)}
+
+RELEVANT CHARACTER LIBRARY:
+${compactJson(context.characters)}
+
+RELEVANT LOCATION LIBRARY:
+${compactJson(context.locations)}
 
 ART STYLE:
 ${style}
 `;
+};
 
-export const getBeatMomentDetailsPrompt = (analysis: string, charLocAnalysis: string, screenContinuity: string, style = "") => `
+export const getBeatMomentDetailsPrompt = (analysis: string, charLocAnalysis: string, screenContinuity: string, style = "") => {
+  const context = buildBeatMomentPromptContext(analysis, charLocAnalysis, screenContinuity);
+
+  return `
 You are a master of visual sequencing and moment-to-moment action for storyboards.
 
 Your ONLY task:
@@ -1352,6 +1730,7 @@ BEAT MOMENT RULES:
    - Good: "smartphone gripped in her right hand", "notebook tucked under her left arm", "ID card hanging from a neck lanyard", "name badge pinned to the left chest pocket".
    - If the item is not visible in this exact beat, omit it.
 7. Return ONLY a valid JSON object. No markdown. No commentary.
+8. The compact input below intentionally excludes originalText and full library data. Use only the approved fields provided.
 
 Required JSON Schema:
 {
@@ -1376,18 +1755,22 @@ Required JSON Schema:
   ]
 }
 
-APPROVED BEAT SKELETON SOURCE:
-${compactJson(analysis)}
+APPROVED COMPACT BEAT SKELETON:
+${compactJson(context.beats)}
 
-SCREEN CONTINUITY:
-${compactJson(screenContinuity)}
+APPROVED COMPACT SCREEN CONTINUITY:
+${compactJson(context.screenContinuity)}
 
-CHARACTER + LOCATION LIBRARY:
-${compactJson(charLocAnalysis)}
+RELEVANT CHARACTER LIBRARY:
+${compactJson(context.characters)}
+
+RELEVANT LOCATION LIBRARY:
+${compactJson(context.locations)}
 
 ART STYLE:
 ${style}
 `;
+};
 
 // --- API SERVICES ---
 
@@ -1699,6 +2082,9 @@ export const createStoryboard = async (analysis: string, charLocAnalysis: string
   return JSON.stringify({ panels }, null, 2);
 };
 
+/**
+ * @deprecated QA is no longer called by the active UI workflow. Keep only for legacy/manual usage.
+ */
 export const runQA = async (
   data: string,
   charLocAnalysis: string,

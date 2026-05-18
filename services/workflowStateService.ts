@@ -76,7 +76,6 @@ export function markDownstreamStaleAfterBeatEdit(workflow: WorkflowState): Workf
     beatMomentDetails: markStepStale(workflow.beatMomentDetails, "Beat data changed; beat moment details may be outdated."),
     storyboard: markStepStale(workflow.storyboard, "Beat data changed; storyboard may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Beat data changed; prompts may be outdated."),
-    qa: markStepStale(workflow.qa, "Beat data changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Beat data changed; final result must be rebuilt.")
   };
 }
@@ -90,7 +89,6 @@ export function markDownstreamStaleAfterSourceEdit(workflow: WorkflowState): Wor
     beatMomentDetails: markStepStale(workflow.beatMomentDetails, "Source text changed; beat moment details may be outdated."),
     storyboard: markStepStale(workflow.storyboard, "Source text changed; storyboard may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Source text changed; prompts may be outdated."),
-    qa: markStepStale(workflow.qa, "Source text changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Source text changed; final result must be rebuilt.")
   };
 }
@@ -101,7 +99,6 @@ export function markDownstreamStaleAfterCharacterEdit(workflow: WorkflowState): 
     screenContinuity: markStepStale(workflow.screenContinuity, "Character data changed; screen continuity may be outdated."),
     beatMomentDetails: markStepStale(workflow.beatMomentDetails, "Character data changed; beat moment details may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Character data changed; prompts may be outdated."),
-    qa: markStepStale(workflow.qa, "Character data changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Character data changed; final result must be rebuilt.")
   };
 }
@@ -112,7 +109,6 @@ export function markDownstreamStaleAfterLocationEdit(workflow: WorkflowState): W
     screenContinuity: markStepStale(workflow.screenContinuity, "Location data changed; screen continuity may be outdated."),
     beatMomentDetails: markStepStale(workflow.beatMomentDetails, "Location data changed; beat moment details may be outdated."),
     promptEngineering: markStepStale(workflow.promptEngineering, "Location data changed; prompts may be outdated."),
-    qa: markStepStale(workflow.qa, "Location data changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Location data changed; final result must be rebuilt.")
   };
 }
@@ -121,7 +117,6 @@ export function markDownstreamStaleAfterStoryboardEdit(workflow: WorkflowState):
   return {
     ...workflow,
     promptEngineering: markStepStale(workflow.promptEngineering, "Storyboard changed; prompts may be outdated."),
-    qa: markStepStale(workflow.qa, "Storyboard changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Storyboard changed; final result must be rebuilt.")
   };
 }
@@ -129,7 +124,6 @@ export function markDownstreamStaleAfterStoryboardEdit(workflow: WorkflowState):
 export function markDownstreamStaleAfterPromptEdit(workflow: WorkflowState): WorkflowState {
   return {
     ...workflow,
-    qa: markStepStale(workflow.qa, "Prompt changed; QA may be outdated."),
     finalResult: markStepStale(workflow.finalResult, "Prompt changed; final result must be rebuilt.")
   };
 }
