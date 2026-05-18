@@ -10,7 +10,8 @@ import type {
   StoryboardPanel,
   ScreenCharacterState,
   BeatCharacterMomentDetail,
-  ScreenContinuityItem
+  ScreenContinuityItem,
+  ScreenCharacterPosition
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -129,6 +130,20 @@ export function normalizeScreenCharacterStates(raw: any): ScreenCharacterState[]
   }));
 }
 
+export function normalizeScreenCharacterPositions(raw: any): ScreenCharacterPosition[] {
+  const items = raw?.screenCharacterPositions ?? raw?.screen_character_positions ?? [];
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item: any) => ({
+    characterName: item.characterName ?? item.character_name ?? item.name ?? "",
+    characterId: item.characterId ?? item.character_id,
+    anchorPosition: item.anchorPosition ?? item.anchor_position ?? "",
+    facingDirection: item.facingDirection ?? item.facing_direction ?? "",
+    relationshipToKeyObjects: item.relationshipToKeyObjects ?? item.relationship_to_key_objects ?? "",
+    visibilityRule: item.visibilityRule ?? item.visibility_rule ?? "",
+  }));
+}
+
 export function normalizeCharacterMomentDetails(raw: any): BeatCharacterMomentDetail[] {
   const items = raw?.characterMomentDetails ?? raw?.character_moment_details ?? [];
   if (!Array.isArray(items)) return [];
@@ -158,6 +173,9 @@ export function normalizeScreens(raw: unknown): StoryScreen[] {
       screenState: asString(item.screenState ?? item.screen_state),
       screenCharacters: asStringArray(item.screenCharacters ?? item.screen_characters),
       screenProps: asStringArray(item.screenProps ?? item.screen_props),
+      screenSpatialLayout: asString(item.screenSpatialLayout ?? item.screen_spatial_layout),
+      screenFixedElements: asStringArray(item.screenFixedElements ?? item.screen_fixed_elements),
+      screenCharacterPositions: normalizeScreenCharacterPositions(item),
       startBeatId: asNumber(item.startBeatId ?? item.start_beat_id, 0),
       endBeatId: asNumber(item.endBeatId ?? item.end_beat_id, 0),
       beatIds: (item.beatIds ?? item.beat_ids) ? asNumberArray(item.beatIds ?? item.beat_ids) : undefined,
@@ -226,6 +244,9 @@ export function normalizeScreenContinuity(raw: unknown): ScreenContinuityItem[] 
     screenState: asString(item.screenState ?? item.screen_state, ""),
     screenProps: asStringArray(item.screenProps ?? item.screen_props),
     screenCharacterStates: normalizeScreenCharacterStates(item),
+    screenSpatialLayout: asString(item.screenSpatialLayout ?? item.screen_spatial_layout, ""),
+    screenFixedElements: asStringArray(item.screenFixedElements ?? item.screen_fixed_elements),
+    screenCharacterPositions: normalizeScreenCharacterPositions(item),
     continuityNotes: asString(item.continuityNotes ?? item.continuity_notes, ""),
   }));
 }
@@ -277,6 +298,13 @@ export function mergeScreenContinuityIntoScreens(
       endBeatId: matched.endBeatId ?? screen.endBeatId,
       screenState: matched.screenState || screen.screenState,
       screenProps: matched.screenProps?.length ? matched.screenProps : screen.screenProps,
+      screenSpatialLayout: matched.screenSpatialLayout || screen.screenSpatialLayout,
+      screenFixedElements: matched.screenFixedElements?.length
+        ? matched.screenFixedElements
+        : screen.screenFixedElements,
+      screenCharacterPositions: matched.screenCharacterPositions?.length
+        ? matched.screenCharacterPositions
+        : screen.screenCharacterPositions,
       continuityNotes: matched.continuityNotes || screen.continuityNotes,
       screenCharacterStates: matched.screenCharacterStates?.length
         ? matched.screenCharacterStates
@@ -474,7 +502,10 @@ export function buildFinalResultPanel(params: {
       screenProps: screen.screenProps,
       screenState: screen.screenState,
       continuityNotes: screen.continuityNotes,
-      screenCharacterStates: screen.screenCharacterStates
+      screenCharacterStates: screen.screenCharacterStates,
+      screenSpatialLayout: screen.screenSpatialLayout,
+      screenFixedElements: screen.screenFixedElements,
+      screenCharacterPositions: screen.screenCharacterPositions
     } : undefined,
     source: {
       originalText: source.originalText,

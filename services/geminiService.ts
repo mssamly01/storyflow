@@ -544,6 +544,13 @@ Character profiles and location profiles are also source of truth.
 Use them only to guide blocking and composition.
 Do not create new character identities or new locations.
 
+SCREEN SPATIAL LOCK RULE - CRITICAL:
+Screen Continuity may include screenSpatialLayout, screenFixedElements, and screenCharacterPositions.
+Treat those fields as hard locks for the whole screen.
+Storyboard composition may crop, zoom, pan, or hide a present character off-frame, but it must never relocate a character to a different workstation, chair, side of the counter, hallway, sofa, doorway, or background area.
+Foreground/midground/background are camera layers from the locked layout, not new locations.
+If a close-up focuses on one character, keep every other present character at their locked anchor and mention off-frame/partially cropped status in cameraNotes instead of moving them into the background.
+
 LOCKED FIELD RULES:
 If any beat, character, location, or panel input contains meta.locks.lockedFields, preserve those fields exactly.
 Do not rewrite, reinterpret, summarize, improve, or change locked fields.
@@ -612,20 +619,24 @@ VISUAL DIRECTION RULES:
 - composition: where the important subjects are placed in the frame.
 - foreground/midground/background: describe visual layers only.
 - foreground/midground/background must never redefine the location identity. If the camera focuses on the floor, glass table, hallway, stairs, eyes, or a reflected object, describe it as a layer/focus area inside the approved location.
-- characterBlocking: place approved characters in the frame.
+- characterBlocking: place approved visible characters in the frame by cropping from the approved screenCharacterPositions anchors; do not create a new anchor if a locked anchor exists.
 - expression and poseRefinement can refine the approved beat posture, but must not contradict it.
 - lightingDirection can refine how existing location lighting is presented, but must not rewrite source story facts.
-- cameraNotes should mention continuity concerns only when helpful.
+- cameraNotes should mention continuity concerns only when helpful, especially when a present character is cropped/off-frame but remains at the locked anchor.
 - Do not invent or alter character outfits. Outfit identity is owned by Character Library and Screen Continuity.
 
 SCREEN CONTINUITY FOR STORYBOARD:
 - Each beat belongs to a screen.
 - Use screenCharacters as the continuity pool.
+- Use screenSpatialLayout as the fixed stage layout.
+- Use screenFixedElements as fixed object positions.
+- Use screenCharacterPositions as fixed character anchors.
 - Use focusCharacters for camera priority.
 - Use visibleCharacters for frame composition.
 - Use offscreenPresentCharacters as continuity notes.
 - Do not remove screen characters from the scene just because the beat focuses on someone else.
 - If the camera angle excludes a present character, mention them in cameraNotes.
+- Example: in a Hospital Nurse Station screen, if Lục Thư Vân is locked seated behind the counter at the right workstation chair and Khương Yến Ninh is locked standing at the visitor/front-left side of the counter, a close-up of Lục Thư Vân must not move Khương Yến Ninh into a background workstation; Khương Yến Ninh stays at the front-left anchor and may be off-frame.
 
 SOURCE BEATS:
 ${JSON.stringify(beats, null, 2)}
@@ -961,14 +972,14 @@ You are a master of visual continuity for sequential storytelling (comics, story
 
 Your ONLY task:
 Perform Screen-Level Continuity Analysis (Phase 2).
-You will analyze the screen skeleton (from Phase 1) and output the screen-level visual details for outfits, props, and location states.
+You will analyze the screen skeleton (from Phase 1) and output the screen-level visual details for outfits, props, location states, fixed spatial layout, fixed objects, and fixed character anchors.
 
 SCREEN CONTINUITY RULES:
 1. For each screen in the provided input, determine the outfit and style state of every character present on that screen.
 2. CRITICAL SCREEN ID RULE: You must copy the exact screenId (e.g. "screen_001") from the APPROVED BEAT SKELETON SOURCE. Do not invent new screenId formats or use "screen_1" if it is "screen_001".
 3. CRITICAL BEAT LINKING RULE: For each screen, copy all beatId values that belong to that screen from the APPROVED BEAT SKELETON SOURCE into beatIds. Do not invent, remove, or renumber beatIds.
 4. Do NOT output "screenNumber", "screenName", "location", "locationId", or "timeOfDay".
-5. Required output for each screen consists ONLY of: screenId, beatIds, startBeatId, endBeatId, screenState, screenProps, screenCharacterStates, and continuityNotes.
+5. Required output for each screen consists ONLY of: screenId, beatIds, startBeatId, endBeatId, screenState, screenProps, screenSpatialLayout, screenFixedElements, screenCharacterStates, screenCharacterPositions, and continuityNotes.
 6. In screenCharacterStates, you must specify:
    - characterId
    - characterName
@@ -996,10 +1007,19 @@ SCREEN CONTINUITY RULES:
    - accessories must include exact body/clothing position.
    - Examples: "gold watch on the left wrist", "pearl earrings on both earlobes", "name badge clipped to the left chest pocket", "ID card hanging from a neck lanyard".
    - handheldItems must describe current position only if held across the whole screen; beat-specific item position belongs in Beat Moment Details.
-10. SCREEN LOCATION RULE - CRITICAL:
+10. SCREEN SPATIAL LOCK RULE - CRITICAL:
+   - screenSpatialLayout must be a fixed stage map for the whole screen, not a mood note.
+   - Include stable positions of major zones and landmarks, e.g. "curved white reception counter spans the foreground/right side, visitor side is front-left, right workstation chair sits behind the counter, long hospital hallway recedes in the background, wall signage is on the rear wall, file shelves are behind the counter".
+   - screenFixedElements must list fixed objects whose positions cannot change, e.g. "curved white reception counter in foreground/right", "desktop monitors behind the counter", "hospital wall signage on rear wall".
+   - screenCharacterPositions must lock every screen character to a fixed anchor for the whole screen.
+   - For each screenCharacterPositions item, specify characterId, characterName, anchorPosition, facingDirection, relationshipToKeyObjects, and visibilityRule.
+   - The anchorPosition must not change across beats in the same screen; only expression, gesture, pose refinement, and crop visibility can change.
+   - If the camera is a close-up, the visibilityRule should allow crop/off-frame while preserving the anchor.
+   - Hospital Nurse Station example: Lục Thư Vân stays seated behind the counter at the right workstation chair; Khương Yến Ninh stays standing on the visitor/front-left side before the counter.
+11. SCREEN LOCATION RULE - CRITICAL:
    - screenState must describe only screen-level layout/status changes.
    - Do not turn beat-specific camera focus such as "glass table surface", "floor near sofa", "hallway visible", or "eyes close-up" into a new location.
-11. Return ONLY a valid JSON object. No markdown. No commentary.
+12. Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
@@ -1011,6 +1031,8 @@ Required JSON Schema:
       "endBeatId": 3,
       "screenState": "string (layout status or changes in this screen)",
       "screenProps": ["string (props permanent/visible on this screen)"],
+      "screenSpatialLayout": "string (fixed stage layout for this screen)",
+      "screenFixedElements": ["string (fixed object plus fixed position)"],
       "screenCharacterStates": [
         {
           "characterId": "string",
@@ -1022,6 +1044,16 @@ Required JSON Schema:
           "handheldItems": ["string"],
           "appearanceNotes": "string",
           "stateChanges": ["string"]
+        }
+      ],
+      "screenCharacterPositions": [
+        {
+          "characterId": "string",
+          "characterName": "string",
+          "anchorPosition": "string (fixed screen anchor)",
+          "facingDirection": "string (stable facing direction/relationship)",
+          "relationshipToKeyObjects": "string (spatial relation to counter, chair, door, table, bed, sofa, etc.)",
+          "visibilityRule": "string (how crop/close-up/off-frame behaves without relocation)"
         }
       ],
       "continuityNotes": "string"
@@ -1036,12 +1068,19 @@ FIELD RULES:
 - endBeatId: copy the last beatId of this screen.
 - screenState: describe only screen-level layout/status/state.
 - screenProps: props visible or important throughout the screen.
+- screenSpatialLayout: fixed stage map for the whole screen. It must preserve location identity and key object positions.
+- screenFixedElements: fixed objects with position labels. Do not list vague object names without where they are.
 - screenCharacterStates: current outfit/accessory state for each character present in this screen.
+- screenCharacterPositions: fixed anchor for each character present in this screen. These anchors are more authoritative than later storyboard blocking.
+- anchorPosition: exact stable position in the screen, such as "visitor/front-left side of the counter", "behind the counter at the right workstation chair", "left sofa nearest the glass tea table".
+- facingDirection: stable direction or target, such as "facing across the counter toward Khương Yến Ninh".
+- relationshipToKeyObjects: exact relation to fixed objects, such as "seated behind the curved white counter, beside desktop monitors".
+- visibilityRule: explain that close-ups may crop/hide the character off-frame while keeping the anchor unchanged.
 - outfit: full copy-ready current outfit wording for the character on this screen, listing exact garments top-down and inner-to-outer.
 - accessories: screen-level accessories with exact body/clothing position.
 - handheldItems: only items held generally across this screen, not one-beat temporary items.
 - stateChanges: array of screen-level clothing/accessory changes. If none, return [].
-- continuityNotes: concise note for maintaining layout, outfit, props, and character positions across the screen.
+- continuityNotes: concise note for maintaining fixed layout, fixed anchors, outfit, props, and character positions across the screen.
 
 APPROVED BEAT SKELETON SOURCE:
 ${analysis}
@@ -1483,6 +1522,11 @@ export const generateScreenContinuity = async (
                   type: "array",
                   items: { type: "string" }
                 },
+                screenSpatialLayout: { type: "string" },
+                screenFixedElements: {
+                  type: "array",
+                  items: { type: "string" }
+                },
                 screenCharacterStates: {
                   type: "array",
                   items: {
@@ -1510,9 +1554,24 @@ export const generateScreenContinuity = async (
                     required: ["characterId", "characterName", "outfit", "outfitMainColor", "outfitAccentColor", "accessories", "handheldItems", "appearanceNotes", "stateChanges"]
                   }
                 },
+                screenCharacterPositions: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      characterId: { type: "string" },
+                      characterName: { type: "string" },
+                      anchorPosition: { type: "string" },
+                      facingDirection: { type: "string" },
+                      relationshipToKeyObjects: { type: "string" },
+                      visibilityRule: { type: "string" }
+                    },
+                    required: ["characterId", "characterName", "anchorPosition", "facingDirection", "relationshipToKeyObjects", "visibilityRule"]
+                  }
+                },
                 continuityNotes: { type: "string" }
               },
-              required: ["screenId", "beatIds", "startBeatId", "endBeatId", "screenState", "screenProps", "screenCharacterStates", "continuityNotes"]
+              required: ["screenId", "beatIds", "startBeatId", "endBeatId", "screenState", "screenProps", "screenSpatialLayout", "screenFixedElements", "screenCharacterStates", "screenCharacterPositions", "continuityNotes"]
             }
           }
         },

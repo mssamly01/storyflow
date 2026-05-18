@@ -57,6 +57,15 @@ export interface ScreenCharacterState {
   stateChanges?: string[];
 }
 
+export interface ScreenCharacterPosition {
+  characterName: string;
+  characterId?: string;
+  anchorPosition: string;
+  facingDirection?: string;
+  relationshipToKeyObjects?: string;
+  visibilityRule?: string;
+}
+
 export interface StoryScreen {
   meta?: EditableMeta;
   screenId: string;
@@ -69,6 +78,9 @@ export interface StoryScreen {
   screenCharacters: string[];
   screenProps: string[];
   screenCharacterStates?: ScreenCharacterState[];
+  screenSpatialLayout?: string;
+  screenFixedElements?: string[];
+  screenCharacterPositions?: ScreenCharacterPosition[];
   startBeatId: number;
   endBeatId: number;
   beatIds?: number[];
@@ -112,6 +124,9 @@ export interface ScreenContinuityItem {
   screenState: string;
   screenProps: string[];
   screenCharacterStates: ScreenCharacterState[];
+  screenSpatialLayout?: string;
+  screenFixedElements?: string[];
+  screenCharacterPositions?: ScreenCharacterPosition[];
   continuityNotes?: string;
 }
 
@@ -296,6 +311,9 @@ export interface FinalResultPanel {
     screenState: string;
     continuityNotes?: string;
     screenCharacterStates?: ScreenCharacterState[];
+    screenSpatialLayout?: string;
+    screenFixedElements?: string[];
+    screenCharacterPositions?: ScreenCharacterPosition[];
   };
   source: {
     originalText: string;

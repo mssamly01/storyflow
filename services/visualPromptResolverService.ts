@@ -4,6 +4,7 @@ import type {
   CharacterProfile,
   EngineerPrompt,
   LocationProfile,
+  ScreenCharacterPosition,
   ScreenCharacterState,
   StoryBeat,
   StoryScreen,
@@ -230,6 +231,17 @@ function findScreenCharacterState(
   );
 }
 
+function findScreenCharacterPosition(
+  characterName: string,
+  characterId: string | undefined,
+  screen: StoryScreen | undefined,
+  profile: CharacterProfile | undefined
+): ScreenCharacterPosition | undefined {
+  return (screen?.screenCharacterPositions || []).find((position) =>
+    namesMatch(position.characterName, position.characterId, characterName, characterId, profile)
+  );
+}
+
 function findMomentState(
   characterName: string,
   characterId: string | undefined,
@@ -281,6 +293,9 @@ function resolveVisibleCharacterNames(
   panel: StoryboardPanel,
   profiles: CharacterProfile[]
 ): string[] {
+  const approvedVisibleNames = unique(beat.visibleCharacters || []);
+  if (approvedVisibleNames.length) return approvedVisibleNames;
+
   const blockingNames = (panel.characterBlocking || [])
     .map((blocking) => blocking.characterName)
     .filter(Boolean);
@@ -343,6 +358,79 @@ function buildLocationContinuity(
   return `Location Continuity: keep ${locationName}'s established layout${details ? `, ${details}` : ""} consistent across this screen; camera focus may move to details such as tables, floors, sofas, hallways, or close-ups, but the environment identity must not change.`;
 }
 
+function buildScreenSpatialLock(
+  location: LocationProfile | undefined,
+  screen: StoryScreen | undefined
+): string {
+  const locationName = location?.name || screen?.location || "the established location";
+  const fixedElements = unique([
+    ...(screen?.screenFixedElements || []),
+    ...(screen?.screenProps || []).map((prop) => `screen prop fixed in established position: ${prop}`),
+    ...(location?.keyObjects || []).map((object) => `recurring location object fixed in established position: ${object}`)
+  ]);
+  const layout = cleanCopyReadyText(screen?.screenSpatialLayout)
+    || cleanCopyReadyText(location?.layout)
+    || cleanCopyReadyText(location?.locationPrompt)
+    || `${locationName}'s established layout`;
+
+  return `Screen Spatial Lock: ${layout}${fixedElements.length ? ` Fixed elements: ${fixedElements.join("; ")}.` : "."} Camera may crop, zoom, or pan within this locked layout, but must not redesign the environment, change fixed object positions, or turn a camera layer into a new location.`;
+}
+
+function formatPositionLock(
+  name: string,
+  position: ScreenCharacterPosition | undefined,
+  visible: boolean,
+  blocking: CharacterBlocking | undefined
+): string {
+  if (position?.anchorPosition) {
+    const details = compact([
+      `fixed anchor: ${position.anchorPosition}`,
+      position.facingDirection ? `facing: ${position.facingDirection}` : "",
+      position.relationshipToKeyObjects ? `relation: ${position.relationshipToKeyObjects}` : "",
+      position.visibilityRule ? `visibility: ${position.visibilityRule}` : "",
+      visible ? "visible only if the current crop includes this anchor" : "present at this anchor but off-frame or cropped in this beat"
+    ], "; ");
+    return `${name}: ${details}`;
+  }
+
+  const fallbackBlocking = visible && blocking
+    ? compact([
+      blocking.framePosition ? `current crop position: ${blocking.framePosition}` : "",
+      blocking.facingDirection ? `facing: ${blocking.facingDirection}` : ""
+    ], "; ")
+    : "";
+  return `${name}: ${fallbackBlocking || "keeps the established screen anchor"}${visible ? "" : "; present but off-frame or cropped in this beat"}`;
+}
+
+function buildCharacterPositionLock(
+  beat: StoryBeat,
+  screen: StoryScreen | undefined,
+  panel: StoryboardPanel,
+  visibleNames: string[],
+  profiles: CharacterProfile[]
+): string {
+  const characterPool = unique([
+    ...(screen?.screenCharacters || []),
+    ...(beat.characters || []),
+    ...(beat.focusCharacters || []),
+    ...(beat.visibleCharacters || []),
+    ...(beat.offscreenPresentCharacters || [])
+  ]);
+  const visibleSet = new Set(visibleNames.map(normalize));
+  const entries = characterPool.map((name) => {
+    const profile = findCharacterProfile(name, undefined, profiles);
+    const position = findScreenCharacterPosition(name, profile?.characterId, screen, profile);
+    const blocking = position
+      ? undefined
+      : findBlocking(name, profile?.characterId, panel, profile);
+    const normalizedNames = [name, profile?.name, ...(profile?.aliases || [])].map(normalize).filter(Boolean);
+    const visible = normalizedNames.some((candidate) => visibleSet.has(candidate));
+    return formatPositionLock(profile?.name || name, position, visible, blocking);
+  });
+
+  return `Character Position Lock: ${formatList(entries, "approved characters keep their established screen anchors")}. Camera may crop, zoom, or hide off-frame characters, but must not relocate them, seat them elsewhere, move them to another workstation/background area, or swap their side of key objects.`;
+}
+
 function buildResolvedOutfit(
   screenState: ScreenCharacterState | undefined,
   profile: CharacterProfile | undefined
@@ -397,8 +485,21 @@ function buildCharacterPosture(
   beat: StoryBeat,
   blocking: CharacterBlocking | undefined,
   moment: BeatCharacterMomentDetail | undefined,
-  useBeatPostureFallback: boolean
+  useBeatPostureFallback: boolean,
+  position?: ScreenCharacterPosition
 ): string {
+  if (position?.anchorPosition) {
+    const anchoredPosture = compact([
+      `fixed at screen anchor: ${position.anchorPosition}`,
+      position.facingDirection ? `facing ${position.facingDirection}` : "",
+      position.relationshipToKeyObjects,
+      blocking?.poseRefinement,
+      moment?.poseRefinement,
+      moment?.momentNotes
+    ]);
+    if (anchoredPosture) return anchoredPosture;
+  }
+
   const localPosture = compact([
     blocking?.bodyPosition,
     blocking?.poseRefinement,
@@ -441,11 +542,12 @@ function buildCharacterProfileLine(params: {
   screenState?: ScreenCharacterState;
   moment?: BeatCharacterMomentDetail;
   blocking?: CharacterBlocking;
+  position?: ScreenCharacterPosition;
   panel: StoryboardPanel;
   beat: StoryBeat;
   useBeatPostureFallback: boolean;
 }): string {
-  const { characterName, profile, screenState, moment, blocking, panel, beat, useBeatPostureFallback } = params;
+  const { characterName, profile, screenState, moment, blocking, position, panel, beat, useBeatPostureFallback } = params;
   const identity = buildCharacterIdentity(profile);
   const outfit = buildResolvedOutfit(screenState, profile);
   const accessories = unique([
@@ -458,12 +560,17 @@ function buildCharacterProfileLine(params: {
     ? []
     : (screenState?.handheldItems || []).filter((item) => itemMentionedInContext(item, beat, panel, moment));
   const handheld = unique([...momentHandheld, ...screenHandheld]);
-  const posture = buildCharacterPosture(beat, blocking, moment, useBeatPostureFallback);
+  const posture = buildCharacterPosture(beat, blocking, moment, useBeatPostureFallback, position);
   const expression = compact([blocking?.expression, moment?.expression]
     .filter((value) => value && normalize(value) !== "none"));
 
   const profileParts = [
     ...identity,
+    position?.anchorPosition ? `Position Lock: ${compact([
+      position.anchorPosition,
+      position.facingDirection ? `facing ${position.facingDirection}` : "",
+      position.relationshipToKeyObjects
+    ])}` : "",
     posture ? `Posture: ${posture}` : "",
     expression ? `Expression: ${expression}` : "",
     outfit ? `Outfit top-down inner-to-outer: ${outfit}` : "",
@@ -494,30 +601,41 @@ function buildScreenContinuityLine(
 }
 
 function buildSceneLine(beat: StoryBeat, panel: StoryboardPanel): string {
-  return `Scene: ${compact([
+  const scene = compact([
     panel.shotType,
     panel.cameraAngle,
     panel.cameraDistance,
     panel.lensFeel,
     panel.composition
-  ]) || "storyboard-directed shot"}`;
+  ]) || "storyboard-directed shot";
+  return `Scene: ${scene}. This is a crop, zoom, or pan from the locked screen layout; it must not relocate characters or rebuild the setting`;
 }
 
 function buildActionLine(
   beat: StoryBeat,
   visibleNames: string[],
   panel: StoryboardPanel,
-  profiles: CharacterProfile[]
+  profiles: CharacterProfile[],
+  screen: StoryScreen | undefined
 ): string {
   const characterActions = visibleNames.map((name) => {
     const profile = findCharacterProfile(name, undefined, profiles);
     const blocking = findBlocking(name, profile?.characterId, panel, profile);
     const moment = findMomentState(name, profile?.characterId, beat, profile);
+    const position = findScreenCharacterPosition(name, profile?.characterId || blocking?.characterId, screen, profile);
     const action = compact([
-      blocking?.framePosition ? `${name} is ${blocking.framePosition}` : "",
-      blocking?.facingDirection ? `facing ${blocking.facingDirection}` : "",
+      position?.anchorPosition
+        ? `${profile?.name || name} remains at locked anchor ${position.anchorPosition}`
+        : blocking?.framePosition
+          ? `${name} is ${blocking.framePosition}`
+          : "",
+      position?.facingDirection
+        ? `facing ${position.facingDirection}`
+        : blocking?.facingDirection
+          ? `facing ${blocking.facingDirection}`
+          : "",
       blocking?.expression ? `with ${blocking.expression} expression` : "",
-      blocking?.poseRefinement,
+      position ? "" : blocking?.poseRefinement,
       moment?.momentNotes
     ]);
     return action;
@@ -561,12 +679,15 @@ function buildPromptForPanel(params: {
   ]) || "established lighting";
   const visibleNames = resolveVisibleCharacterNames(beat, panel, characters);
   const screenContinuityLine = buildScreenContinuityLine(beat, screen, visibleNames, locationName);
+  const screenSpatialLockLine = buildScreenSpatialLock(location, screen);
+  const characterPositionLockLine = buildCharacterPositionLock(beat, screen, panel, visibleNames, characters);
 
   const characterLines = visibleNames.map((name) => {
     const blocking = findBlocking(name, undefined, panel, undefined);
     const profile = findCharacterProfile(name, blocking?.characterId, characters);
     const screenState = findScreenCharacterState(name, profile?.characterId || blocking?.characterId, screen, profile);
     const moment = findMomentState(name, profile?.characterId || blocking?.characterId, beat, profile);
+    const position = findScreenCharacterPosition(name, profile?.characterId || blocking?.characterId, screen, profile);
 
     return buildCharacterProfileLine({
       characterName: profile?.name || name,
@@ -574,6 +695,7 @@ function buildPromptForPanel(params: {
       screenState,
       moment,
       blocking,
+      position,
       panel,
       beat,
       useBeatPostureFallback: !panel.characterBlocking?.length || Boolean(blocking)
@@ -584,10 +706,12 @@ function buildPromptForPanel(params: {
     sentence(style || DEFAULT_STYLE),
     sentence(`Location: ${locationName} (${locationDescription}), ${timeOfDay}, ${locationLighting}`),
     sentence(buildLocationContinuity(location, screen)),
+    sentence(screenSpatialLockLine),
+    sentence(characterPositionLockLine),
     sentence(screenContinuityLine),
     sentence(buildSceneLine(beat, panel)),
     characterLines.map(sentence).join(" "),
-    sentence(buildActionLine(beat, visibleNames, panel, characters)),
+    sentence(buildActionLine(beat, visibleNames, panel, characters, screen)),
     buildLayerLines(panel).map(sentence).join(" "),
     sentence("no text, no speech bubbles, no captions, no subtitles, no watermark, no logo"),
     `Negative prompt: ${DEFAULT_NEGATIVE_PROMPT}.`
