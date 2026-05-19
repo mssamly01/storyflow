@@ -188,6 +188,22 @@ function canBuildFinalResult(production: ProductionData): boolean {
   );
 }
 
+function isStoryboardProductionComplete(production: ProductionData): boolean {
+  if (!production.storyboard?.trim()) return false;
+
+  const beats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
+  const panels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+  if (!beats.length) return panels.length > 0;
+
+  const panelBeatIds = new Set<number>();
+  panels.forEach((panel) => {
+    const beatId = getStoryboardPanelBeatId(panel);
+    if (beatId) panelBeatIds.add(beatId);
+  });
+
+  return beats.every((beat) => panelBeatIds.has(Number(beat.beatId)));
+}
+
 function requiresManualInput(stage: ProductionStage): boolean {
   return [
     ProductionStage.ANALYSIS,
@@ -215,11 +231,16 @@ function chooseFinalBuildItems<T>(
   return score(productionItems) > score(projectItems) ? productionItems : projectItems;
 }
 
+function getStoryboardPanelBeatId(panel: any): number | null {
+  const beatId = Number(panel?.beatId ?? panel?.panelNumber);
+  return Number.isFinite(beatId) && beatId > 0 ? beatId : null;
+}
+
 function mergeStoryboardPanelsByBeatId(existingPanels: any[], incomingPanels: any[]) {
   const map = new Map<number, any>();
   [...existingPanels, ...incomingPanels].forEach((panel) => {
-    const beatId = Number(panel?.beatId);
-    if (Number.isFinite(beatId) && beatId > 0) {
+    const beatId = getStoryboardPanelBeatId(panel);
+    if (beatId) {
       map.set(beatId, { ...panel, beatId });
     }
   });
@@ -291,6 +312,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
   const [storyboardBatchIndex, setStoryboardBatchIndex] = useState(0);
+  const [storyboardBatchInputs, setStoryboardBatchInputs] = useState<Record<number, string>>({});
+  const [showStoryboardPreview, setShowStoryboardPreview] = useState(false);
   const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [referencePromptModal, setReferencePromptModal] = useState<{
     open: boolean;
@@ -302,6 +325,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
 
   const [importedFileName, setImportedFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const autoPromptBuildSignatureRef = useRef("");
+  const autoFinalResultBuildSignatureRef = useRef("");
 
   const showToast = (message: string) => {
     setToast({ message, visible: true });
@@ -404,8 +429,9 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     if (prod.characterLocationAnalysis) set.add(ProductionStage.CHARACTER_LOCATION);
     if (prod.screenContinuity) set.add(ProductionStage.SCREEN_CONTINUITY);
     if (prod.beatMomentDetails) set.add(ProductionStage.BEAT_MOMENT);
-    if (prod.storyboard) set.add(ProductionStage.STORYBOARD);
+    if (isStoryboardProductionComplete(prod)) set.add(ProductionStage.STORYBOARD);
     if (prod.prompts) set.add(ProductionStage.PROMPTS);
+    if (prod.prompts) set.add(ProductionStage.FINAL);
     if (prod.finalResult) set.add(ProductionStage.FINAL);
     if (currentStage !== ProductionStage.LIBRARY) set.add(currentStage);
     return Array.from(set);
@@ -530,6 +556,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   useEffect(() => {
     if (stage === ProductionStage.STORYBOARD) {
       setStoryboardBatchIndex(0);
+      setShowStoryboardPreview(false);
     }
   }, [stage, production.analysis]);
 
@@ -743,7 +770,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
     if (s === ProductionStage.SCREEN_CONTINUITY) return !!production.screenContinuity;
     if (s === ProductionStage.BEAT_MOMENT) return !!production.beatMomentDetails;
-    if (s === ProductionStage.STORYBOARD) return !!production.storyboard;
+    if (s === ProductionStage.STORYBOARD) return isStoryboardProductionComplete(production);
     if (s === ProductionStage.PROMPTS) return !!production.prompts;
     if (s === ProductionStage.FINAL) return !!production.finalResult;
     return false;
@@ -928,6 +955,77 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
   }, [production.analysis, production.storyboard, storyboardBatchIndex]);
 
+  const storyboardBatchStatuses = useMemo(() => {
+    const existingPanels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+    const savedBeatIds = new Set<number>();
+
+    existingPanels.forEach((panel) => {
+      const beatId = getStoryboardPanelBeatId(panel);
+      if (beatId) savedBeatIds.add(beatId);
+    });
+
+    return Array.from({ length: storyboardBatchInfo.totalBatches }, (_, index) => {
+      const start = index * gemini.STORYBOARD_BATCH_SIZE;
+      const end = Math.min(start + gemini.STORYBOARD_BATCH_SIZE, storyboardBatchInfo.beats.length);
+      const batchBeats = storyboardBatchInfo.beats.slice(start, end);
+      const targetBeatIds = batchBeats
+        .map((beat) => Number(beat.beatId))
+        .filter((beatId) => Number.isFinite(beatId) && beatId > 0);
+      const savedCount = targetBeatIds.filter((beatId) => savedBeatIds.has(beatId)).length;
+
+      return {
+        index,
+        start,
+        end,
+        batchBeats,
+        targetBeatIds,
+        savedCount,
+        total: targetBeatIds.length,
+        complete: targetBeatIds.length > 0 && savedCount >= targetBeatIds.length
+      };
+    });
+  }, [production.storyboard, storyboardBatchInfo.beats, storyboardBatchInfo.totalBatches]);
+
+  const storyboardProgress = useMemo(() => {
+    const existingPanels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+    const savedBeatIds = new Set<number>();
+
+    existingPanels.forEach((panel) => {
+      const beatId = getStoryboardPanelBeatId(panel);
+      if (beatId) savedBeatIds.add(beatId);
+    });
+
+    const targetBeatIds = storyboardBatchInfo.beats
+      .map((beat) => Number(beat.beatId))
+      .filter((beatId) => Number.isFinite(beatId) && beatId > 0);
+    const savedCount = targetBeatIds.filter((beatId) => savedBeatIds.has(beatId)).length;
+    const firstIncompleteBatch = storyboardBatchStatuses.find((item) => !item.complete);
+
+    return {
+      savedCount,
+      total: targetBeatIds.length,
+      completeBatchCount: storyboardBatchStatuses.filter((item) => item.complete).length,
+      firstIncompleteBatchIndex: firstIncompleteBatch?.index ?? -1,
+      isComplete: targetBeatIds.length > 0 && savedCount >= targetBeatIds.length
+    };
+  }, [production.storyboard, storyboardBatchInfo.beats, storyboardBatchStatuses]);
+
+  const getStoryboardPromptForBatch = (batchIndex: number) => {
+    return gemini.getStoryboardPrompt(
+      production.analysis || '',
+      production.characterLocationAnalysis || '',
+      getSelectedStylePrompt(),
+      production.screenContinuity || '',
+      production.beatMomentDetails || '',
+      {
+        batchIndex,
+        batchSize: gemini.STORYBOARD_BATCH_SIZE,
+        manualNextMode: false,
+        includeAllBeatsForManualNext: true
+      }
+    );
+  };
+
   const currentStepPrompt = useMemo(() => {
     const stylePrompt = getSelectedStylePrompt();
     switch(stage) {
@@ -948,19 +1046,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       case ProductionStage.BEAT_MOMENT:
         return gemini.getBeatMomentDetailsPrompt(production.analysis || '', production.characterLocationAnalysis || '', production.screenContinuity || '', stylePrompt);
       case ProductionStage.STORYBOARD: 
-        return gemini.getStoryboardPrompt(
-          production.analysis || '', 
-          production.characterLocationAnalysis || '', 
-          stylePrompt,
-          production.screenContinuity || '',
-          production.beatMomentDetails || '',
-          {
-            batchIndex: storyboardBatchInfo.batchIndex,
-            batchSize: gemini.STORYBOARD_BATCH_SIZE,
-            manualNextMode: true,
-            includeAllBeatsForManualNext: true
-          }
-        );
+        return getStoryboardPromptForBatch(storyboardBatchInfo.batchIndex);
       case ProductionStage.PROMPTS:
         return gemini.getEngineerPromptsPrompt({
           analysisJson: production.analysis || '',
@@ -1084,6 +1170,139 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     [finalBuildData]
   );
 
+  const promptEngineeringAutoBuildSignature = useMemo(() => {
+    if (stage !== ProductionStage.PROMPTS || isLoading || production.prompts) return "";
+    if (getPromptEngineeringMissingInputs(production).length > 0) return "";
+
+    return [
+      inputData.selectedStyle,
+      production.analysis || "",
+      production.characterLocationAnalysis || "",
+      production.screenContinuity || "",
+      production.beatMomentDetails || "",
+      production.storyboard || ""
+    ].join("\u001f");
+  }, [
+    stage,
+    isLoading,
+    inputData.selectedStyle,
+    production.analysis,
+    production.characterLocationAnalysis,
+    production.screenContinuity,
+    production.beatMomentDetails,
+    production.storyboard,
+    production.prompts
+  ]);
+
+  const finalResultAutoBuildSignature = useMemo(() => {
+    if (stage !== ProductionStage.FINAL || isLoading || production.finalResult || !finalBuildCheck.canBuild) return "";
+
+    try {
+      return JSON.stringify({
+        title: inputData.title,
+        chapter: inputData.chapter,
+        finalBuildData
+      });
+    } catch {
+      return [
+        inputData.title,
+        inputData.chapter,
+        finalBuildData.beats.length,
+        finalBuildData.panels.length,
+        finalBuildData.engineerPrompts.length,
+        finalBuildData.characters.length,
+        finalBuildData.locations.length
+      ].join("\u001f");
+    }
+  }, [
+    stage,
+    isLoading,
+    production.finalResult,
+    finalBuildCheck.canBuild,
+    inputData.title,
+    inputData.chapter,
+    finalBuildData
+  ]);
+
+  const isFinalResultAutoBuildPending = Boolean(
+    finalResultAutoBuildSignature &&
+    autoFinalResultBuildSignatureRef.current !== finalResultAutoBuildSignature
+  );
+
+  const saveStoryboardBatchResult = (batchIndex: number, rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value) return false;
+
+    let parsedJson: any = null;
+    try {
+      parsedJson = JSON.parse(value);
+    } catch (e) {
+      setError("Dữ liệu storyboard batch không phải là JSON hợp lệ.");
+      return false;
+    }
+
+    const incomingPanels = normalizeStoryboardPanels(parsedJson);
+    if (!incomingPanels.length) {
+      setError("JSON batch storyboard phải có dạng { \"panels\": [...] } hoặc là một mảng panel.");
+      return false;
+    }
+
+    const batch = storyboardBatchStatuses[batchIndex];
+    if (!batch || !batch.targetBeatIds.length) {
+      setError("Không tìm thấy beat tương ứng với batch storyboard này.");
+      return false;
+    }
+
+    const targetBeatIds = new Set(batch.targetBeatIds);
+    const batchPanels = incomingPanels
+      .map((panel) => {
+        const beatId = getStoryboardPanelBeatId(panel);
+        return beatId ? { ...panel, beatId } : null;
+      })
+      .filter((panel): panel is any => Boolean(panel && targetBeatIds.has(panel.beatId)));
+
+    if (!batchPanels.length) {
+      setError(`Batch ${batchIndex + 1} chỉ nhận beatId: ${batch.targetBeatIds.join(", ")}. JSON vừa dán không có panel nào thuộc batch này.`);
+      return false;
+    }
+
+    const existingPanels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+    const mergedPanels = mergeStoryboardPanelsByBeatId(existingPanels, batchPanels);
+    const storyboardValue = JSON.stringify({ panels: mergedPanels }, null, 2);
+    updateProductionDataByStage(storyboardValue, ProductionStage.STORYBOARD);
+
+    const mergedBeatIds = new Set<number>();
+    mergedPanels.forEach((panel) => {
+      const beatId = getStoryboardPanelBeatId(panel);
+      if (beatId) mergedBeatIds.add(beatId);
+    });
+
+    const firstMissingIndex = storyboardBatchInfo.beats.findIndex((beat) => !mergedBeatIds.has(Number(beat.beatId)));
+    const missingCount = firstMissingIndex >= 0
+      ? storyboardBatchInfo.beats.filter((beat) => !mergedBeatIds.has(Number(beat.beatId))).length
+      : 0;
+    const ignoredCount = incomingPanels.length - batchPanels.length;
+
+    setManualInputValue('');
+    setStoryboardBatchInputs((prev) => ({ ...prev, [batchIndex]: '' }));
+    setShowStoryboardPreview(false);
+    setError(null);
+
+    if (firstMissingIndex < 0 && storyboardBatchInfo.beats.length > 0) {
+      showToast(`Đã ghép đủ ${mergedPanels.length}/${storyboardBatchInfo.beats.length} storyboard panels. Bấm nút xem để mở UI.`);
+      return true;
+    }
+
+    const nextBatchIndex = Math.floor(firstMissingIndex / gemini.STORYBOARD_BATCH_SIZE);
+    setStoryboardBatchIndex(nextBatchIndex);
+    showToast(
+      ignoredCount > 0
+        ? `Đã lưu batch ${batchIndex + 1}. Bỏ qua ${ignoredCount} panel ngoài batch. Còn thiếu ${missingCount} panel.`
+        : `Đã lưu batch ${batchIndex + 1}. Còn thiếu ${missingCount} panel.`
+    );
+    return true;
+  };
+
   const handleManualSave = () => {
     if (!manualInputValue.trim()) return;
     setError(null);
@@ -1173,31 +1392,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
 
     if (stage === ProductionStage.STORYBOARD) {
-      const incomingPanels = normalizeStoryboardPanels(parsedJson);
-      if (incomingPanels.length) {
-        const existingPanels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
-        const mergedPanels = mergeStoryboardPanelsByBeatId(existingPanels, incomingPanels);
-        const storyboardValue = JSON.stringify({ panels: mergedPanels }, null, 2);
-        updateProductionDataByStage(storyboardValue, ProductionStage.STORYBOARD);
-
-        const beats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
-        const mergedBeatIds = new Set(mergedPanels.map((panel) => Number(panel.beatId)));
-        const firstMissingIndex = beats.findIndex((beat) => !mergedBeatIds.has(Number(beat.beatId)));
-
-        setManualInputValue('');
-        if (firstMissingIndex >= 0) {
-          const nextBatchIndex = Math.floor(firstMissingIndex / gemini.STORYBOARD_BATCH_SIZE);
-          setStoryboardBatchIndex(nextBatchIndex);
-          showToast(`Đã lưu ${mergedPanels.length}/${beats.length} storyboard panels. Gửi "Next" để làm batch ${nextBatchIndex + 1}.`);
-          return;
-        }
-
-        const nextIndex = steps.findIndex(s => s.id === stage) + 1;
-        if (nextIndex < steps.length) {
-          setStage(steps[nextIndex].id);
-        }
-        return;
-      }
+      saveStoryboardBatchResult(storyboardBatchInfo.batchIndex, manualInputValue);
+      return;
     }
 
     const finalValueToSave = parsedJson ? JSON.stringify(parsedJson, null, 2) : manualInputValue;
@@ -1493,6 +1689,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  useEffect(() => {
+    if (!promptEngineeringAutoBuildSignature) return;
+    if (autoPromptBuildSignatureRef.current === promptEngineeringAutoBuildSignature) return;
+
+    autoPromptBuildSignatureRef.current = promptEngineeringAutoBuildSignature;
+    void handleProcess();
+  }, [promptEngineeringAutoBuildSignature]);
+
   const handleAutoAnalysis = async () => {
     setIsLoading(true);
     setError(null);
@@ -1538,12 +1742,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       return;
     }
 
+    const projectForStorage = serializeProjectForStorage(project);
+    const compactStoryFlowProject = {
+      id: projectForStorage.id,
+      title: projectForStorage.title,
+      selectedStyleId: projectForStorage.selectedStyleId,
+      screenContinuity: projectForStorage.screenContinuity,
+      beatMomentDetails: projectForStorage.beatMomentDetails,
+      workflow: projectForStorage.workflow,
+      createdAt: projectForStorage.createdAt,
+      updatedAt: projectForStorage.updatedAt
+    };
     const projectData = {
       id: Date.now(),
       type: 'storyflow' as const,
       inputData,
-      production,
-      storyFlowProject: serializeProjectForStorage(project),
+      production: {
+        ...production,
+        finalResult: undefined
+      },
+      storyFlowProject: compactStoryFlowProject,
       timestamp: new Date().toISOString()
     };
 
@@ -1700,6 +1918,39 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
 
 
+  const buildCharacterLocationImagePromptExportContent = (library: {
+    characters: CharacterProfile[];
+    locations: LocationProfile[];
+  }) => {
+    const toSingleLine = (prompt: string) => prompt.replace(/\s+/g, " ").trim();
+    const characterPrompts = library.characters.map((character) =>
+      toSingleLine(buildCharacterReferenceSheetPrompt(character, getSelectedStylePrompt()))
+    );
+    const locationPrompts = library.locations.map((location) =>
+      toSingleLine(buildLocationReferenceSheetPrompt(location, getSelectedStylePrompt()))
+    );
+
+    return [...characterPrompts, ...locationPrompts].filter(Boolean).join("\n");
+  };
+
+  const handleExportCharacterLocationImagePrompts = () => {
+    const library = normalizeCharacterLocationLibrary(
+      parseJsonSafe<unknown>(production.characterLocationAnalysis, {})
+    );
+
+    if (!library.characters.length && !library.locations.length) {
+      setError("Khong co Character hoac Location prompt de export.");
+      return;
+    }
+
+    const content = buildCharacterLocationImagePromptExportContent(library);
+    const fileName = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}_character-location-image-prompts.txt`;
+    downloadTextFile(fileName, content, "text/plain;charset=utf-8");
+
+    setToast({ message: "Da xuat Image Prompt cho Characters va Locations!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
   const handleExportJSON = () => {
     if (!finalJsonData || finalJsonData.length === 0) return;
 
@@ -1801,6 +2052,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
+  useEffect(() => {
+    if (!finalResultAutoBuildSignature) return;
+    if (autoFinalResultBuildSignatureRef.current === finalResultAutoBuildSignature) return;
+
+    autoFinalResultBuildSignatureRef.current = finalResultAutoBuildSignature;
+    const finalResult = buildFinalResultFromCurrentProject();
+    if (finalResult) {
+      setToast({ message: "Đã tự động build Final Result!", visible: true });
+      setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    }
+  }, [finalResultAutoBuildSignature, buildFinalResultFromCurrentProject]);
+
   const handleCopyFinalResult = () => {
     copyToClipboard(production.finalResult);
   };
@@ -1845,6 +2108,126 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
     }
   };
+
+  const renderStoryboardBatchPasteView = () => (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+            <Save className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Dán kết quả theo batch</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              Đã có {storyboardProgress.savedCount}/{storyboardProgress.total || storyboardBatchInfo.totalBeats} panel, {storyboardProgress.completeBatchCount}/{storyboardBatchInfo.totalBatches} batch đủ dữ liệu.
+            </p>
+          </div>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${storyboardProgress.isComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+          {storyboardProgress.isComplete ? 'Đã ghép đủ' : 'Đang ghép batch'}
+        </span>
+      </div>
+
+      {storyboardProgress.isComplete && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-widest text-emerald-900">Storyboard đã đủ batch</h3>
+            <p className="mt-1 text-xs font-semibold text-emerald-700">
+              Dữ liệu đã được ghép thành kết quả hoàn chỉnh. Bấm nút bên phải khi muốn mở UI hiển thị Phác thảo minh họa.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowStoryboardPreview(true);
+                setIsManualMode(false);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-100 transition-colors hover:bg-emerald-700"
+            >
+              <Eye className="h-4 w-4" /> Xem Phác thảo minh họa
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowStoryboardPreview(false);
+                setIsManualMode(false);
+                setStage(ProductionStage.PROMPTS);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-indigo-100 transition-colors hover:bg-indigo-700"
+            >
+              <Zap className="h-4 w-4" /> Qua Prompt Engineering
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {storyboardBatchStatuses.map((batch) => {
+          const value = storyboardBatchInputs[batch.index] || '';
+          const isActive = batch.index === storyboardBatchInfo.batchIndex;
+          const rangeLabel = batch.total > 0
+            ? `Beats ${batch.start + 1}-${batch.end}`
+            : 'Chưa có beat';
+
+          return (
+            <article
+              key={`storyboard-batch-${batch.index}`}
+              className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${isActive ? 'border-indigo-300 ring-2 ring-indigo-50' : 'border-slate-200'}`}
+            >
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setStoryboardBatchIndex(batch.index)}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${isActive ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                >
+                  <Layout className="h-3.5 w-3.5" /> Batch {batch.index + 1}
+                </button>
+                <span className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-widest ${batch.complete ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-50 text-slate-500 border border-slate-100'}`}>
+                  {batch.complete ? 'Đã đủ' : `${batch.savedCount}/${batch.total}`}
+                </span>
+              </div>
+
+              <div className="mb-3 space-y-1 text-xs font-semibold text-slate-500">
+                <p>{rangeLabel}</p>
+                <p className="font-mono text-[10px] text-slate-400">beatId: {batch.targetBeatIds.join(', ') || 'N/A'}</p>
+              </div>
+
+              <textarea
+                value={value}
+                onChange={(e) => setStoryboardBatchInputs((prev) => ({ ...prev, [batch.index]: e.target.value }))}
+                placeholder={`Dán JSON panels cho batch ${batch.index + 1} tại đây...`}
+                className="h-56 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              />
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStoryboardBatchIndex(batch.index);
+                    copyToClipboard(getStoryboardPromptForBatch(batch.index));
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-600"
+                >
+                  <Copy className="h-3.5 w-3.5" /> Copy prompt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveStoryboardBatchResult(batch.index, value)}
+                  disabled={!value.trim()}
+                  className="ml-auto inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Lưu batch
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const openCharacterReferenceSheetPrompt = (character: CharacterProfile) => {
     const prompt = buildCharacterReferenceSheetPrompt(character, getSelectedStylePrompt());
@@ -1955,7 +2338,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                     Batch {storyboardBatchInfo.batchIndex + 1}/{storyboardBatchInfo.totalBatches} · Beats {storyboardBatchInfo.start + 1}-{storyboardBatchInfo.end} / {storyboardBatchInfo.totalBeats}
                   </p>
                   <p className="mt-1 text-xs text-indigo-200">
-                    Paste batch JSON here to merge it. Type <span className="font-black">Next</span> or use the next button to move to the next batch prompt.
+                    Dán JSON vào đúng ô batch bên dưới. Khi đủ panel, StoryFlow sẽ tự ghép thành storyboard hoàn chỉnh.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1985,27 +2368,31 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2 text-slate-800 font-bold">
-            <Save className="w-5 h-5 text-indigo-600" />
-            <span>Dán kết quả AI trả về vào đây</span>
+      {stage === ProductionStage.STORYBOARD ? (
+        renderStoryboardBatchPasteView()
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-slate-800 font-bold">
+              <Save className="w-5 h-5 text-indigo-600" />
+              <span>Dán kết quả AI trả về vào đây</span>
+            </div>
           </div>
+          <textarea
+            value={manualInputValue}
+            onChange={(e) => setManualInputValue(e.target.value)}
+            placeholder="Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."
+            className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
+          />
+          <button 
+            onClick={handleManualSave}
+            disabled={!manualInputValue.trim()}
+            className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-5 h-5" /> Lưu và Tiếp tục
+          </button>
         </div>
-        <textarea
-          value={manualInputValue}
-          onChange={(e) => setManualInputValue(e.target.value)}
-          placeholder={stage === ProductionStage.STORYBOARD ? 'Dán JSON panels của batch hiện tại, hoặc nhập "Next" để chuyển prompt batch tiếp theo...' : "Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."}
-          className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
-        />
-        <button 
-          onClick={handleManualSave}
-          disabled={!manualInputValue.trim()}
-          className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-        >
-          <CheckCircle2 className="w-5 h-5" /> {stage === ProductionStage.STORYBOARD ? "Lưu batch / Tiếp tục" : "Lưu và Tiếp tục"}
-        </button>
-      </div>
+      )}
     </div>
   );
 
@@ -2198,10 +2585,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
               <button
                 onClick={handleBuildFinalResult}
-                disabled={!finalBuildCheck.canBuild}
+                disabled={!finalBuildCheck.canBuild || isFinalResultAutoBuildPending}
                 className="w-full inline-flex items-center justify-center gap-3 rounded-2xl bg-indigo-600 px-5 py-4 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-indigo-100 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
               >
-                <Sparkles className="w-4 h-4" /> Build Final Result
+                {isFinalResultAutoBuildPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {isFinalResultAutoBuildPending ? 'Đang tự build Final Result' : 'Build Final Result'}
               </button>
               <button
                 onClick={handleCopyFinalResult}
@@ -2862,7 +3250,27 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           );
         }
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <span className="text-sm font-bold text-slate-800">Character & Location Image Prompts</span>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">
+                    Export all reference prompts for Characters and Locations into one TXT file.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleExportCharacterLocationImagePrompts}
+                className="inline-flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-600 shadow-sm transition-all hover:bg-indigo-600 hover:text-white"
+              >
+                <Download className="w-3.5 h-3.5" /> Export Image Prompt
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {parsed.characters && (
               <div className="space-y-4">
                 <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Users className="w-4 h-4" /> Characters</h3>
@@ -3074,6 +3482,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 })}
               </div>
             )}
+            </div>
           </div>
         );
 
@@ -4049,7 +4458,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     if (stage === ProductionStage.FINAL) return renderFinalBuilderView();
 
-    if (stage !== ProductionStage.PROMPTS && (isManualMode || (isGlobalManualMode && !currentResult))) return renderManualView();
+    if (stage === ProductionStage.STORYBOARD) {
+      if (isManualMode || (isGlobalManualMode && !showStoryboardPreview)) return renderManualView();
+    } else if (stage !== ProductionStage.PROMPTS && (isManualMode || (isGlobalManualMode && !currentResult))) {
+      return renderManualView();
+    }
 
     const missingPromptInputs = getPromptEngineeringMissingInputs(production);
 
@@ -4107,9 +4520,18 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       : stage === ProductionStage.PROMPTS ? production.prompts
                       : production.finalResult;
 
+  const isStoryboardBatchManualView = stage === ProductionStage.STORYBOARD
+    && (isManualMode || (isGlobalManualMode && !showStoryboardPreview));
+  const isPromptEngineeringAutoBuildPending = Boolean(
+    promptEngineeringAutoBuildSignature &&
+    autoPromptBuildSignatureRef.current !== promptEngineeringAutoBuildSignature
+  );
   const isShowingManual = stage !== ProductionStage.FINAL
     && stage !== ProductionStage.PROMPTS
-    && (isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT));
+    && (
+      isStoryboardBatchManualView ||
+      (stage !== ProductionStage.STORYBOARD && (isManualMode || (isGlobalManualMode && !currentResult && stage !== ProductionStage.INPUT)))
+    );
   const btn = isLoading ? { label: "Đang xử lý...", icon: <Loader2 className="w-5 h-5 animate-spin" />, color: "bg-indigo-600" } 
              : isShowingManual ? { label: "Xác nhận dữ liệu", icon: <CheckCircle2 className="w-5 h-5" />, color: "bg-emerald-600" }
              : stage === ProductionStage.INPUT ? { label: "Bắt đầu phân tích", icon: <Send className="w-5 h-5" />, color: "bg-indigo-600" }
@@ -4192,7 +4614,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 </button>
                 {stage !== ProductionStage.INPUT && stage !== ProductionStage.FINAL && stage !== ProductionStage.PROMPTS && (
                   <button 
-                    onClick={() => setIsManualMode(!isManualMode)} 
+                    onClick={() => {
+                      const nextManualMode = !isManualMode;
+                      setIsManualMode(nextManualMode);
+                      if (stage === ProductionStage.STORYBOARD && nextManualMode) {
+                        setShowStoryboardPreview(false);
+                      }
+                    }} 
                     className={`flex items-center gap-3 px-6 py-3 rounded-2xl text-xs font-black transition-all border-2 shadow-sm ${isShowingManual ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-white border-slate-200 text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:shadow-md"}`}
                   >
                     <Settings2 className="w-4 h-4" /> {isShowingManual ? "TẮT CHẾ ĐỘ THỦ CÔNG" : "CHẾ ĐỘ THỦ CÔNG"}
@@ -4204,7 +4632,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           {error && <div className="mb-8 p-6 bg-red-50 text-red-600 rounded-3xl border border-red-100 text-sm font-bold flex items-center gap-4 shadow-sm animate-shake"><div className="bg-red-100 p-2 rounded-xl">⚠️</div>{error}</div>}
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">{renderContent()}</div>
         </div>
-        {!isShowingManual && stage !== ProductionStage.FINAL && (stage === ProductionStage.INPUT || !hasData(stage)) && (
+        {!isShowingManual && stage !== ProductionStage.FINAL && !isPromptEngineeringAutoBuildPending && (stage === ProductionStage.INPUT || !hasData(stage)) && (
           <div className="fixed bottom-12 right-12 z-30">
             <button onClick={handleProcess} disabled={isLoading || (stage === ProductionStage.INPUT && (!inputData.script.trim() || !inputData.title.trim() || !inputData.chapter.trim())) || (stage === ProductionStage.FINAL && hasData(ProductionStage.FINAL))} className={`group flex items-center gap-4 px-10 py-6 rounded-3xl font-black text-white shadow-2xl transition-all active:scale-95 disabled:opacity-50 ${btn.color} hover:brightness-110 hover:-translate-y-1 shadow-indigo-500/40`}>{btn.icon} <span className="uppercase tracking-[0.2em] text-sm">{btn.label}</span><ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" /></button>
           </div>

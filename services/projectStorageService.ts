@@ -15,6 +15,16 @@ export interface StoredStoryFlowProject {
 export type StoredProject = StoredStoryFlowProject | LiteraryProject;
 
 const STORAGE_KEY = "storyflow_saved_projects";
+const STORYFLOW_PROJECT_COMPACT_FIELDS = [
+  "id",
+  "title",
+  "selectedStyleId",
+  "screenContinuity",
+  "beatMomentDetails",
+  "workflow",
+  "createdAt",
+  "updatedAt"
+];
 
 function readProjects(): StoredProject[] {
   try {
@@ -28,6 +38,90 @@ function readProjects(): StoredProject[] {
 
 function writeProjects(projects: StoredProject[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+}
+
+function isQuotaError(error: unknown): boolean {
+  return Boolean(
+    error instanceof DOMException &&
+    (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
+  );
+}
+
+function compactStoryFlowProject(project: StoredProject): StoredProject {
+  if ((project as { type?: string }).type === "literary") return project;
+
+  const storyProject = project as StoredStoryFlowProject;
+  const rawProduction = storyProject.production;
+  const compactProduction = rawProduction && typeof rawProduction === "object" && !Array.isArray(rawProduction)
+    ? {
+        ...(rawProduction as Record<string, unknown>),
+        finalResult: undefined
+      }
+    : rawProduction;
+  const rawStoryFlowProject = storyProject.storyFlowProject;
+  if (!rawStoryFlowProject || typeof rawStoryFlowProject !== "object" || Array.isArray(rawStoryFlowProject)) {
+    return {
+      ...storyProject,
+      production: compactProduction
+    };
+  }
+
+  const compactStoryFlowProject = STORYFLOW_PROJECT_COMPACT_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
+    if (key in rawStoryFlowProject) {
+      acc[key] = (rawStoryFlowProject as Record<string, unknown>)[key];
+    }
+    return acc;
+  }, {});
+
+  return {
+    ...storyProject,
+    production: compactProduction,
+    storyFlowProject: compactStoryFlowProject
+  };
+}
+
+function compactStoryFlowTempState() {
+  try {
+    const raw = localStorage.getItem("storyflow_temp_state");
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+
+    const project = parsed.project && typeof parsed.project === "object" && !Array.isArray(parsed.project)
+      ? parsed.project as Record<string, unknown>
+      : {};
+
+    localStorage.setItem("storyflow_temp_state", JSON.stringify({
+      ...parsed,
+      production: {
+        ...(parsed.production || {}),
+        finalResult: undefined
+      },
+      project: {
+        id: project.id,
+        title: project.title,
+        selectedStyleId: project.selectedStyleId,
+        screenContinuity: project.screenContinuity,
+        beatMomentDetails: project.beatMomentDetails,
+        workflow: project.workflow,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt
+      }
+    }));
+  } catch {
+    localStorage.removeItem("storyflow_temp_state");
+  }
+}
+
+function writeProjectsWithCompaction(projects: StoredProject[]) {
+  try {
+    writeProjects(projects);
+  } catch (error) {
+    if (!isQuotaError(error)) throw error;
+    compactStoryFlowTempState();
+    writeProjects(projects.map(compactStoryFlowProject));
+  }
 }
 
 export function loadProjects(): StoredProject[] {
@@ -57,7 +151,7 @@ export function saveStoryFlowProject(project: StoredStoryFlowProject): StoredSto
     ? projects.map((candidate, index) => index === existingIndex ? project : candidate)
     : [project, ...projects];
 
-  writeProjects(nextProjects);
+  writeProjectsWithCompaction(nextProjects);
   return nextProjects.filter((candidate): candidate is StoredStoryFlowProject => candidate.type === "storyflow" || !candidate.type);
 }
 
@@ -88,12 +182,12 @@ export function saveLiteraryProject(project: LiteraryProject): LiteraryProject[]
     ? projects.map((candidate, index) => index === existingIndex ? mergedProject : candidate)
     : [mergedProject, ...projects];
 
-  writeProjects(nextProjects);
+  writeProjectsWithCompaction(nextProjects);
   return nextProjects.filter((candidate): candidate is LiteraryProject => candidate.type === "literary");
 }
 
 export function deleteProjectById(id: number): StoredProject[] {
   const nextProjects = readProjects().filter((project) => project.id !== id);
-  writeProjects(nextProjects);
+  writeProjectsWithCompaction(nextProjects);
   return nextProjects;
 }
