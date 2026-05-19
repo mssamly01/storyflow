@@ -14,6 +14,7 @@ function sanitizeSubtitleText(value: string): string {
   return value
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -60,7 +61,7 @@ export function buildTxtFromItems(items: SubtitleItem[]): string {
   return items
     .filter((item) => item.text.trim().length > 0)
     .map((item) => sanitizeSubtitleText(item.text))
-    .join("\n\n");
+    .join("\n");
 }
 
 export function extractSubtitleItemsFromFinalResult(
