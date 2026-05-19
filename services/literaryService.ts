@@ -119,9 +119,9 @@ const RESPONSE_SCHEMA: Schema = {
 
 export const parseLiteraryText = async (text: string): Promise<ParsedBlock[]> => {
   const config = getConfig();
-  const apiKey = config.geminiApiKey || process.env.API_KEY || '';
+  const apiKey = config.geminiApiKey || '';
   if (!apiKey) {
-    throw new Error("API Key not found. Please configure it in Settings.");
+    throw new Error("Gemini key not found. Please configure it in Settings.");
   }
 
   const ai = new GoogleGenAI({ apiKey });

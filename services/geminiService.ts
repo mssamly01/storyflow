@@ -1,7 +1,5 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { getConfig } from "./configService";
-import { mapLocationIdsToBeats } from "./locationContinuityService";
 import {
   createFallbackScreensFromBeats,
   normalizeBeatMomentDetails,
@@ -9,14 +7,10 @@ import {
   normalizeScreenContinuity,
   normalizeScreens
 } from "./finalResultBuilderService";
-import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import { getConfig } from "./configService";
 import { buildEngineerPromptsJsonWithResolver } from "./visualPromptResolverService";
-import {
-  hydrateBeatAnalysisOriginalText,
-  segmentSourceText
-} from "./sourceTextSegmentService";
+import { segmentSourceText } from "./sourceTextSegmentService";
 import type {
-  BeatAnalysisResult,
   CharacterLocationLibraryResult,
   CharacterProfile,
   LocationProfile,
@@ -24,46 +18,9 @@ import type {
   StoryBeat
 } from "../types";
 
-// Helper to get AI instance with current config
-const getAI = () => {
-  const config = getConfig();
-  const apiKey = config.geminiApiKey || process.env.API_KEY || "";
-  if (!apiKey) {
-    throw new Error("API Key not found. Please configure it in Settings.");
-  }
-  return new GoogleGenAI({ apiKey });
-};
-
-const getModel = () => {
-  const config = getConfig();
-  return config.geminiModel || "gemini-2.5-flash";
-};
+export const STORYBOARD_BATCH_SIZE = 50;
 
 // --- PROMPT GENERATORS ---
-
-const extractJsonObject = (rawText: string): string => {
-  const trimmed = rawText.trim();
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch?.[1]) {
-    return fencedMatch[1].trim();
-  }
-
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    throw new Error("Gemini response does not contain a valid JSON object.");
-  }
-
-  return trimmed.slice(firstBrace, lastBrace + 1);
-};
-
-const parseGeminiJson = <T,>(rawText?: string): T => {
-  if (!rawText) {
-    throw new Error("No response received from Gemini.");
-  }
-
-  return JSON.parse(extractJsonObject(rawText)) as T;
-};
 
 const parseJsonFallback = <T,>(rawText: string | undefined, fallback: T): T => {
   if (!rawText) return fallback;
@@ -853,6 +810,33 @@ function compactStoryboardLocation(location: LocationProfile) {
   };
 }
 
+interface StoryboardPromptOptions {
+  batchIndex?: number;
+  batchSize?: number;
+  manualNextMode?: boolean;
+  includeAllBeatsForManualNext?: boolean;
+}
+
+function getStoryboardBatchInfo(beats: StoryBeat[], options: StoryboardPromptOptions = {}) {
+  const batchSize = options.batchSize && options.batchSize > 0 ? options.batchSize : beats.length || STORYBOARD_BATCH_SIZE;
+  const totalBatches = Math.max(1, Math.ceil((beats.length || 1) / batchSize));
+  const batchIndex = Math.min(Math.max(options.batchIndex || 0, 0), totalBatches - 1);
+  const start = batchIndex * batchSize;
+  const end = Math.min(start + batchSize, beats.length);
+  const batchBeats = beats.slice(start, end);
+
+  return {
+    batchSize,
+    batchIndex,
+    totalBatches,
+    start,
+    end,
+    totalBeats: beats.length,
+    batchBeats,
+    targetBeatIds: batchBeats.map((beat) => beat.beatId)
+  };
+}
+
 function getScreenBeatIds(screen: ReturnType<typeof normalizeScreens>[number], beats: StoryBeat[]): number[] {
   if (screen.beatIds?.length) return screen.beatIds;
   const byScreenId = beats
@@ -1060,13 +1044,21 @@ function buildStoryboardPromptContext(
   analysis: string,
   charLocAnalysis: string,
   screenContinuity: string,
-  beatMomentDetails: string
+  beatMomentDetails: string,
+  options: StoryboardPromptOptions = {}
 ) {
   const analysisData = parseJsonFallback<unknown>(analysis, []);
-  const beats = normalizeBeats(analysisData);
+  const allBeats = normalizeBeats(analysisData);
+  const batch = getStoryboardBatchInfo(allBeats, options);
+  const beats = options.includeAllBeatsForManualNext ? allBeats : batch.batchBeats;
   const selectedBeatIds = beatIdSet(beats);
   const parsedScreens = normalizeScreens(analysisData);
-  const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+  const allScreens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(allBeats);
+  const selectedScreenIds = new Set(uniqueStrings(beats.map((beat) => beat.screenId)));
+  const selectedScreens = allScreens.filter((screen) =>
+    selectedScreenIds.has(screen.screenId) || intersectsSelectedBeats(screen, selectedBeatIds)
+  );
+  const screens = selectedScreens.length ? selectedScreens : allScreens;
   const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
     characters: [],
     locations: []
@@ -1124,6 +1116,7 @@ function buildStoryboardPromptContext(
   });
 
   return {
+    batch,
     beats: beats.map(compactStoryboardBeat),
     screens: screens.map(compactStoryboardScreen),
     characters: (selectedCharacters.length ? selectedCharacters : (library.characters || [])).map(compactStoryboardCharacter),
@@ -1187,9 +1180,12 @@ export const getStoryboardPrompt = (
   charLocAnalysis: string,
   artStyleDescription = "",
   screenContinuity = "",
-  beatMomentDetails = ""
+  beatMomentDetails = "",
+  options: StoryboardPromptOptions = {}
 ) => {
-  const context = buildStoryboardPromptContext(analysis, charLocAnalysis, screenContinuity, beatMomentDetails);
+  const context = buildStoryboardPromptContext(analysis, charLocAnalysis, screenContinuity, beatMomentDetails, options);
+  const batch = context.batch;
+  const isBatched = batch.totalBeats > batch.batchSize || options.batchSize;
 
   return `You are a professional storyboard director for a vertical comic / visual illustration app.
 
@@ -1224,6 +1220,17 @@ Only regenerate unlocked fields. Locked values are approved source-of-truth data
 Your output should contain ONLY visual/camera fields.
 Return ONLY valid JSON. No markdown. No commentary.
 Use beatId as the only link key. Do NOT output panelId or panelNumber.
+${isBatched ? `
+STORYBOARD BATCH MODE - CRITICAL:
+- This is batch ${batch.batchIndex + 1}/${batch.totalBatches}.
+- Batch size: ${batch.batchSize} beats.
+- Total approved beats: ${batch.totalBeats}.
+- Target beatIds for THIS response: ${batch.targetBeatIds.join(", ")}.
+- Return panels ONLY for the target beatIds listed above.
+- Return exactly ${batch.targetBeatIds.length} panel(s), one panel per target beatId.
+- Do not output panels for earlier or later batches.
+${options.manualNextMode ? `- Manual workflow: after this batch JSON is accepted, the user may type/copy "Next" to continue with the next StoryFlow batch prompt. In this response, still return ONLY valid JSON for the current batch.` : ""}
+` : ""}
 
 Required JSON schema:
 {
@@ -1787,441 +1794,57 @@ ${style}
 `;
 };
 
-// --- API SERVICES ---
+// --- LOCAL STORYFLOW SERVICES ---
 
-export const analyzeBeats = async (text: string, artStyleDescription?: string): Promise<BeatAnalysisResult> => {
-  const ai = getAI();
-  const sourceSegments = segmentSourceText(text);
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getBeatAnalysisPrompt(sourceSegments, artStyleDescription),
+const generateJsonText = async (prompt: string): Promise<string> => {
+  const config = getConfig();
+  const apiKey = config.geminiApiKey || "";
+  if (!apiKey) {
+    throw new Error("Gemini key not found. Please configure it in Settings.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const modelName = config.geminiModel || "gemini-1.5-flash";
+  const result = await ai.models.generateContent({
+    model: modelName,
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
     config: {
       responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          screens: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                screenId: { type: "string" },
-                screenNumber: { type: "integer" },
-                screenName: { type: "string" },
-                location: { type: "string" },
-                locationId: { type: "string" },
-                timeOfDay: { type: "string" },
-                screenCharacters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                startBeatId: { type: "integer" },
-                endBeatId: { type: "integer" },
-                summary: { type: "string" }
-              },
-              required: ["screenId", "screenNumber", "screenName", "location", "timeOfDay", "screenCharacters", "startBeatId", "endBeatId", "summary"]
-            }
-          },
-          beats: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                screenId: { type: "string" },
-                sourceSegmentIds: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                summary: { type: "string" },
-                focusCharacters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                visibleCharacters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                offscreenPresentCharacters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                characters: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                location: { type: "string" },
-                locationId: { type: "string" },
-                action: { type: "string" },
-                visualFocus: { type: "string" },
-                atmosphere: { type: "string" },
-                timeOfDay: { type: "string" }
-              },
-              required: ["beatId", "screenId", "sourceSegmentIds", "summary", "focusCharacters", "visibleCharacters", "offscreenPresentCharacters", "characters", "location", "action", "visualFocus", "atmosphere", "timeOfDay"]
-            }
-          },
-          coverageCheck: {
-            type: "object",
-            properties: {
-              allSourceTextCovered: { type: "boolean" },
-              missingText: { type: "string" },
-              duplicatedText: { type: "string" },
-              notes: { type: "string" }
-            }
-          }
-        },
-        required: ["screens", "beats"]
-      } as any
+      temperature: 0.2
     }
   });
 
-  return hydrateBeatAnalysisOriginalText(
-    parseGeminiJson<BeatAnalysisResult>(response.text),
-    text,
-    sourceSegments,
-    { segmentMode: "current", repairMissingSegments: true }
-  );
+  if (!result.text) {
+    throw new Error("No response received from Gemini.");
+  }
+
+  return result.text;
+};
+
+const generateJson = async <T,>(prompt: string): Promise<T> => {
+  return JSON.parse(await generateJsonText(prompt)) as T;
+};
+
+export const analyzeBeats = async (script: string, style = "") => {
+  return generateJson(getBeatAnalysisPrompt(script, style));
 };
 
 export const generateCharacterLocationLibrary = async (
-  originalText: string,
+  script: string,
   beats: StoryBeat[],
-  artStyleDescription?: string,
+  style = "",
   existingLibrary?: string,
-  screens?: ReturnType<typeof createFallbackScreensFromBeats>
+  screens = createFallbackScreensFromBeats(beats)
 ): Promise<CharacterLocationLibraryResult> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getCharacterLocationLibraryPrompt(originalText, beats, artStyleDescription, existingLibrary, screens),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          characters: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                characterId: { type: "string" },
-                name: { type: "string" },
-                aliases: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                role: { type: "string" },
-                gender: { type: "string" },
-                age: { type: "string" },
-                height: { type: "string" },
-                bodyType: { type: "string" },
-                face: { type: "string" },
-                hair: { type: "string" },
-                hairColor: { type: "string" },
-                eyes: { type: "string" },
-                eyeColor: { type: "string" },
-                appearancePrompt: { type: "string" },
-                outfit: { type: "string" },
-                outfitPrompt: { type: "string" },
-                outfitMainColor: { type: "string" },
-                outfitAccentColor: { type: "string" },
-                accessories: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                props: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                colorPalette: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                personalityVisualCues: { type: "string" },
-                expressionSet: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                gestureSet: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                continuityNotes: { type: "string" },
-                firstAppearanceBeatId: { type: "integer" },
-                appearsInBeatIds: {
-                  type: "array",
-                  items: { type: "integer" }
-                }
-              },
-              required: ["characterId", "name", "aliases", "role", "gender", "age", "height", "bodyType", "face", "hair", "hairColor", "eyes", "eyeColor", "appearancePrompt", "outfit", "outfitPrompt", "outfitMainColor", "outfitAccentColor", "accessories", "props", "colorPalette", "personalityVisualCues", "expressionSet", "gestureSet", "continuityNotes", "appearsInBeatIds"]
-            }
-          },
-          locations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                locationId: { type: "string" },
-                name: { type: "string" },
-                aliases: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                description: { type: "string" },
-                locationPrompt: { type: "string" },
-                layout: { type: "string" },
-                keyObjects: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                lighting: { type: "string" },
-                atmosphere: { type: "string" },
-                colorPalette: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                continuityNotes: { type: "string" },
-                continuityPrompt: { type: "string" },
-                baseState: { type: "string" },
-                firstAppearanceBeatId: { type: "integer" },
-                appearsInBeatIds: {
-                  type: "array",
-                  items: { type: "integer" }
-                }
-              },
-              required: ["locationId", "name", "aliases", "description", "locationPrompt", "layout", "keyObjects", "lighting", "atmosphere", "colorPalette", "continuityNotes", "continuityPrompt", "baseState", "appearsInBeatIds"]
-            }
-          }
-        },
-        required: ["characters", "locations"]
-      } as any
-    }
-  });
-
-  return parseGeminiJson<CharacterLocationLibraryResult>(response.text);
-};
-
-export const analyzeStoryPhase1 = async (script: string, style: string, existingLibrary?: string) => {
-  const beatResult = await analyzeBeats(script, style);
-  const normalizedAnalysis = beatResult.beats.map((beat) => ({
-    ...beat,
-    screenId: beat.screenId || "screen_001",
-    actionAnalysis: beat.actionAnalysis || beat.action || beat.summary,
-    charactersInvolved: beat.charactersInvolved || beat.characters,
-    locationName: beat.locationName || beat.location
-  }));
-  const screens = beatResult.screens?.length
-    ? beatResult.screens
-    : createFallbackScreensFromBeats(normalizedAnalysis);
-  const characterLocationAnalysis = await generateCharacterLocationLibrary(
-    script,
-    normalizedAnalysis,
-    style,
-    existingLibrary,
-    screens
-  );
-  const beats = mapLocationIdsToBeats(normalizedAnalysis, characterLocationAnalysis.locations);
-
-  return {
-    analysis: {
-      screens,
-      beats,
-      coverageCheck: beatResult.coverageCheck
-    },
-    coverageCheck: beatResult.coverageCheck,
-    characterLocationAnalysis
-  };
-};
-
-export const analyzePhase1Analysis = async (script: string, style: string, existingLibrary?: string) => {
-  const result = await analyzeStoryPhase1(script, style, existingLibrary);
-  return JSON.stringify(result);
-
-
-};
-
-export const createStoryboard = async (analysis: string, charLocAnalysis: string, style = "", screenContinuity = "", beatMomentDetails = "") => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getStoryboardPrompt(analysis, charLocAnalysis, style, screenContinuity, beatMomentDetails),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          panels: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                shotType: { type: "string" },
-                cameraAngle: { type: "string" },
-                cameraDistance: { type: "string" },
-                lensFeel: { type: "string" },
-                composition: { type: "string" },
-                foreground: { type: "string" },
-                midground: { type: "string" },
-                background: { type: "string" },
-                characterBlocking: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      characterId: { type: "string" },
-                      characterName: { type: "string" },
-                      framePosition: { type: "string" },
-                      bodyPosition: { type: "string" },
-                      facingDirection: { type: "string" },
-                      expression: { type: "string" },
-                      poseRefinement: { type: "string" },
-                      interactionWith: { type: "string" }
-                    }
-                  }
-                },
-                lightingDirection: { type: "string" },
-                depthAndPerspective: { type: "string" },
-                visualEmphasis: { type: "string" },
-                cameraNotes: { type: "string" }
-              },
-              required: ["beatId", "shotType", "cameraAngle", "composition"]
-            }
-          }
-        },
-        required: ["panels"]
-      } as any
-    }
-  });
-  const parsed = parseGeminiJson<{ panels?: any[] } | any[]>(response.text);
-  const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(parsed));
-  return JSON.stringify({ panels }, null, 2);
-};
-
-/**
- * @deprecated QA is no longer called by the active UI workflow. Keep only for legacy/manual usage.
- */
-export const runQA = async (
-  data: string,
-  charLocAnalysis: string,
-  style: string,
-  storyboard = "",
-  analysis = "",
-  screenContinuity = "",
-  beatMomentDetails = ""
-) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getQAPrompt(data, charLocAnalysis, style, storyboard, analysis, screenContinuity, beatMomentDetails),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            beatId: { type: "integer" },
-            visualPrompt: { type: "string" },
-            qaNotes: { type: "string" }
-          },
-          required: ["beatId", "visualPrompt", "qaNotes"]
-        }
-      } as any
-    }
-  });
-  return response.text;
+  return generateJson(getCharacterLocationLibraryPrompt(script, beats, style, existingLibrary, screens));
 };
 
 export const generateScreenContinuity = async (
   analysis: string,
   charLocAnalysis: string,
   style = ""
-): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getScreenContinuityPrompt(analysis, charLocAnalysis, style),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          screens: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                screenId: { type: "string" },
-                beatIds: {
-                  type: "array",
-                  items: { type: "integer" }
-                },
-                startBeatId: { type: "integer" },
-                endBeatId: { type: "integer" },
-                screenState: { type: "string" },
-                screenProps: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                screenSpatialLayout: { type: "string" },
-                screenFixedElements: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                screenCharacterStates: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      characterId: { type: "string" },
-                      characterName: { type: "string" },
-                      outfit: { type: "string" },
-                      outfitMainColor: { type: "string" },
-                      outfitAccentColor: { type: "string" },
-                      accessories: {
-                        type: "array",
-                        items: { type: "string" }
-                      },
-                      handheldItems: {
-                        type: "array",
-                        items: { type: "string" }
-                      },
-                      appearanceNotes: { type: "string" },
-                      stateChanges: {
-                        type: "array",
-                        items: { type: "string" }
-                      }
-                    },
-                    required: ["characterId", "characterName", "outfit", "outfitMainColor", "outfitAccentColor", "accessories", "handheldItems", "appearanceNotes", "stateChanges"]
-                  }
-                },
-                screenCharacterPositions: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      characterId: { type: "string" },
-                      characterName: { type: "string" },
-                      anchorPosition: { type: "string" },
-                      facingDirection: { type: "string" },
-                      relationshipToKeyObjects: { type: "string" },
-                      visibilityRule: { type: "string" }
-                    },
-                    required: ["characterId", "characterName", "anchorPosition", "facingDirection", "relationshipToKeyObjects", "visibilityRule"]
-                  }
-                },
-                continuityNotes: { type: "string" }
-              },
-              required: ["screenId", "beatIds", "startBeatId", "endBeatId", "screenState", "screenProps", "screenSpatialLayout", "screenFixedElements", "screenCharacterStates", "screenCharacterPositions", "continuityNotes"]
-            }
-          }
-        },
-        required: ["screens"]
-      } as any
-    }
-  });
-  return response.text;
+) => {
+  return generateJsonText(getScreenContinuityPrompt(analysis, charLocAnalysis, style));
 };
 
 export const generateBeatMomentDetails = async (
@@ -2229,63 +1852,18 @@ export const generateBeatMomentDetails = async (
   charLocAnalysis: string,
   screenContinuity: string,
   style = ""
-): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getBeatMomentDetailsPrompt(analysis, charLocAnalysis, screenContinuity, style),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          beatDetails: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                locationState: { type: "string" },
-                posture: { type: "string" },
-                interaction: { type: "string" },
-                props: {
-                  type: "array",
-                  items: { type: "string" }
-                },
-                characterMomentDetails: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      characterId: { type: "string" },
-                      characterName: { type: "string" },
-                      visibleAccessories: {
-                        type: "array",
-                        items: { type: "string" }
-                      },
-                      handheldItems: {
-                        type: "array",
-                        items: { type: "string" }
-                      },
-                      accessoriesChange: {
-                        type: "array",
-                        items: { type: "string" }
-                      },
-                      momentNotes: { type: "string" }
-                    },
-                    required: ["characterId", "characterName", "visibleAccessories", "handheldItems", "accessoriesChange", "momentNotes"]
-                  }
-                }
-              },
-              required: ["beatId", "locationState", "posture", "interaction", "props", "characterMomentDetails"]
-            }
-          }
-        },
-        required: ["beatDetails"]
-      } as any
-    }
-  });
-  return response.text;
+) => {
+  return generateJsonText(getBeatMomentDetailsPrompt(analysis, charLocAnalysis, screenContinuity, style));
+};
+
+export const createStoryboard = async (
+  analysis: string,
+  charLocAnalysis: string,
+  style = "",
+  screenContinuity = "",
+  beatMomentDetails = ""
+) => {
+  return generateJsonText(getStoryboardPrompt(analysis, charLocAnalysis, style, screenContinuity, beatMomentDetails));
 };
 
 export const engineerPrompts = async ({
@@ -2304,55 +1882,4 @@ export const engineerPrompts = async ({
     storyboardJson,
     style,
   });
-};
-
-/**
- * @deprecated Main StoryFlow now builds Final Result with code via finalResultBuilderService.
- * Keep this only as a legacy AI fallback.
- */
-export const generateFinalResult = async (
-  storyboard: string,
-  prompts: string,
-  qaReport: string,
-  charLocAnalysis: string,
-  analysis = ""
-) => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: getModel(),
-    contents: getFinalResultPrompt(storyboard, prompts, qaReport, charLocAnalysis, analysis),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "object",
-        properties: {
-          characterName: {
-            type: "array",
-            items: { type: "string" }
-          },
-          panels: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                beatId: { type: "integer" },
-                shotName: { type: "string" },
-                originalText: { type: "string" },
-                cameraAngle: { type: "string" },
-                framing: { type: "string" },
-                subject: { type: "string" },
-                action: { type: "string" },
-                location_cues: { type: "string" },
-                lighting: { type: "string" },
-                visualPrompt: { type: "string" }
-              },
-              required: ["beatId", "shotName", "originalText", "visualPrompt"]
-            }
-          }
-        },
-        required: ["characterName", "panels"]
-      } as any
-    }
-  });
-  return response.text;
 };

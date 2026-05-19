@@ -54,6 +54,12 @@ import {
 } from '../services/subtitleExportService';
 import { FinalResultStudioView } from './storyflow/FinalResultStudioView';
 import {
+  deleteProjectById,
+  loadLiteraryProjects,
+  loadStoryFlowProjects,
+  saveStoryFlowProject
+} from '../services/projectStorageService';
+import {
   BEAT_SOURCE_FIELDS,
   CHARACTER_APPEARANCE_FIELDS,
   LOCATION_CONTINUITY_FIELDS,
@@ -182,6 +188,44 @@ function canBuildFinalResult(production: ProductionData): boolean {
   );
 }
 
+function requiresManualInput(stage: ProductionStage): boolean {
+  return [
+    ProductionStage.ANALYSIS,
+    ProductionStage.CHARACTER_LOCATION,
+    ProductionStage.SCREEN_CONTINUITY,
+    ProductionStage.BEAT_MOMENT,
+    ProductionStage.STORYBOARD
+  ].includes(stage);
+}
+
+function chooseFinalBuildItems<T>(
+  projectItems: T[],
+  productionItems: T[],
+  beatCount: number
+): T[] {
+  if (!productionItems.length) return projectItems;
+  if (!projectItems.length) return productionItems;
+
+  const score = (items: T[]) => {
+    if (!beatCount) return items.length;
+    const exactBonus = items.length === beatCount ? 1_000_000 : 0;
+    return exactBonus - Math.abs(items.length - beatCount) + items.length / 10_000;
+  };
+
+  return score(productionItems) > score(projectItems) ? productionItems : projectItems;
+}
+
+function mergeStoryboardPanelsByBeatId(existingPanels: any[], incomingPanels: any[]) {
+  const map = new Map<number, any>();
+  [...existingPanels, ...incomingPanels].forEach((panel) => {
+    const beatId = Number(panel?.beatId);
+    if (Number.isFinite(beatId) && beatId > 0) {
+      map.set(beatId, { ...panel, beatId });
+    }
+  });
+  return Array.from(map.values()).sort((left, right) => left.beatId - right.beatId);
+}
+
 
 class StageRenderBoundary extends Component<
   { stage: ProductionStage; resetKey: string; children: React.ReactNode },
@@ -246,6 +290,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [isGlobalManualMode, setIsGlobalManualMode] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
+  const [storyboardBatchIndex, setStoryboardBatchIndex] = useState(0);
   const [showLibraryModal, setShowLibraryModal] = useState(false);
   const [referencePromptModal, setReferencePromptModal] = useState<{
     open: boolean;
@@ -394,7 +439,16 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     const savedState = localStorage.getItem('storyflow_temp_state');
     if (savedState) {
       try {
-        const { stage: savedStage, inputData: savedInputData, production: savedProduction, project: savedProject, unlockedStages: savedUnlockedStages, isManualMode: savedManual, isGlobalManualMode: savedGlobalManual } = JSON.parse(savedState);
+        const {
+          stage: savedStage,
+          inputData: savedInputData,
+          production: savedProduction,
+          project: savedProject,
+          unlockedStages: savedUnlockedStages,
+          storyboardBatchIndex: savedStoryboardBatchIndex,
+          isManualMode: savedManual,
+          isGlobalManualMode: savedGlobalManual
+        } = JSON.parse(savedState);
         const initialStage = savedStage || ProductionStage.INPUT;
         const initialInputData = savedInputData || { script: '', selectedStyle: 'manhua', title: '', chapter: '', chapterTitle: '' };
         const initialProduction = savedProduction || {};
@@ -407,8 +461,9 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
         } else {
           setUnlockedStages(computeUnlockedStages(initialInputData, initialProduction, initialStage));
         }
-        if (savedManual !== undefined) setIsManualMode(savedManual);
-        if (savedGlobalManual !== undefined) setIsGlobalManualMode(savedGlobalManual);
+        if (Number.isFinite(Number(savedStoryboardBatchIndex))) setStoryboardBatchIndex(Number(savedStoryboardBatchIndex));
+        if (savedManual !== undefined) setIsManualMode(Boolean(savedManual));
+        if (savedGlobalManual !== undefined) setIsGlobalManualMode(Boolean(savedGlobalManual));
       } catch (e) {
         console.error("Failed to parse saved state:", e);
       }
@@ -426,6 +481,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
       production,
       project: projectForStorage,
       unlockedStages,
+      storyboardBatchIndex,
       isManualMode,
       isGlobalManualMode
     };
@@ -459,7 +515,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
         console.warn("Failed to persist compact StoryFlow temp state. Skipping temp persistence.", compactError);
       }
     }
-  }, [isLoaded, stage, inputData, production, project, unlockedStages, isManualMode, isGlobalManualMode]);
+  }, [isLoaded, stage, inputData, production, project, unlockedStages, storyboardBatchIndex, isManualMode, isGlobalManualMode]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -472,16 +528,14 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   }, [stage]);
 
   useEffect(() => {
-    fetch('/api/projects')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          // Phân loại dự án
-          setSavedProjects(data.filter((p: any) => p.type === 'storyflow' || !p.type));
-          setLitProjects(data.filter((p: any) => p.type === 'literary'));
-        }
-      })
-      .catch(err => console.error("Failed to load projects:", err));
+    if (stage === ProductionStage.STORYBOARD) {
+      setStoryboardBatchIndex(0);
+    }
+  }, [stage, production.analysis]);
+
+  useEffect(() => {
+    setSavedProjects(loadStoryFlowProjects());
+    setLitProjects(loadLiteraryProjects());
   }, []);
 
   const steps = [
@@ -765,6 +819,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return "Định dạng JSON không hợp lệ cho Beat Moment Details. JSON phải là một đối tượng chứa mảng 'beatDetails': { \"beatDetails\": [...] }";
       }
     }
+    if (targetStage === ProductionStage.STORYBOARD) {
+      if (!normalizeStoryboardPanels(parsed).length) {
+        return "Định dạng JSON không hợp lệ cho Phác thảo minh họa. JSON phải có dạng { \"panels\": [...] } hoặc là một mảng panel.";
+      }
+    }
     return null;
   };
 
@@ -849,6 +908,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return hydrated;
   };
 
+  const storyboardBatchInfo = useMemo(() => {
+    const beats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
+    const totalBatches = Math.max(1, Math.ceil((beats.length || 1) / gemini.STORYBOARD_BATCH_SIZE));
+    const safeBatchIndex = Math.min(Math.max(storyboardBatchIndex, 0), totalBatches - 1);
+    const start = safeBatchIndex * gemini.STORYBOARD_BATCH_SIZE;
+    const end = Math.min(start + gemini.STORYBOARD_BATCH_SIZE, beats.length);
+    const panels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+
+    return {
+      beats,
+      totalBeats: beats.length,
+      totalBatches,
+      batchIndex: safeBatchIndex,
+      start,
+      end,
+      batchBeats: beats.slice(start, end),
+      existingPanelCount: panels.length
+    };
+  }, [production.analysis, production.storyboard, storyboardBatchIndex]);
+
   const currentStepPrompt = useMemo(() => {
     const stylePrompt = getSelectedStylePrompt();
     switch(stage) {
@@ -874,7 +953,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           production.characterLocationAnalysis || '', 
           stylePrompt,
           production.screenContinuity || '',
-          production.beatMomentDetails || ''
+          production.beatMomentDetails || '',
+          {
+            batchIndex: storyboardBatchInfo.batchIndex,
+            batchSize: gemini.STORYBOARD_BATCH_SIZE,
+            manualNextMode: true,
+            includeAllBeatsForManualNext: true
+          }
         );
       case ProductionStage.PROMPTS:
         return gemini.getEngineerPromptsPrompt({
@@ -889,7 +974,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
       default: return '';
     }
-  }, [stage, inputData, production, savedProjects]);
+  }, [stage, inputData, production, savedProjects, storyboardBatchInfo.batchIndex]);
 
   const finalJsonData = useMemo(() => {
     if (stage === ProductionStage.FINAL && production.finalResult) {
@@ -1002,6 +1087,13 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const handleManualSave = () => {
     if (!manualInputValue.trim()) return;
     setError(null);
+
+    if (stage === ProductionStage.STORYBOARD && manualInputValue.trim().toLowerCase() === "next") {
+      setStoryboardBatchIndex((index) => Math.min(index + 1, storyboardBatchInfo.totalBatches - 1));
+      setManualInputValue('');
+      showToast(`Đã chuyển sang storyboard batch ${Math.min(storyboardBatchIndex + 2, storyboardBatchInfo.totalBatches)}/${storyboardBatchInfo.totalBatches}.`);
+      return;
+    }
     
     let parsedJson: any = null;
     try {
@@ -1036,7 +1128,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats)
         ));
         setManualInputValue('');
-        setIsManualMode(false);
         setStage(ProductionStage.CHARACTER_LOCATION);
         return;
       }
@@ -1067,7 +1158,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           syncPhaseOneProjectData(analysisValue, characterLocationValue);
         }
         setManualInputValue('');
-        setIsManualMode(false);
         
         // Nếu nhập dữ liệu ở bước Analysis mà có cả 2 phần, nhảy thẳng tới Storyboard
         if (stage === ProductionStage.ANALYSIS && (parsedJson.analysis && parsedJson.characterLocationAnalysis)) {
@@ -1082,28 +1172,41 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
     }
 
+    if (stage === ProductionStage.STORYBOARD) {
+      const incomingPanels = normalizeStoryboardPanels(parsedJson);
+      if (incomingPanels.length) {
+        const existingPanels = normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }));
+        const mergedPanels = mergeStoryboardPanelsByBeatId(existingPanels, incomingPanels);
+        const storyboardValue = JSON.stringify({ panels: mergedPanels }, null, 2);
+        updateProductionDataByStage(storyboardValue, ProductionStage.STORYBOARD);
+
+        const beats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
+        const mergedBeatIds = new Set(mergedPanels.map((panel) => Number(panel.beatId)));
+        const firstMissingIndex = beats.findIndex((beat) => !mergedBeatIds.has(Number(beat.beatId)));
+
+        setManualInputValue('');
+        if (firstMissingIndex >= 0) {
+          const nextBatchIndex = Math.floor(firstMissingIndex / gemini.STORYBOARD_BATCH_SIZE);
+          setStoryboardBatchIndex(nextBatchIndex);
+          showToast(`Đã lưu ${mergedPanels.length}/${beats.length} storyboard panels. Gửi "Next" để làm batch ${nextBatchIndex + 1}.`);
+          return;
+        }
+
+        const nextIndex = steps.findIndex(s => s.id === stage) + 1;
+        if (nextIndex < steps.length) {
+          setStage(steps[nextIndex].id);
+        }
+        return;
+      }
+    }
+
     const finalValueToSave = parsedJson ? JSON.stringify(parsedJson, null, 2) : manualInputValue;
     updateProductionDataByStage(finalValueToSave, stage);
     setManualInputValue('');
 
-    setIsManualMode(false);
-    
     const nextIndex = steps.findIndex(s => s.id === stage) + 1;
     if (nextIndex < steps.length) {
       setStage(steps[nextIndex].id);
-    }
-  };
-
-  const startAnalysis = (mode: 'manual' | 'auto') => {
-    setShowAnalysisModeModal(false);
-    setStage(ProductionStage.ANALYSIS);
-    if (mode === 'manual') {
-      setIsManualMode(true);
-      setIsGlobalManualMode(true);
-    } else {
-      setIsManualMode(false);
-      setIsGlobalManualMode(false);
-      handleAutoAnalysis();
     }
   };
 
@@ -1158,29 +1261,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
       return prev;
     });
-  };
-
-  const handleAutoAnalysis = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const existingLibrary = getMasterLibrary();
-      const result = await gemini.analyzePhase1Analysis(inputData.script, getSelectedStylePrompt(), existingLibrary);
-      const parsed = JSON.parse(result);
-      const analysisValue = typeof parsed.analysis === 'string' ? parsed.analysis : JSON.stringify(parsed.analysis, null, 2);
-      const characterLocationValue = typeof parsed.characterLocationAnalysis === 'string' ? parsed.characterLocationAnalysis : JSON.stringify(parsed.characterLocationAnalysis, null, 2);
-      setProduction(prev => ({
-        ...prev,
-        analysis: analysisValue,
-        characterLocationAnalysis: characterLocationValue
-      }));
-      syncPhaseOneProjectData(analysisValue, characterLocationValue);
-      setStage(ProductionStage.STORYBOARD);
-    } catch (err: any) {
-      setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   const updateProductionDataByStage = (result: string, targetStage: ProductionStage) => {
@@ -1413,6 +1493,44 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  const handleAutoAnalysis = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const resultObj = await gemini.analyzeBeats(inputData.script, getSelectedStylePrompt());
+      const analysisValue = JSON.stringify(resultObj, null, 2);
+      setProduction(prev => ({
+        ...prev,
+        analysis: analysisValue
+      }));
+
+      const beats = normalizeBeats(resultObj);
+      const parsedScreens = normalizeScreens(resultObj);
+      const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+      setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
+      setStage(ProductionStage.CHARACTER_LOCATION);
+    } catch (err: any) {
+      setError(err.message || "Lá»—i API. Vui lÃ²ng thá»­ Cháº¿ Ä‘á»™ Thá»§ cÃ´ng.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startAnalysis = (mode: 'manual' | 'auto') => {
+    setShowAnalysisModeModal(false);
+    setStage(ProductionStage.ANALYSIS);
+
+    if (mode === 'manual') {
+      setIsManualMode(true);
+      setIsGlobalManualMode(true);
+      return;
+    }
+
+    setIsManualMode(false);
+    setIsGlobalManualMode(false);
+    void handleAutoAnalysis();
+  };
+
   const saveProject = async () => {
     if (!inputData.title || !inputData.chapter) {
       setToast({ message: "Vui lòng nhập Tên tiểu thuyết và Chương để lưu!", visible: true });
@@ -1422,7 +1540,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
     const projectData = {
       id: Date.now(),
-      type: 'storyflow',
+      type: 'storyflow' as const,
       inputData,
       production,
       storyFlowProject: serializeProjectForStorage(project),
@@ -1430,27 +1548,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     };
 
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(projectData)
-      });
+      setSavedProjects(saveStoryFlowProject(projectData));
 
-      if (!response.ok) throw new Error("Failed to save to server");
-
-      const existingIndex = savedProjects.findIndex((p: any) => 
-        p.inputData.title === inputData.title && p.inputData.chapter === inputData.chapter
-      );
-
-      const updatedProjects = existingIndex >= 0 
-        ? savedProjects.map((p, i) => i === existingIndex ? projectData : p)
-        : [projectData, ...savedProjects];
-
-      setSavedProjects(updatedProjects);
       setToast({ message: "Đã lưu kết quả phân tích vào thư viện!", visible: true });
     } catch (err) {
       console.error(err);
-      setToast({ message: "Lỗi khi lưu dự án vào server", visible: true });
+      setToast({ message: "Lỗi khi lưu dự án", visible: true });
     }
     
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
@@ -1464,11 +1567,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       type: 'danger',
       onConfirm: async () => {
         try {
-          const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error("Failed to delete from server");
-
-          const updatedProjects = savedProjects.filter(p => p.id !== id);
-          setSavedProjects(updatedProjects);
+          deleteProjectById(id);
+          setSavedProjects(loadStoryFlowProjects());
           setToast({ message: "Đã xóa dự án khỏi thư viện", visible: true });
         } catch (err) {
           console.error(err);
@@ -1846,6 +1946,39 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           </div>
         </div>
         <div className="p-6">
+          {stage === ProductionStage.STORYBOARD && storyboardBatchInfo.totalBeats > gemini.STORYBOARD_BATCH_SIZE && (
+            <div className="mb-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-4 text-indigo-100">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">Storyboard Batch</p>
+                  <p className="mt-1 text-sm font-bold">
+                    Batch {storyboardBatchInfo.batchIndex + 1}/{storyboardBatchInfo.totalBatches} · Beats {storyboardBatchInfo.start + 1}-{storyboardBatchInfo.end} / {storyboardBatchInfo.totalBeats}
+                  </p>
+                  <p className="mt-1 text-xs text-indigo-200">
+                    Paste batch JSON here to merge it. Type <span className="font-black">Next</span> or use the next button to move to the next batch prompt.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setStoryboardBatchIndex((index) => Math.max(0, index - 1))}
+                    disabled={storyboardBatchInfo.batchIndex <= 0}
+                    className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white disabled:opacity-40"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoryboardBatchIndex((index) => Math.min(storyboardBatchInfo.totalBatches - 1, index + 1))}
+                    disabled={storyboardBatchInfo.batchIndex >= storyboardBatchInfo.totalBatches - 1}
+                    className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           <pre className="text-xs text-slate-400 whitespace-pre-wrap font-mono leading-relaxed h-48 overflow-y-auto">
             {currentStepPrompt}
           </pre>
@@ -1862,7 +1995,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         <textarea
           value={manualInputValue}
           onChange={(e) => setManualInputValue(e.target.value)}
-          placeholder="Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."
+          placeholder={stage === ProductionStage.STORYBOARD ? 'Dán JSON panels của batch hiện tại, hoặc nhập "Next" để chuyển prompt batch tiếp theo...' : "Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."}
           className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
         />
         <button 
@@ -1870,7 +2003,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           disabled={!manualInputValue.trim()}
           className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
         >
-          <CheckCircle2 className="w-5 h-5" /> Lưu và Tiếp tục
+          <CheckCircle2 className="w-5 h-5" /> {stage === ProductionStage.STORYBOARD ? "Lưu batch / Tiếp tục" : "Lưu và Tiếp tục"}
         </button>
       </div>
     </div>
@@ -3658,7 +3791,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
               <div className="bg-white/20 p-3 rounded-xl group-hover:scale-110 transition-transform"><Sparkles className="w-6 h-6" /></div>
               <div>
                 <div className="font-bold text-lg">{isPromptEngineeringStage ? "Build visual prompts" : "Phân tích tự động"}</div>
-                <div className="text-indigo-100 text-xs mt-0.5">{isPromptEngineeringStage ? "Local resolver from approved fields" : "Sử dụng Gemini API"}</div>
+                <div className="text-indigo-100 text-xs mt-0.5">{isPromptEngineeringStage ? "Local resolver from approved fields" : "Sử dụng Gemini"}</div>
               </div>
             </button>
             {!isPromptEngineeringStage && (
@@ -3688,9 +3821,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       type: 'danger',
       onConfirm: async () => {
         try {
-          for (const project of chaptersToDelete) {
-            await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
-          }
+          chaptersToDelete.forEach(project => deleteProjectById(project.id));
           const deletedIds = chaptersToDelete.map(p => p.id);
           setSavedProjects(prev => prev.filter(p => !deletedIds.includes(p.id)));
           setToast({ message: `Đã xóa bộ truyện "${title}" khỏi thư viện`, visible: true });

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { ParsedBlock, ParsingStatus, LiteraryProject } from '../types/literary';
 import { parseLiteraryText } from '../services/literaryService';
+import { deleteProjectById, loadLiteraryProjects, saveLiteraryProject } from '../services/projectStorageService';
 
 interface LiteraryParserProps {
   onBack: () => void;
@@ -98,16 +99,7 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
   }, []);
 
   const fetchProjects = async () => {
-    try {
-      const res = await fetch('/api/projects');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        // Filter for literary projects
-        setSavedProjects(data.filter((p: any) => p.type === 'literary'));
-      }
-    } catch (err) {
-      console.error("Failed to load projects:", err);
-    }
+    setSavedProjects(loadLiteraryProjects());
   };
 
   const showToast = (message: string) => {
@@ -161,16 +153,10 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
     };
 
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(projectData)
-      });
+      setSavedProjects(saveLiteraryProject(projectData));
 
-      if (!response.ok) throw new Error("Failed to save to server");
       
       showToast(`Đã lưu chương ${chapterNumber} vào bộ truyện ${novelName}!`);
-      fetchProjects();
     } catch (err) {
       console.error(err);
       showToast("Lỗi khi lưu dự án");
@@ -180,10 +166,8 @@ const LiteraryParser: React.FC<LiteraryParserProps> = ({ onBack }) => {
   const deleteProject = async (id: number) => {
     if (!window.confirm("Bạn có chắc chắn muốn xóa toàn bộ bộ truyện này không?")) return;
     try {
-      const response = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error("Failed to delete from server");
-
-      setSavedProjects(prev => prev.filter(p => p.id !== id));
+      deleteProjectById(id);
+      setSavedProjects(loadLiteraryProjects());
       showToast("Đã xóa bộ truyện khỏi thư viện");
     } catch (err) {
       console.error(err);

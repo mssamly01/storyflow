@@ -21,42 +21,13 @@ const writeLocalConfig = (config: AppConfig) => {
 };
 
 export const initConfig = async (): Promise<AppConfig> => {
-  const localConfig = readLocalConfig();
-  currentConfig = localConfig;
-
-  try {
-    const response = await fetch('/api/config');
-    if (response.ok) {
-      const serverConfig = await response.json();
-      currentConfig = { ...localConfig, ...serverConfig };
-      writeLocalConfig(currentConfig);
-    }
-  } catch {
-    currentConfig = localConfig;
-  }
-
+  currentConfig = readLocalConfig();
   return currentConfig;
 };
 
 export const getConfig = (): AppConfig => currentConfig;
 
-export const saveConfig = async (config: AppConfig): Promise<{ savedToServer: boolean }> => {
+export const saveConfig = async (config: AppConfig): Promise<void> => {
   currentConfig = { ...currentConfig, ...config };
   writeLocalConfig(currentConfig);
-
-  try {
-    const response = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(currentConfig)
-    });
-
-    if (!response.ok) {
-      throw new Error('Config API returned an error.');
-    }
-
-    return { savedToServer: true };
-  } catch {
-    return { savedToServer: false };
-  }
 };

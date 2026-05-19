@@ -29,17 +29,13 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
     setIsSaving(true);
     setMessage(null);
 
-    const result = await saveConfig({
+    await saveConfig({
       geminiApiKey: geminiApiKey.trim(),
       geminiModel: geminiModel.trim() || 'gemini-2.5-flash'
     });
 
     setIsSaving(false);
-    setMessage(
-      result.savedToServer
-        ? 'Đã lưu cấu hình vào project local.'
-        : 'Đã lưu cấu hình vào trình duyệt. API local chưa sẵn sàng để ghi file.'
-    );
+    setMessage('Đã lưu cấu hình vào trình duyệt.');
   };
 
   return (
@@ -68,10 +64,9 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
       <main className="max-w-4xl mx-auto px-6 py-10">
         <div className="bg-white border border-slate-200 rounded-[32px] shadow-sm overflow-hidden">
           <div className="p-8 border-b border-slate-100">
-            <h2 className="text-2xl font-black tracking-tight">Gemini API</h2>
+            <h2 className="text-2xl font-black tracking-tight">Gemini</h2>
             <p className="mt-2 text-sm text-slate-500 leading-relaxed">
-              Khóa API được lưu cục bộ trong thư mục project khi chạy Vite dev. Nếu API local chưa chạy,
-              ứng dụng sẽ lưu tạm vào localStorage.
+              Khóa Gemini được lưu cục bộ trong trình duyệt bằng localStorage.
             </p>
           </div>
 
@@ -79,13 +74,13 @@ const Settings: React.FC<SettingsProps> = ({ onBack }) => {
             <label className="block">
               <span className="flex items-center gap-2 text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
                 <KeyRound className="w-4 h-4" />
-                Gemini API key
+                Gemini key
               </span>
               <input
                 type="password"
                 value={geminiApiKey}
                 onChange={(event) => setGeminiApiKey(event.target.value)}
-                placeholder="Nhập Gemini API key"
+                placeholder="Nhập Gemini key"
                 className="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 text-sm"
               />
             </label>
