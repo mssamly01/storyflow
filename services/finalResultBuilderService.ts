@@ -11,7 +11,8 @@ import type {
   ScreenCharacterState,
   BeatCharacterMomentDetail,
   ScreenContinuityItem,
-  ScreenCharacterPosition
+  ScreenCharacterPosition,
+  BeatType
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -205,7 +206,8 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
   const items = getItems(raw, ["beats"]);
   return items.map((item, index) => {
     const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
-    const legacyCharacters = asStringArray(item.characters ?? item.charactersInvolved ?? item.characters_involved);
+    const presentCharacters = asStringArray(item.presentCharacters ?? item.present_characters ?? item.characters ?? item.charactersInvolved ?? item.characters_involved);
+    const legacyCharacters = presentCharacters;
     const focusCharacters = asStringArray(item.focusCharacters ?? item.focus_characters);
     const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
     const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
@@ -234,6 +236,16 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       atmosphere: asString(item.atmosphere),
       timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
       characterMomentDetails: normalizeCharacterMomentDetails(item),
+      // new fields
+      beatType: asString(item.beatType ?? item.beat_type, "action") as BeatType,
+      mentionedCharacters: asStringArray(item.mentionedCharacters ?? item.mentioned_characters),
+      presentCharacters,
+      enteredCharacters: asStringArray(item.enteredCharacters ?? item.entered_characters),
+      exitedCharacters: asStringArray(item.exitedCharacters ?? item.exited_characters),
+      characterPostures: Array.isArray(item.characterPostures ?? item.character_postures) ? (item.characterPostures ?? item.character_postures) : [],
+      characterPositions: Array.isArray(item.characterPositions ?? item.character_positions) ? (item.characterPositions ?? item.character_positions) : [],
+      interactionTarget: Array.isArray(item.interactionTarget ?? item.interaction_target) ? (item.interactionTarget ?? item.interaction_target) : [],
+      notes: item.notes ? String(item.notes) : undefined,
       meta: item.meta
     } as StoryBeat;
   });

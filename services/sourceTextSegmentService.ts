@@ -582,10 +582,28 @@ export function hydrateBeatAnalysisOriginalText(
   }
   if (resolved.notes) notes.push(resolved.notes);
 
-  const preparedBeats = (parsed.beats || []).map((beat) => ({
-    ...beat,
-    sourceSegmentIds: normalizeSourceSegmentIds(beat.sourceSegmentIds, segmentById, indexById)
-  }));
+  const preparedBeats = (parsed.beats || []).map((beat) => {
+    let ids = beat.sourceSegmentIds;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      const originalText = String(beat.originalText || "").trim();
+      if (originalText) {
+        const matched = activeSegments.filter((segment) => {
+          const segmentText = String(segment.text || "").trim();
+          if (!segmentText) return false;
+          const normSegment = segmentText.replace(/\s+/g, " ").toLowerCase();
+          const normOriginal = originalText.replace(/\s+/g, " ").toLowerCase();
+          return normSegment.includes(normOriginal) || normOriginal.includes(normSegment);
+        });
+        if (matched.length > 0) {
+          ids = matched.map((segment) => segment.sourceSegmentId);
+        }
+      }
+    }
+    return {
+      ...beat,
+      sourceSegmentIds: normalizeSourceSegmentIds(ids, segmentById, indexById)
+    };
+  });
 
   const beatsWithFallbacks = options.repairMissingSegments
     ? insertMissingSegmentFallbackBeats(preparedBeats, activeSegments, indexById)

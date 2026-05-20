@@ -867,7 +867,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const normalizeBeatForUi = (beat: any, index: number) => {
     if (!beat || typeof beat !== 'object' || Array.isArray(beat)) return beat;
 
-    const characters = beat.charactersInvolved ?? beat.characters ?? [];
+    const characters = beat.charactersInvolved ?? beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? [];
     const focusCharacters = beat.focusCharacters ?? beat.focus_characters ?? characters;
     const visibleCharacters = beat.visibleCharacters ?? beat.visible_characters ?? focusCharacters;
     const offscreenPresentCharacters = beat.offscreenPresentCharacters ?? beat.offscreen_present_characters ?? [];
@@ -888,7 +888,16 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       locationName: beat.locationName || beat.location || '',
       locationId: beat.locationId || '',
       locationState: beat.locationState || '',
-      props: Array.isArray(props) ? props : [props].filter(Boolean)
+      props: Array.isArray(props) ? props : [props].filter(Boolean),
+      beatType: beat.beatType || 'action',
+      mentionedCharacters: Array.isArray(beat.mentionedCharacters) ? beat.mentionedCharacters : [],
+      presentCharacters: Array.isArray(beat.presentCharacters) ? beat.presentCharacters : (Array.isArray(characters) ? characters : []),
+      enteredCharacters: Array.isArray(beat.enteredCharacters) ? beat.enteredCharacters : [],
+      exitedCharacters: Array.isArray(beat.exitedCharacters) ? beat.exitedCharacters : [],
+      characterPostures: Array.isArray(beat.characterPostures) ? beat.characterPostures : [],
+      characterPositions: Array.isArray(beat.characterPositions) ? beat.characterPositions : [],
+      interactionTarget: Array.isArray(beat.interactionTarget) ? beat.interactionTarget : [],
+      notes: beat.notes || undefined
     };
   };
 
@@ -905,11 +914,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const hydratePastedAnalysisIfNeeded = (analysisData: any) => {
     const beats = getAnalysisBeatsFromParsed(analysisData);
-    const hasSourceSegmentIds = beats?.some((beat: any) =>
-      Array.isArray(beat.sourceSegmentIds) && beat.sourceSegmentIds.length > 0
-    );
-
-    if (!beats || !hasSourceSegmentIds) {
+    if (!beats || beats.length === 0) {
       return analysisData;
     }
 
@@ -1580,13 +1585,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
       if (stage === ProductionStage.ANALYSIS) {
         const resultObj = await gemini.analyzeBeats(inputData.script, getSelectedStylePrompt());
-        const analysisValue = JSON.stringify(resultObj, null, 2);
+        const hydratedResult = hydratePastedAnalysisIfNeeded(resultObj);
+        const analysisValue = JSON.stringify(hydratedResult, null, 2);
         setProduction(prev => ({
           ...prev,
           analysis: analysisValue
         }));
-        const beats = normalizeBeats(resultObj);
-        const parsedScreens = normalizeScreens(resultObj);
+        const beats = normalizeBeats(hydratedResult);
+        const parsedScreens = normalizeScreens(hydratedResult);
         const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
         setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
         
@@ -1702,19 +1708,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setError(null);
     try {
       const resultObj = await gemini.analyzeBeats(inputData.script, getSelectedStylePrompt());
-      const analysisValue = JSON.stringify(resultObj, null, 2);
+      const hydratedResult = hydratePastedAnalysisIfNeeded(resultObj);
+      const analysisValue = JSON.stringify(hydratedResult, null, 2);
       setProduction(prev => ({
         ...prev,
         analysis: analysisValue
       }));
 
-      const beats = normalizeBeats(resultObj);
-      const parsedScreens = normalizeScreens(resultObj);
+      const beats = normalizeBeats(hydratedResult);
+      const parsedScreens = normalizeScreens(hydratedResult);
       const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
       setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
       setStage(ProductionStage.CHARACTER_LOCATION);
     } catch (err: any) {
-      setError(err.message || "Lá»—i API. Vui lÃ²ng thá»­ Cháº¿ Ä‘á»™ Thá»§ cÃ´ng.");
+      setError(err.message || "Lỗi API. Vui lòng thử Chế độ Thủ công.");
     } finally {
       setIsLoading(false);
     }

@@ -30,6 +30,41 @@ export interface ProductionData {
   finalResult?: string;
 }
 
+export type BeatType =
+  | "establishing"
+  | "action"
+  | "reaction"
+  | "dialogue"
+  | "reveal"
+  | "transition";
+
+export type PositionSource = "explicit" | "inherited" | "inferred";
+
+export interface CharacterPosture {
+  characterName: string;
+  posture:
+    | "standing"
+    | "sitting"
+    | "lying"
+    | "kneeling"
+    | "walking"
+    | "running"
+    | "unknown";
+  actionState: string;
+}
+
+export interface CharacterPosition {
+  characterName: string;
+  position: string;
+  source: PositionSource;
+}
+
+export interface InteractionTarget {
+  actor: string;
+  target: string;
+  interaction: string;
+}
+
 export interface BeatAnalysis {
   meta?: EditableMeta;
   beatId?: number;
@@ -46,7 +81,18 @@ export interface BeatAnalysis {
   props?: string[];
   atmosphere?: string;
   timeOfDay?: string;
+  summary?: string;
+  beatType?: BeatType;
+  mentionedCharacters?: string[];
+  presentCharacters?: string[];
+  enteredCharacters?: string[];
+  exitedCharacters?: string[];
+  characterPostures?: CharacterPosture[];
+  characterPositions?: CharacterPosition[];
+  interactionTarget?: InteractionTarget[];
+  notes?: string;
 }
+
 
 export interface ScreenCharacterState {
   characterName: string;

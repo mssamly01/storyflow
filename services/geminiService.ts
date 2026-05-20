@@ -105,20 +105,6 @@ SOURCE SEGMENT COVERAGE RULE - CRITICAL:
 A beat is not a paragraph.
 A beat is one clear visual moment that can be illustrated in one image.
 
-LIGHTWEIGHT BEAT ANALYSIS RULE - CRITICAL:
-This stage must only create the story skeleton.
-
-Do NOT generate:
-- screenCharacterStates
-- detailed outfit/accessory state
-- characterMomentDetails
-- detailed posture
-- detailed props
-- detailed locationState
-- long interaction descriptions
-
-Your job is to identify focus/visible/offscreen characters, location, time, short action, atmosphere, and visual focus.
-
 BEAT SPLITTING RULES - CRITICAL:
 1. Split the entire body source into continuous, fine-grained, image-ready beats.
 2. One beat = one drawable image moment.
@@ -173,21 +159,17 @@ Merge adjacent source segments into one beat when:
 4. One short message/call question-answer pair belongs to the same visual moment.
 5. A filler sentence has no new visual value and supports the same emotion/action.
 
-FIELD RULES:
-- sourceSegmentIds: exact source segment IDs covered by this beat. This replaces originalText.
-- screens: screen-level continuity containers for shared location, time, layout, present characters.
-- screenId: stable link from each beat to its screen.
-- summary: short explanation of the beat, not copied from source text.
-- characters: legacy compatibility field; include visibleCharacters when possible.
-- focusCharacters: characters receiving narrative/camera focus in this beat.
-- visibleCharacters: characters visible in this beat's frame.
-- offscreenPresentCharacters: characters still present in the screen but not visible in this beat.
-- location: most specific known place, or "Unknown".
-- locationId: stable location id if inferable from consistent location naming, otherwise omit or use "".
-- action: main action.
-- visualFocus: what the image should focus on.
-- atmosphere: emotional mood.
-- timeOfDay: Early Morning, Morning, Mid-day, Afternoon, Golden Hour, Evening, Late Night, or Unknown.
+CONTINUITY RULES - CRITICAL:
+- Track which characters are present in the scene.
+- If A is present and B enters, the next beat must include both A and B in presentCharacters.
+- A character remains present until the text says they leave, disappear, or the scene changes.
+- Track character positions across beats.
+- A character position must be inherited from the previous beat unless the source text describes movement.
+- Do not teleport characters.
+
+TIME RULES:
+- timeOfDay should remain consistent within the same scene/screen.
+- Only change timeOfDay when the source text clearly indicates a time change.
 
 Selected art style context:
 ${artStyleDescription || "No specific style selected."}
@@ -214,7 +196,37 @@ Return ONLY valid JSON with this schema:
       "beatId": 1,
       "screenId": "screen_001",
       "sourceSegmentIds": ["src_0001", "src_0002"],
-      "summary": "Short summary of this visual beat.",
+      "summary": "short summary of the beat",
+      "analysis": "specific action/context analysis using character names",
+      "beatType": "establishing | action | reaction | dialogue | reveal | transition",
+      "atmosphere": "main emotional atmosphere",
+      "timeOfDay": "Early Morning | Morning | Mid-day | Afternoon | Golden Hour | Evening | Late Night | Unknown",
+      "mentionedCharacters": ["Character A"],
+      "presentCharacters": ["Character A", "Character B"],
+      "enteredCharacters": [],
+      "exitedCharacters": [],
+      "characterPostures": [
+        {
+          "characterName": "Character A",
+          "posture": "standing | sitting | lying | kneeling | walking | running | unknown",
+          "actionState": "specific action state"
+        }
+      ],
+      "characterPositions": [
+        {
+          "characterName": "Character A",
+          "position": "specific position in the scene",
+          "source": "explicit | inherited | inferred"
+        }
+      ],
+      "interactionTarget": [
+        {
+          "actor": "Character A",
+          "target": "Character B",
+          "interaction": "what the actor does/says toward the target"
+        }
+      ],
+      "notes": "optional continuity or uncertainty notes",
       "focusCharacters": ["Character A"],
       "visibleCharacters": ["Character A", "Character B"],
       "offscreenPresentCharacters": ["Character C"],
@@ -222,9 +234,7 @@ Return ONLY valid JSON with this schema:
       "location": "Concrete location name",
       "locationId": "loc_001",
       "action": "One main action.",
-      "visualFocus": "Specific main image focus.",
-      "atmosphere": "Dominant mood.",
-      "timeOfDay": "Evening"
+      "visualFocus": "Specific main image focus."
     }
   ]
 }
