@@ -28,8 +28,8 @@ if not exist node_modules (
     echo.
 )
 
-:: Khoi dong local server
-echo  [*] Dang khoi dong server phat trien (Vite)...
+:: Khoi dong local server va Vite frontend
+echo  [*] Dang khoi dong StoryFlow server + Vite frontend...
 echo  [*] Vui long mo trinh duyet theo URL hien thi phia duoi.
 echo  ===================================================
 echo.
