@@ -30,6 +30,10 @@ import {
   BeatRhythmWarning
 } from '../services/sourceTextSegmentService';
 import {
+  validateBeatSkeletonRhythm,
+  type BeatSkeletonValidationWarning
+} from '../services/beatSkeletonValidationService';
+import {
   buildFinalResultFromProject,
   createInitialProject,
   hydrateStoryFlowProject,
@@ -1040,6 +1044,20 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return rawBeats ? rawBeats.map((beat: any, index: number) => normalizeBeatForUi(beat, index)) : null;
   };
 
+  const attachBeatSkeletonRhythmWarnings = (analysisData: any) => {
+    const beats = normalizeBeatSkeletons(analysisData);
+    const beatRhythmWarnings = validateBeatSkeletonRhythm(beats);
+
+    if (beatRhythmWarnings.length > 0) {
+      console.warn("[Storyflow] Beat Skeleton rhythm warnings:", beatRhythmWarnings);
+    }
+
+    return {
+      ...analysisData,
+      beatRhythmWarnings
+    };
+  };
+
   const hydratePastedAnalysisIfNeeded = (analysisData: any) => {
     const sanitizedAnalysisData = sanitizeBeatSkeletonPayload(analysisData);
     const beats = getAnalysisBeatsFromParsed(sanitizedAnalysisData);
@@ -1056,7 +1074,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         ...payload,
         repairNotes: "Cannot hydrate or auto-split originalText because the current project has no source script. Paste the original .txt/source text first, then import this Beat Analysis JSON again."
       };
-      return warningPayload;
+      return attachBeatSkeletonRhythmWarnings(warningPayload);
     }
 
     const hydrated = hydrateBeatAnalysisOriginalText(
@@ -1066,7 +1084,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       { segmentMode: "auto", repairMissingSegments: true, splitLongBeats: false }
     );
 
-    return sanitizeBeatSkeletonPayload(hydrated);
+    return attachBeatSkeletonRhythmWarnings(sanitizeBeatSkeletonPayload(hydrated));
   };
 
   const storyboardBatchInfo = useMemo(() => {
@@ -1154,8 +1172,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       {
         batchIndex,
         batchSize: gemini.STORYBOARD_BATCH_SIZE,
-        manualNextMode: false,
-        includeAllBeatsForManualNext: true
+        manualNextMode: false
       }
     );
   };
@@ -1423,7 +1440,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setError(null);
 
     if (firstMissingIndex < 0 && storyboardBatchInfo.beats.length > 0) {
-      showToast(`Đã ghép đủ ${mergedPanels.length}/${storyboardBatchInfo.beats.length} storyboard panels. Bấm nút xem để mở UI.`);
+      showToast(
+        ignoredCount > 0
+          ? `Đã ghép đủ ${mergedPanels.length}/${storyboardBatchInfo.beats.length} storyboard panels. Bỏ qua ${ignoredCount} panel ngoài batch. Bấm nút xem để mở UI.`
+          : `Đã ghép đủ ${mergedPanels.length}/${storyboardBatchInfo.beats.length} storyboard panels. Bấm nút xem để mở UI.`
+      );
       return true;
     }
 
@@ -2266,6 +2287,73 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     navigator.clipboard.writeText(text);
     setToast({ message: "Đã sao chép vào bộ nhớ tạm!", visible: true });
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
+  const getBeatRhythmRepairPrompt = () => `Output Beat Skeleton hien co beat qua dai hoac gop qua nhieu sourceSegmentIds.
+
+Hay sua lai JSON theo rule:
+- Target 20-60 tu/beat.
+- Preferred 25-50 tu/beat.
+- Most beats dung 1-2 sourceSegmentIds.
+- Khong dung 5+ sourceSegmentIds trong mot beat.
+- Khong tao montage beat.
+- Khong dung "series of small panels", "brief visual montage", "quick sequence".
+- Neu beat vuot 60 tu, hay split thanh nhieu beat nho hon.
+- Khong doi noi dung sourceSegmentIds, chi phan bo lai sourceSegmentIds vao nhieu beats dung thu tu.
+- Khong output originalText.
+- Giu schema Beat Skeleton hien tai.`;
+
+  const renderBeatRhythmWarningsPanel = (warnings?: BeatSkeletonValidationWarning[]) => {
+    if (!warnings?.length) return null;
+
+    const errorCount = warnings.filter((item) => item.severity === "error").length;
+    const warningCount = warnings.length - errorCount;
+
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-black uppercase tracking-widest text-amber-900">
+              Beat Rhythm Warnings
+            </div>
+            <div className="mt-1 text-xs font-semibold text-amber-800">
+              {errorCount} loi, {warningCount} canh bao. App khong tu split/merge; hay chay lai hoac sua output AI.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => copyToClipboard(getBeatRhythmRepairPrompt())}
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-800 transition-colors hover:bg-amber-100"
+          >
+            <Copy className="h-3.5 w-3.5" /> Copy prompt sua beat dai
+          </button>
+        </div>
+
+        <div className="mt-4 max-h-64 space-y-2 overflow-auto">
+          {warnings.map((warning, index) => (
+            <div
+              key={`${warning.beatId}-${warning.code}-${index}`}
+              className={`rounded-xl border p-3 text-xs ${
+                warning.severity === "error"
+                  ? "border-rose-200 bg-rose-50 text-rose-900"
+                  : "border-amber-200 bg-white text-amber-900"
+              }`}
+            >
+              <div className="font-black uppercase tracking-wider">
+                Beat {warning.beatId} - {warning.severity} - {warning.code}
+              </div>
+              <div className="mt-1 font-semibold leading-relaxed">{warning.message}</div>
+              <div className="mt-1 text-[10px] font-bold opacity-70">
+                {typeof warning.wordCount === "number" && <span>{warning.wordCount} words</span>}
+                {typeof warning.sourceSegmentCount === "number" && (
+                  <span> - {warning.sourceSegmentCount} source segments</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const closeReferencePromptModal = () => {
@@ -3271,6 +3359,10 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                   </p>
                 )}
               </div>
+            )}
+
+            {renderBeatRhythmWarningsPanel(
+              Array.isArray(parsed?.beatRhythmWarnings) ? parsed.beatRhythmWarnings : []
             )}
 
             <ScreenStudioView screens={screens} beats={normalizedBeats} />

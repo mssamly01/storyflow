@@ -367,13 +367,47 @@ FIELD OWNERSHIP RULE:
 - Prompt Engineering owns: visualPrompt only.
 - Therefore, do NOT output fields owned by later steps.
 
-BEAT LENGTH AND RHYTHM:
-- Target length: 20-60 words of source text per beat.
+CORE BEAT RULE:
+- 1 beat = 1 clear visual story moment that can be illustrated in one image.
+- A beat is not a paragraph.
+- A beat is not a montage.
+- A beat should capture the smallest meaningful visual story moment, not the smallest possible text fragment.
+- Do not output deep visual details here. Those belong to the Chi tiet hanh dong / Beat Moment Details step.
+
+BEAT WORD BUDGET - HARD RULE:
+- Target length: 20-60 words of source text after sourceSegmentIds are joined.
 - Preferred range: 25-50 words.
-- A beat may be shorter than 20 words only for a major reveal, hard scene cut, strong standalone visual moment, decisive emotional turn, or critical dialogue.
-- Do not create many short beats in a row.
-- When uncertain, merge adjacent details instead of splitting.
-- Prefer one strong beat over several weak micro-beats.
+- This word budget is more important than merge bias.
+- Do NOT create beats over 60 words unless a single source segment is already longer than 60 words and cannot be split.
+- If a candidate beat would exceed 60 words, split it into smaller beats.
+- A beat over 80 words is invalid unless it is one single unsplittable source segment.
+- Never group many sourceSegmentIds just to avoid micro-beats.
+- Avoid both extremes:
+  1. micro-beats that are too tiny to illustrate,
+  2. oversized beats that contain multiple visual moments.
+
+SOURCE SEGMENT COUNT RULE - CRITICAL:
+- Most beats should use 1-2 sourceSegmentIds.
+- Use 3 sourceSegmentIds only when all three are short and form one continuous visual story moment.
+- Use 4 sourceSegmentIds only in rare cases when the joined text is still under 60 words.
+- Do NOT use 5 or more sourceSegmentIds in one beat.
+- If you think a beat needs 5 or more sourceSegmentIds, split it into multiple beats.
+- A long dialogue, long explanation, or multiple action chain must be split into multiple beats.
+- Do not use a large sourceSegmentIds range to summarize multiple moments.
+
+NO MONTAGE BEATS - CRITICAL:
+- Do NOT create montage beats in Beat Skeleton.
+- Do NOT write action, summary, or visualFocus like:
+  "brief visual montage",
+  "series of small panels",
+  "quick sequence",
+  "multiple moments",
+  "several scenes",
+  "a set of panels",
+  "montage of..."
+- One beat must describe one concrete drawable moment.
+- If the source contains multiple moments, split them into multiple beats.
+- Montage decisions belong to Storyboard, not Beat Skeleton.
 
 BEAT SPLITTING RULES:
 - Never cut in the middle of a sentence.
@@ -382,9 +416,48 @@ BEAT SPLITTING RULES:
 - Split long dialogue only when topic, goal, or emotional direction changes.
 
 BEAT MERGING RULES:
-- Merge short dialogue with its direct action tag.
-- Merge a question and answer pair in calls/messages when they form one exchange.
-- Merge tiny gestures, gaze shifts, pauses, breaths, nods, and short continuation lines into the current beat unless they become a new visual story moment.
+- Merge short dialogue with its direct action tag only if the result stays under 60 words.
+- Merge a question and answer pair in calls/messages only if the result stays under 60 words.
+- Merge tiny gestures, gaze shifts, pauses, breaths, nods, and short continuation lines into the current beat only if they share the same visual story moment and the result stays under 60 words.
+- If several details can be shown in one coherent shot but exceed 60 words together, split them into multiple beats.
+
+ANTI MICRO-BEAT RULES:
+- Do NOT create micro-beats.
+- A micro-beat is a beat that only contains a tiny gesture, slight gaze shift, blink, small facial change, breath, pause, nod, or short continuation dialogue without a new visual story moment.
+- Do not split just because a character looks down, looks up, blinks, smiles slightly, clenches a fist, pauses, breathes, nods, turns slightly, or makes a minor hand movement.
+- Minor gestures should stay inside the current beat as context, but do not describe them deeply here.
+- Only split when the visual story moment changes enough to require a different image.
+- Avoid over-fragmentation.
+- Maintain a stable cinematic rhythm.
+- However, anti micro-beat rules must never create a beat over 60 words.
+
+SAFE MERGE BIAS:
+- When uncertain, merge adjacent details ONLY IF the joined beat remains within 20-60 words.
+- Merge only when adjacent source segments describe the same visual story moment.
+- Do NOT merge across:
+  1. a new action,
+  2. a new dialogue turn with a different intent,
+  3. a new thought,
+  4. a new reveal,
+  5. a new emotional turn,
+  6. a new interaction target,
+  7. a location/time change.
+- Prefer one strong beat over several weak micro-beats, but never create an oversized beat.
+- Avoid micro-beats, but never solve micro-beats by creating long summary beats.
+- If the combined text would exceed 60 words, split instead of merging.
+
+LONG DIALOGUE / MONOLOGUE RULE:
+- If a dialogue, narration, or internal monologue spans more than 60 words after joining segments, split it.
+- Split by:
+  1. speaker change,
+  2. question vs answer,
+  3. accusation vs response,
+  4. realization vs decision,
+  5. explanation vs reaction,
+  6. new emotional beat,
+  7. new visual focus.
+- Do not keep a long speech in one beat just because it is one continuous conversation.
+- A long conversation should become multiple beats if each part can be illustrated separately.
 
 SCREEN SKELETON RULES:
 - Group consecutive beats into screens.
@@ -397,12 +470,19 @@ CHARACTER PRESENCE RULES:
 - characters = union of visibleCharacters and offscreenPresentCharacters.
 - A character remains present until the text says they leave, disappear, or the scene changes.
 
-SELF-CHECK BEFORE OUTPUT:
-1. Does every body source segment appear exactly once?
-2. Are all sourceSegmentIds in order?
-3. Are there any unnecessary micro-beats?
-4. Did you output any deep visual fields? If yes, remove them.
-5. Do not output this self-check. Only output JSON.
+STRICT SELF-CHECK BEFORE OUTPUT:
+Before returning JSON, silently check every beat:
+1. Join the sourceSegmentIds mentally.
+2. Estimate the word count of the joined source text.
+3. If the beat is over 60 words, split it unless it is a single unsplittable source segment.
+4. If the beat has 5 or more sourceSegmentIds, split it.
+5. If the action/summary says montage, series of panels, quick sequence, or multiple moments, split it.
+6. If a beat contains multiple dialogue turns with different intent, split it.
+7. If a beat contains both a realization and a decision/action, consider splitting it.
+8. If a beat contains multiple visible moments, split it.
+9. Keep anti micro-beat rules, but do not use them to create oversized beats.
+10. Did you output any deep visual fields? If yes, remove them.
+11. Do not output this self-check. Only output JSON.
 
 Return ONLY valid JSON with this schema:
 
@@ -1026,6 +1106,7 @@ interface StoryboardPromptOptions {
   batchIndex?: number;
   batchSize?: number;
   manualNextMode?: boolean;
+  /** @deprecated Storyboard batch prompts must stay batch-scoped. */
   includeAllBeatsForManualNext?: boolean;
 }
 
@@ -1083,14 +1164,23 @@ function collectContextKeys(
 
   for (const screen of screens) {
     (screen.screenCharacters || []).forEach((name) => characterKeys.add(normalize(String(name))));
-    (screen.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+    (screen.screenCharacterPositions || []).forEach((position) => {
+      characterKeys.add(normalize(position.characterName));
+      if (position.characterId) characterKeys.add(normalize(position.characterId));
+    });
     if (screen.locationId) locationIds.add(screen.locationId);
     if (screen.location) locationKeys.add(normalize(screen.location));
   }
 
   for (const item of screenContinuityItems) {
-    (item.screenCharacterStates || []).forEach((state) => characterKeys.add(normalize(state.characterName)));
-    (item.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
+    (item.screenCharacterStates || []).forEach((state) => {
+      characterKeys.add(normalize(state.characterName));
+      if (state.characterId) characterKeys.add(normalize(state.characterId));
+    });
+    (item.screenCharacterPositions || []).forEach((position) => {
+      characterKeys.add(normalize(position.characterName));
+      if (position.characterId) characterKeys.add(normalize(position.characterId));
+    });
   }
 
   return { characterKeys, locationIds, locationKeys };
@@ -1099,10 +1189,11 @@ function collectContextKeys(
 function selectLibraryItems(
   library: CharacterLocationLibraryResult,
   selectedBeatIds: Set<number>,
-  keys: ReturnType<typeof collectContextKeys>
+  keys: ReturnType<typeof collectContextKeys>,
+  options: { fallbackToFullLibrary?: boolean } = { fallbackToFullLibrary: true }
 ) {
   const selectedCharacters = (library.characters || []).filter((character) => {
-    const names = [character.name, ...(character.aliases || [])].map((name) => normalize(name));
+    const names = [character.characterId, character.name, ...(character.aliases || [])].map((name) => normalize(name));
     const appearsInBeat = (character.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
     return appearsInBeat || names.some((name) => keys.characterKeys.has(name));
   });
@@ -1114,8 +1205,8 @@ function selectLibraryItems(
   });
 
   return {
-    characters: selectedCharacters.length ? selectedCharacters : (library.characters || []),
-    locations: selectedLocations.length ? selectedLocations : (library.locations || [])
+    characters: selectedCharacters.length || !options.fallbackToFullLibrary ? selectedCharacters : (library.characters || []),
+    locations: selectedLocations.length || !options.fallbackToFullLibrary ? selectedLocations : (library.locations || [])
   };
 }
 
@@ -1231,6 +1322,39 @@ function compactStoryboardScreenContinuity(item: ReturnType<typeof normalizeScre
   };
 }
 
+function getScopedBeatIds(item: any, selectedBeatIds: Set<number>): number[] {
+  const explicitIds = Array.isArray(item?.beatIds)
+    ? item.beatIds.map(Number).filter((id: number) => Number.isFinite(id) && selectedBeatIds.has(id))
+    : [];
+  if (explicitIds.length) return Array.from(new Set(explicitIds));
+
+  const beatId = Number(item?.beatId);
+  if (Number.isFinite(beatId) && selectedBeatIds.has(beatId)) return [beatId];
+
+  const start = Number(item?.startBeatId);
+  const end = Number(item?.endBeatId);
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    return Array.from(selectedBeatIds).filter((id) => id >= start && id <= end);
+  }
+
+  return [];
+}
+
+function scopeBeatRangeForStoryboard<T extends { beatIds?: number[]; startBeatId?: number; endBeatId?: number }>(
+  item: T,
+  selectedBeatIds: Set<number>
+): T {
+  const beatIds = getScopedBeatIds(item, selectedBeatIds);
+  if (!beatIds.length) return item;
+
+  return {
+    ...item,
+    beatIds,
+    startBeatId: beatIds[0],
+    endBeatId: beatIds.at(-1)
+  };
+}
+
 function compactStoryboardBeatMoment(item: any) {
   return {
     beatId: item.beatId,
@@ -1265,15 +1389,15 @@ function buildStoryboardPromptContext(
   const analysisData = parseJsonFallback<unknown>(analysis, []);
   const allBeats = normalizeBeats(analysisData);
   const batch = getStoryboardBatchInfo(allBeats, options);
-  const beats = options.includeAllBeatsForManualNext ? allBeats : batch.batchBeats;
-  const selectedBeatIds = beatIdSet(beats);
+  const beats = batch.batchBeats;
+  const selectedBeatIds = beatIdSet(batch.batchBeats);
   const parsedScreens = normalizeScreens(analysisData);
-  const allScreens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(allBeats);
-  const selectedScreenIds = new Set(uniqueStrings(beats.map((beat) => beat.screenId)));
+  const allScreens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
+  const batchScreenIds = new Set(uniqueStrings(beats.map((beat) => beat.screenId)));
   const selectedScreens = allScreens.filter((screen) =>
-    selectedScreenIds.has(screen.screenId) || intersectsSelectedBeats(screen, selectedBeatIds)
+    batchScreenIds.has(screen.screenId) || intersectsSelectedBeats(screen, selectedBeatIds)
   );
-  const screens = selectedScreens.length ? selectedScreens : allScreens;
+  const screens = selectedScreens.length ? selectedScreens : createFallbackScreensFromBeats(beats);
   const library = parseJsonFallback<CharacterLocationLibraryResult>(charLocAnalysis, {
     characters: [],
     locations: []
@@ -1282,66 +1406,45 @@ function buildStoryboardPromptContext(
     ...beats.map((beat) => beat.screenId),
     ...screens.map((screen) => screen.screenId)
   ]));
-  const characterKeys = new Set<string>();
-  const locationIds = new Set<string>();
-  const locationKeys = new Set<string>();
-
-  for (const beat of beats) {
-    [
-      ...(beat.characters || []),
-      ...(beat.charactersInvolved || []),
-      ...(beat.focusCharacters || []),
-      ...(beat.visibleCharacters || []),
-      ...(beat.offscreenPresentCharacters || [])
-    ].forEach((name) => characterKeys.add(normalize(String(name))));
-    if (beat.locationId) locationIds.add(beat.locationId);
-    if (beat.location || beat.locationName) locationKeys.add(normalize(beat.location || beat.locationName));
-  }
-
-  for (const screen of screens) {
-    (screen.screenCharacters || []).forEach((name) => characterKeys.add(normalize(String(name))));
-    (screen.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
-    if (screen.locationId) locationIds.add(screen.locationId);
-    if (screen.location) locationKeys.add(normalize(screen.location));
-  }
-
   const screenContinuityItems = normalizeScreenContinuity(parseJsonFallback<unknown>(screenContinuity, { screens: [] }))
     .filter((item) => screenIds.has(item.screenId) || intersectsSelectedBeats(item, selectedBeatIds));
-  for (const item of screenContinuityItems) {
-    (item.screenCharacterStates || []).forEach((state) => characterKeys.add(normalize(state.characterName)));
-    (item.screenCharacterPositions || []).forEach((position) => characterKeys.add(normalize(position.characterName)));
-  }
 
   const beatMomentItems = normalizeBeatMomentDetails(parseJsonFallback<unknown>(beatMomentDetails, { beatDetails: [] }))
     .filter((item) => selectedBeatIds.has(Number(item.beatId)));
+  const keys = collectContextKeys(beats, screens, screenContinuityItems);
   for (const item of beatMomentItems) {
-    (item.characterMomentDetails || []).forEach((detail: any) => characterKeys.add(normalize(detail.characterName)));
-    (item.characterVisualStates || []).forEach((detail: any) => characterKeys.add(normalize(detail.characterName)));
+    (item.characterMomentDetails || []).forEach((detail: any) => {
+      keys.characterKeys.add(normalize(detail.characterName));
+      if (detail.characterId) keys.characterKeys.add(normalize(detail.characterId));
+    });
+    (item.characterVisualStates || []).forEach((detail: any) => keys.characterKeys.add(normalize(detail.characterName)));
     (item.interactionTarget || []).forEach((target: any) => {
-      characterKeys.add(normalize(target.actor));
-      characterKeys.add(normalize(target.target));
+      keys.characterKeys.add(normalize(target.actor));
+      keys.characterKeys.add(normalize(target.target));
     });
   }
-
-  const selectedCharacters = (library.characters || []).filter((character) => {
-    const names = [character.name, ...(character.aliases || [])].map((name) => normalize(name));
-    const appearsInBeat = (character.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
-    return appearsInBeat || names.some((name) => characterKeys.has(name));
-  });
-  const selectedLocations = (library.locations || []).filter((location) => {
-    if (location.locationId && locationIds.has(location.locationId)) return true;
-    const names = [location.name, ...(location.aliases || [])].map((name) => normalize(name));
-    const appearsInBeat = (location.appearsInBeatIds || []).some((id) => selectedBeatIds.has(Number(id)));
-    return appearsInBeat || names.some((name) => locationKeys.has(name));
+  const selectedLibrary = selectLibraryItems(library, selectedBeatIds, keys, {
+    fallbackToFullLibrary: false
   });
 
   return {
     batch,
+    debug: {
+      batchBeatCount: beats.length,
+      selectedScreenCount: screens.length,
+      selectedCharacterCount: selectedLibrary.characters.length,
+      selectedLocationCount: selectedLibrary.locations.length,
+      selectedBeatMomentDetailCount: beatMomentItems.length
+    },
     beats: beats.map(compactStoryboardBeat),
-    screens: screens.map(compactStoryboardScreen),
-    characters: (selectedCharacters.length ? selectedCharacters : (library.characters || [])).map(compactStoryboardCharacter),
-    locations: (selectedLocations.length ? selectedLocations : (library.locations || [])).map(compactStoryboardLocation),
-    screenContinuity: { screens: screenContinuityItems.map(compactStoryboardScreenContinuity) },
+    screens: screens.map((screen) => scopeBeatRangeForStoryboard(compactStoryboardScreen(screen), selectedBeatIds)),
+    characters: selectedLibrary.characters.map(compactStoryboardCharacter),
+    locations: selectedLibrary.locations.map(compactStoryboardLocation),
+    screenContinuity: {
+      screens: screenContinuityItems.map((item) =>
+        scopeBeatRangeForStoryboard(compactStoryboardScreenContinuity(item), selectedBeatIds)
+      )
+    },
     beatMomentDetails: { beatDetails: beatMomentItems.map(compactStoryboardBeatMoment) }
   };
 }
@@ -1450,6 +1553,20 @@ STORYBOARD BATCH MODE - CRITICAL:
 - Return exactly ${batch.targetBeatIds.length} panel(s), one panel per target beatId.
 - Do not output panels for earlier or later batches.
 ${options.manualNextMode ? `- Manual workflow: after this batch JSON is accepted, the user may type/copy "Next" to continue with the next StoryFlow batch prompt. In this response, still return ONLY valid JSON for the current batch.` : ""}
+
+BATCH CONTEXT DEBUG:
+- batchBeatCount: ${context.debug.batchBeatCount}
+- selectedScreenCount: ${context.debug.selectedScreenCount}
+- selectedCharacterCount: ${context.debug.selectedCharacterCount}
+- selectedLocationCount: ${context.debug.selectedLocationCount}
+- selectedBeatMomentDetailCount: ${context.debug.selectedBeatMomentDetailCount}
+
+BATCH-SCOPED CONTEXT RULE - CRITICAL:
+- The context below has already been filtered for THIS batch.
+- Use ONLY targetBeatIds: ${batch.targetBeatIds.join(", ")}.
+- Do NOT import beats, props, camera ideas, character states, locations, or continuity from other batches.
+- Do NOT mention beat ranges outside the targetBeatIds.
+- Return panels ONLY for the target beatIds listed above.
 ` : ""}
 
 Required JSON schema:
@@ -1530,22 +1647,22 @@ SCREEN CONTINUITY FOR STORYBOARD:
 - If the camera angle excludes a present character, mention them in cameraNotes.
 - Example: in a Hospital Nurse Station screen, if Lục Thư Vân is locked seated behind the counter at the right workstation chair and Khương Yến Ninh is locked standing at the visitor/front-left side of the counter, a close-up of Lục Thư Vân must not move Khương Yến Ninh into a background workstation; Khương Yến Ninh stays at the front-left anchor and may be off-frame.
 
-SOURCE BEATS:
+SOURCE BEATS FOR THIS BATCH:
 ${compactJson(context.beats)}
 
-SOURCE SCREENS:
+SOURCE SCREENS FOR THIS BATCH:
 ${compactJson(context.screens)}
 
-CHARACTER LIBRARY:
+CHARACTER LIBRARY FOR THIS BATCH:
 ${compactJson(context.characters)}
 
-LOCATION LIBRARY:
+LOCATION LIBRARY FOR THIS BATCH:
 ${compactJson(context.locations)}
 
-APPROVED SCREEN CONTINUITY:
+APPROVED SCREEN CONTINUITY FOR THIS BATCH:
 ${compactJson(context.screenContinuity) || "No screen continuity data provided."}
 
-APPROVED BEAT MOMENT DETAILS:
+APPROVED BEAT MOMENT DETAILS FOR THIS BATCH:
 ${compactJson(context.beatMomentDetails) || "No beat moment details provided."}
 
 ART STYLE:
