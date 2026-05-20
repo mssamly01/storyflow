@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { StoryBeat, StoryScreen } from "../../types";
+import { validateBeatRhythm } from "../../services/sourceTextSegmentService";
 
 interface ScreenStudioViewProps {
   screens: StoryScreen[];
@@ -191,9 +192,99 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-        <SectionLabel>Posture / Blocking</SectionLabel>
-        <p className="mt-2 text-sm leading-relaxed text-slate-700">{beat.posture || "No posture data"}</p>
+      {/* Visual Shot Details Panel */}
+      <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50/50 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-2.5 h-2.5 rounded-full bg-violet-600 animate-pulse" />
+          <SectionLabel>Visual Shot Details (AI Analyzed)</SectionLabel>
+        </div>
+        
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-white bg-white/70 p-4 shadow-sm">
+            <SectionLabel>Visual Moment</SectionLabel>
+            <p className="mt-2 text-sm font-semibold text-slate-800 leading-relaxed">
+              {beat.visualMoment || "No visual moment described"}
+            </p>
+          </div>
+          
+          <div className="rounded-2xl border border-white bg-white/70 p-4 shadow-sm">
+            <SectionLabel>Main Action</SectionLabel>
+            <p className="mt-2 text-sm font-semibold text-slate-800 leading-relaxed">
+              {beat.mainAction || "No action described"}
+            </p>
+          </div>
+        </div>
+
+        {(beat.cameraHint || beat.compositionHint || beat.environmentDetails) && (
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            {beat.cameraHint && (
+              <div className="rounded-2xl border border-white bg-white/70 p-3 shadow-sm">
+                <SectionLabel>Camera Shot</SectionLabel>
+                <p className="mt-1 text-xs font-bold text-slate-800 capitalize">
+                  {beat.cameraHint.replace(/-/g, " ")}
+                </p>
+              </div>
+            )}
+            {beat.compositionHint && (
+              <div className="rounded-2xl border border-white bg-white/70 p-3 shadow-sm">
+                <SectionLabel>Composition</SectionLabel>
+                <p className="mt-1 text-xs font-semibold text-slate-700">
+                  {beat.compositionHint}
+                </p>
+              </div>
+            )}
+            {beat.environmentDetails && (
+              <div className="rounded-2xl border border-white bg-white/70 p-3 shadow-sm">
+                <SectionLabel>Environment details</SectionLabel>
+                <p className="mt-1 text-xs text-slate-700 font-medium leading-relaxed">
+                  {beat.environmentDetails}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {beat.characterVisualStates && beat.characterVisualStates.length > 0 && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <SectionLabel>Character Visual States</SectionLabel>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {beat.characterVisualStates.map((vs: any) => (
+                <div key={vs.characterName} className="rounded-2xl border border-violet-100 bg-violet-50/20 p-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-extrabold text-slate-900">{vs.characterName}</p>
+                    {vs.roleInShot && (
+                      <span className={cx(
+                        "text-[9px] font-black uppercase px-2 py-0.5 rounded-md",
+                        vs.roleInShot === "main" ? "bg-violet-600 text-white shadow-sm" :
+                        vs.roleInShot === "supporting" ? "bg-indigo-100 text-indigo-700" :
+                        "bg-slate-100 text-slate-600"
+                      )}>
+                        {vs.roleInShot}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 space-y-1 text-xs leading-relaxed text-slate-700">
+                    {vs.facialExpression && (
+                      <p><span className="font-semibold text-slate-500">Expression:</span> {vs.facialExpression}</p>
+                    )}
+                    {vs.bodyLanguage && (
+                      <p><span className="font-semibold text-slate-500">Body & Posture:</span> {vs.bodyLanguage}</p>
+                    )}
+                    {vs.gazeTarget && (
+                      <p><span className="font-semibold text-slate-500">Gaze:</span> {vs.gazeTarget}</p>
+                    )}
+                    {vs.emotionalState && (
+                      <p><span className="font-semibold text-slate-500">Emotion:</span> {vs.emotionalState}</p>
+                    )}
+                    {vs.position && (
+                      <p><span className="font-semibold text-slate-500">Position:</span> {vs.position} <span className="text-[9px] text-slate-400">({vs.positionSource})</span></p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {isExpanded && (
@@ -428,8 +519,8 @@ export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
       beatsByScreen: map
     };
   }, [beats, screens]);
-  const longBeats = useMemo(
-    () => beats.filter((beat) => isOverBeatWordLimit(beat.originalText)),
+  const rhythmWarnings = useMemo(
+    () => validateBeatRhythm(beats),
     [beats]
   );
 
@@ -443,14 +534,24 @@ export function ScreenStudioView({ screens, beats }: ScreenStudioViewProps) {
 
   return (
     <div className="space-y-8">
-      {longBeats.length > 0 && (
-        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-rose-800">
-          <p className="text-[10px] font-black uppercase tracking-widest">Beat length warning</p>
-          <p className="mt-2 text-sm font-bold">
-            {longBeats.length} beat có originalText vượt 80 từ: {longBeats.map((beat) => `#${beat.beatId}`).join(", ")}.
-          </p>
-          <p className="mt-1 text-xs font-medium leading-relaxed">
-            Target mới là 40-80 từ/beat. Hãy regenerate Beat Analysis hoặc tách thủ công các beat này để mỗi ảnh chỉ cần diễn một visual moment.
+      {rhythmWarnings.length > 0 && (
+        <div className="rounded-3xl border border-amber-200 bg-amber-50/70 p-5 text-amber-900 shadow-sm animate-fade-in">
+          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Rhythm & Beat Length Warnings</p>
+          <div className="mt-2 space-y-1.5">
+            {rhythmWarnings.map((w, index) => (
+              <div key={index} className="text-xs font-semibold leading-relaxed flex items-start gap-2">
+                <span className={cx(
+                  "inline-block w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
+                  w.type === "too_long" ? "bg-rose-500 animate-pulse" : "bg-amber-500"
+                )} />
+                <span>
+                  <strong>[Beat #{w.beatId}]</strong>: {w.message}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] text-amber-600 font-bold uppercase tracking-wider">
+            Target mới: 20-60 từ/beat. Hãy regenerate Beat Analysis hoặc sửa thủ công để tối ưu hóa nét vẽ minh họa.
           </p>
         </div>
       )}

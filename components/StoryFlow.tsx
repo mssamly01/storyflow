@@ -23,7 +23,9 @@ import {
 } from '../services/finalResultBuilderService';
 import {
   hydrateBeatAnalysisOriginalText,
-  segmentSourceText
+  segmentSourceText,
+  validateBeatRhythm,
+  BeatRhythmWarning
 } from '../services/sourceTextSegmentService';
 import {
   buildFinalResultFromProject,
@@ -459,6 +461,10 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   // States for editing beats in Analysis stage
   const [editingBeatIndex, setEditingBeatIndex] = useState<number | null>(null);
   const [editingBeatData, setEditingBeatData] = useState<any>(null);
+
+  const rhythmWarnings = useMemo<BeatRhythmWarning[]>(() => {
+    return validateBeatRhythm(project.beats || []);
+  }, [project.beats]);
 
   // Load temporary state from localStorage
   useEffect(() => {
@@ -897,7 +903,14 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       characterPostures: Array.isArray(beat.characterPostures) ? beat.characterPostures : [],
       characterPositions: Array.isArray(beat.characterPositions) ? beat.characterPositions : [],
       interactionTarget: Array.isArray(beat.interactionTarget) ? beat.interactionTarget : [],
-      notes: beat.notes || undefined
+      notes: beat.notes || undefined,
+      visualMoment: beat.visualMoment || beat.visual_moment || beat.analysis || beat.summary || beat.action || '',
+      mainAction: beat.mainAction || beat.main_action || beat.action || beat.actionAnalysis || '',
+      characterVisualStates: Array.isArray(beat.characterVisualStates ?? beat.character_visual_states) ? (beat.characterVisualStates ?? beat.character_visual_states) : [],
+      environmentDetails: beat.environmentDetails || beat.environment_details || beat.locationState || '',
+      cameraHint: beat.cameraHint || beat.camera_hint || 'unknown',
+      compositionHint: beat.compositionHint || beat.composition_hint || '',
+      continuityNotes: beat.continuityNotes || beat.continuity_notes || beat.notes || ''
     };
   };
 
@@ -934,7 +947,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       payload,
       inputData.script,
       segmentSourceText(inputData.script),
-      { segmentMode: "auto", repairMissingSegments: true }
+      { segmentMode: "auto", repairMissingSegments: true, splitLongBeats: false }
     );
 
     return hydrated;

@@ -8,12 +8,12 @@ import type {
 
 export const SOURCE_SEGMENTER_VERSION = "source-segmenter-v2-word-limit";
 export const LEGACY_LINE_SEGMENTER_VERSION = "legacy-line-v1";
-export const TARGET_BEAT_WORD_MIN = 40;
-export const TARGET_BEAT_WORD_MAX = 80;
+export const TARGET_BEAT_WORD_MIN = 20;
+export const TARGET_BEAT_WORD_MAX = 60;
 
 const MAX_SEGMENT_CHARS = 520;
 const MAX_SEGMENT_WORDS = TARGET_BEAT_WORD_MAX;
-const TARGET_SEGMENT_WORDS = 60;
+const TARGET_SEGMENT_WORDS = 40;
 const SOURCE_SEGMENT_PREFIX = "src_";
 
 type SourceSegmenterMode = "current" | "legacyLine" | "auto";
@@ -21,6 +21,7 @@ type SourceSegmenterMode = "current" | "legacyLine" | "auto";
 interface HydrationOptions {
   repairMissingSegments?: boolean;
   segmentMode?: SourceSegmenterMode;
+  splitLongBeats?: boolean;
 }
 
 interface ResolvedSourceSegments {
@@ -615,11 +616,13 @@ export function hydrateBeatAnalysisOriginalText(
   }
 
   let splitSourceBeatCount = 0;
-  const lengthRepairedBeats = beatsWithFallbacks.flatMap((beat) => {
-    const parts = splitBeatByOriginalTextLength(beat, sourceText, activeSegments, indexById);
-    if (parts.length > 1) splitSourceBeatCount += 1;
-    return parts;
-  });
+  const lengthRepairedBeats = options.splitLongBeats
+    ? beatsWithFallbacks.flatMap((beat) => {
+        const parts = splitBeatByOriginalTextLength(beat, sourceText, activeSegments, indexById);
+        if (parts.length > 1) splitSourceBeatCount += 1;
+        return parts;
+      })
+    : beatsWithFallbacks;
   const addedSplitBeatCount = Math.max(0, lengthRepairedBeats.length - beatsWithFallbacks.length);
   if (splitSourceBeatCount) {
     notes.push(`Auto-split ${splitSourceBeatCount} long beat(s) into ${splitSourceBeatCount + addedSplitBeatCount} beat(s) to keep originalText near ${TARGET_BEAT_WORD_MIN}-${TARGET_BEAT_WORD_MAX} words.`);
@@ -658,4 +661,37 @@ export function hydrateBeatAnalysisOriginalText(
     targetBeatWordMax: TARGET_BEAT_WORD_MAX,
     repairNotes
   };
+}
+
+export interface BeatRhythmWarning {
+  beatId: number;
+  wordCount: number;
+  type: "too_short" | "too_long";
+  message: string;
+}
+
+export function validateBeatRhythm(beats: StoryBeat[]): BeatRhythmWarning[] {
+  const warnings: BeatRhythmWarning[] = [];
+  beats.forEach((beat) => {
+    const wordCount = countWords(beat.originalText);
+    if (wordCount < 20) {
+      const isExcepted = beat.beatType === "transition" || beat.beatType === "reveal";
+      if (!isExcepted) {
+        warnings.push({
+          beatId: beat.beatId,
+          wordCount,
+          type: "too_short",
+          message: `Beat ${beat.beatId} is very short (${wordCount} words). Verify if this is a key transition, dialogue/reaction turn, or major reveal. Otherwise, consider merging it.`
+        });
+      }
+    } else if (wordCount > 120) {
+      warnings.push({
+        beatId: beat.beatId,
+        wordCount,
+        type: "too_long",
+        message: `Beat ${beat.beatId} is too long (${wordCount} words). Consider splitting it into separate visual moments to keep the illustration precise.`
+      });
+    }
+  });
+  return warnings;
 }

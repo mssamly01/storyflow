@@ -560,6 +560,11 @@ function buildCharacterProfileLine(params: {
   useBeatPostureFallback: boolean;
 }): string {
   const { characterName, profile, screenState, moment, blocking, position, panel, beat, useBeatPostureFallback } = params;
+  
+  const visualState = (beat.characterVisualStates || []).find(
+    (vs: any) => vs.characterName && normalize(vs.characterName) === normalize(characterName)
+  );
+
   const identity = buildCharacterIdentity(profile);
   const outfit = buildResolvedOutfit(screenState, profile);
   const outfitColorNote = buildOutfitColorNote(screenState, profile);
@@ -573,12 +578,20 @@ function buildCharacterProfileLine(params: {
     ? []
     : (screenState?.handheldItems || []).filter((item) => itemMentionedInContext(item, beat, panel, moment));
   const handheld = unique([...momentHandheld, ...screenHandheld]);
-  const posture = buildCharacterPosture(beat, blocking, moment, useBeatPostureFallback, position);
-  const expression = compact([blocking?.expression, moment?.expression]
+
+  const basePosture = buildCharacterPosture(beat, blocking, moment, useBeatPostureFallback, position);
+  const posture = basePosture || visualState?.bodyLanguage || visualState?.position;
+
+  const visualExpression = visualState ? compact([visualState.facialExpression, visualState.emotionalState], " / ") : "";
+  const expression = compact([blocking?.expression, moment?.expression, visualExpression]
     .filter((value) => value && normalize(value) !== "none"));
+
+  const role = visualState?.roleInShot ? `Role in shot: ${visualState.roleInShot}` : "";
+  const gaze = visualState?.gazeTarget ? `Gaze target: ${visualState.gazeTarget}` : "";
 
   const profileParts = [
     ...identity,
+    role,
     position?.anchorPosition ? `Position Lock: ${compact([
       position.anchorPosition,
       position.facingDirection ? `facing ${position.facingDirection}` : "",
@@ -586,6 +599,7 @@ function buildCharacterProfileLine(params: {
     ])}` : "",
     posture ? `Posture: ${posture}` : "",
     expression ? `Expression: ${expression}` : "",
+    gaze,
     outfit ? `Outfit top-down inner-to-outer: ${outfit}` : "",
     outfitColorNote ? `Outfit colors: ${outfitColorNote}` : "",
     `Accessories with exact position: ${formatList(accessories)}`,
@@ -614,11 +628,15 @@ function buildScreenContinuityLine(
   return `Screen Continuity: ${formatList(screenCharacters, "approved characters")} remain present in or around ${locationName}; this shot visually frames ${formatList(visibleNames, "the active subject")}; focus stays on ${formatList(focus, "the active subject")}; ${offscreenNames.length ? `${offscreenNames.join(", ")} stay nearby but outside the frame` : "no extra characters are added"}.`;
 }
 
-function buildSceneLine(panel: StoryboardPanel): string {
+function buildSceneLine(panel: StoryboardPanel, beat: StoryBeat): string {
+  const shotType = panel.shotType || (beat.cameraHint && beat.cameraHint !== "unknown" ? beat.cameraHint : "");
+  const cameraAngle = panel.cameraAngle;
+  const composition = panel.composition || beat.compositionHint;
+
   const scene = compact([
-    panel.shotType,
-    panel.cameraAngle,
-    panel.composition
+    shotType,
+    cameraAngle,
+    composition
   ]) || "storyboard-directed shot";
   return `Scene: ${scene}. This is a crop, zoom, or pan from the locked screen layout; it must not relocate characters or rebuild the setting`;
 }
@@ -653,9 +671,15 @@ function buildActionLine(
     return action;
   }).filter(Boolean);
 
+  const interactionDetails = (beat.interactionTarget || []).map((it) => 
+    `${it.actor} acts/says toward ${it.target}: ${it.interaction}`
+  );
+
   return `Action and interaction: ${compact([
-    beat.action || beat.actionAnalysis,
+    beat.visualMoment,
+    beat.mainAction || beat.action || beat.actionAnalysis,
     beat.interaction,
+    interactionDetails.join(" | "),
     characterActions.join(" | ")
   ], "; ") || "the approved beat action remains the focus"}`;
 }
@@ -680,7 +704,11 @@ function buildPromptForPanel(params: {
   const { beat, screen, panel, characters, locations, style } = params;
   const location = findLocationForBeat(beat, screen, locations);
   const locationName = location?.name || screen?.location || beat.location || beat.locationName || "Unknown Location";
-  const locationDescription = buildLocationDescription(location, locationName);
+  
+  const baseLocDesc = buildLocationDescription(location, locationName);
+  const environmentDetails = beat.environmentDetails || "";
+  const locationDescription = compact([baseLocDesc, environmentDetails], "; ");
+
   const timeOfDay = beat.timeOfDay || screen?.timeOfDay || panel.timeOfDay || "Unknown time";
   const locationLighting = compact([
     location?.lighting || location?.lightingDefault
@@ -717,7 +745,7 @@ function buildPromptForPanel(params: {
     sentence(screenSpatialLockLine),
     sentence(characterPositionLockLine),
     sentence(screenContinuityLine),
-    sentence(buildSceneLine(panel)),
+    sentence(buildSceneLine(panel, beat)),
     characterLines.map(sentence).join(" "),
     sentence(buildActionLine(beat, visibleNames, panel, characters, screen)),
     buildLayerLines(panel).map(sentence).join(" "),

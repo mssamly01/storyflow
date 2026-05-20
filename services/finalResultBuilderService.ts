@@ -12,7 +12,11 @@ import type {
   BeatCharacterMomentDetail,
   ScreenContinuityItem,
   ScreenCharacterPosition,
-  BeatType
+  BeatType,
+  RoleInShot,
+  CharacterVisualState,
+  CameraHint,
+  PositionSource
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -212,6 +216,53 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
     const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
     const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
 
+    // fallbacks for visual fields (enrichBeatVisualFallback)
+    const visualMoment = asString(item.visualMoment ?? item.visual_moment ?? item.analysis ?? item.summary ?? item.action ?? "");
+    const mainAction = asString(item.mainAction ?? item.main_action ?? item.action ?? item.actionAnalysis ?? "");
+
+    const rawVisualStates = item.characterVisualStates ?? item.character_visual_states;
+    const characterVisualStates: CharacterVisualState[] = [];
+    if (Array.isArray(rawVisualStates)) {
+      rawVisualStates.forEach((vs: any) => {
+        if (vs && typeof vs === "object") {
+          characterVisualStates.push({
+            characterName: asString(vs.characterName ?? vs.character_name),
+            roleInShot: asString(vs.roleInShot ?? vs.role_in_shot, "supporting") as RoleInShot,
+            facialExpression: asString(vs.facialExpression ?? vs.facial_expression),
+            bodyLanguage: asString(vs.bodyLanguage ?? vs.body_language ?? vs.posture ?? ""),
+            gazeTarget: asString(vs.gazeTarget ?? vs.gaze_target),
+            emotionalState: asString(vs.emotionalState ?? vs.emotional_state),
+            position: asString(vs.position),
+            positionSource: asString(vs.positionSource ?? vs.position_source, "inferred") as PositionSource
+          });
+        }
+      });
+    } else {
+      // Build fallback from presentCharacters + legacy postures/positions
+      presentCharacters.forEach((charName) => {
+        const rawPostures = item.characterPostures ?? item.character_postures ?? [];
+        const postureObj = rawPostures.find((p: any) => p && p.characterName === charName);
+        const rawPositions = item.characterPositions ?? item.character_positions ?? [];
+        const positionObj = rawPositions.find((p: any) => p && p.characterName === charName);
+
+        characterVisualStates.push({
+          characterName: charName,
+          roleInShot: (focusCharacters.includes(charName) ? "main" : "supporting") as RoleInShot,
+          facialExpression: postureObj?.actionState || "neutral",
+          bodyLanguage: postureObj?.posture || "standing",
+          gazeTarget: "focus of the scene",
+          emotionalState: item.atmosphere || "neutral",
+          position: positionObj?.position || "in the frame",
+          positionSource: positionObj?.source || ("inferred" as PositionSource)
+        });
+      });
+    }
+
+    const environmentDetails = asString(item.environmentDetails ?? item.environment_details ?? item.locationState ?? "");
+    const cameraHint = asString(item.cameraHint ?? item.camera_hint ?? "unknown") as CameraHint;
+    const compositionHint = asString(item.compositionHint ?? item.composition_hint ?? "");
+    const continuityNotes = asString(item.continuityNotes ?? item.continuity_notes ?? item.notes ?? "");
+
     return {
       ...item,
       beatId,
@@ -246,6 +297,13 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       characterPositions: Array.isArray(item.characterPositions ?? item.character_positions) ? (item.characterPositions ?? item.character_positions) : [],
       interactionTarget: Array.isArray(item.interactionTarget ?? item.interaction_target) ? (item.interactionTarget ?? item.interaction_target) : [],
       notes: item.notes ? String(item.notes) : undefined,
+      visualMoment,
+      mainAction,
+      characterVisualStates,
+      environmentDetails,
+      cameraHint,
+      compositionHint,
+      continuityNotes,
       meta: item.meta
     } as StoryBeat;
   });

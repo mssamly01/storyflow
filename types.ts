@@ -65,6 +65,29 @@ export interface InteractionTarget {
   interaction: string;
 }
 
+export type RoleInShot = "main" | "supporting" | "background";
+
+export interface CharacterVisualState {
+  characterName: string;
+  roleInShot: RoleInShot;
+  facialExpression: string;
+  bodyLanguage: string;
+  gazeTarget: string;
+  emotionalState: string;
+  position: string;
+  positionSource: PositionSource;
+}
+
+export type CameraHint =
+  | "close-up"
+  | "medium shot"
+  | "wide shot"
+  | "over-the-shoulder"
+  | "low angle"
+  | "high angle"
+  | "tracking shot"
+  | "unknown";
+
 export interface BeatAnalysis {
   meta?: EditableMeta;
   beatId?: number;
@@ -91,6 +114,13 @@ export interface BeatAnalysis {
   characterPositions?: CharacterPosition[];
   interactionTarget?: InteractionTarget[];
   notes?: string;
+  visualMoment?: string;
+  mainAction?: string;
+  characterVisualStates?: CharacterVisualState[];
+  environmentDetails?: string;
+  cameraHint?: CameraHint;
+  compositionHint?: string;
+  continuityNotes?: string;
 }
 
 

@@ -105,61 +105,110 @@ SOURCE SEGMENT COVERAGE RULE - CRITICAL:
 A beat is not a paragraph.
 A beat is one clear visual moment that can be illustrated in one image.
 
-BEAT SPLITTING RULES - CRITICAL:
-1. Split the entire body source into continuous, fine-grained, image-ready beats.
-2. One beat = one drawable image moment.
-3. If a source segment group contains multiple actions, split it into multiple beats.
-4. If dialogue + reaction + movement create different images, split them.
-5. If present scene changes to memory/flashback/social media/phone screen, split them.
-6. Split when location, timeOfDay, POV, central character, or scene state changes.
-7. Internal monologue must be represented through drawable visual cues such as a phone screen, facial expression, object detail, silent posture, walking away, or ticket/notification.
-8. It is better to output more short beats than fewer long beats.
+BEAT LENGTH AND RHYTHM:
+- Target length: 20–60 words of source text per beat.
+- Preferred range: 25–50 words.
+- Each beat should be short enough to capture one clear visual story moment for illustration.
+- Each beat should also be long enough to avoid meaningless micro-beats.
+- A beat may be shorter than 20 words only if it is:
+  1. a major reveal,
+  2. a hard scene cut,
+  3. a strong standalone visual moment,
+  4. a decisive emotional turning point,
+  5. or a short but critical line of dialogue.
+- Do not create many short beats in a row.
+- If 2–3 adjacent short text fragments belong to the same action, same emotional exchange, same location, or same character focus, merge them into one stronger beat.
 
-BEAT LENGTH RULE - CRITICAL:
-- The app will build originalText by joining sourceSegmentIds. Choose sourceSegmentIds so each resulting originalText is 40-80 Vietnamese words whenever possible.
-- 40-80 words is the production target because one image should represent one clear visual moment.
-- If the next source segment would push the beat over 80 words, split into a new beat unless the segment is inseparable and still one visual moment.
-- A beat under 40 words is allowed when it is a strong visual moment, a short dialogue hit, a reaction, or a scene transition.
-- Do not create any beat over 80 words just to preserve a paragraph; split by action, emotion, dialogue idea, reaction, object reveal, or camera focus.
-- Before adding any sourceSegmentId to an existing beat, check whether that added source text creates a new drawable action, reaction, emotional turn, object reveal, phone/comment screen, flashback, or camera focus. If yes, start a new beat.
-- Prefer several short adjacent beats over one broad beat. The app can repair long groups, but your output should already be image-ready.
+BEAT SPLITTING RULES:
+- Never cut in the middle of a sentence.
+- Split when the visual story moment changes enough to require a different image.
+- Split when a new central character takes focus.
+- Split when the main visible action changes.
+- Split when the interaction target changes in a meaningful way.
+- Split when location, time, or scene changes.
+- Split when a major emotional turn happens.
+- Split when a major reveal or plot turn happens.
+- Split when a character moves to a meaningful new position.
+- Split when long dialogue changes topic, goal, or emotional direction.
 
-SCREEN SKELETON RULE - CRITICAL:
-- Group consecutive beats into screens.
-- A screen is a continuous scene with the same location, timeOfDay, ongoing character presence.
-- Multiple beats can belong to one screen.
-- Do not analyze each beat as an isolated scene.
-- Use screenId to link beats to screens.
-- screenCharacters must include all characters physically present or directly involved in the screen.
-- A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
+BEAT MERGING RULES:
+- Merge short dialogue with its direct action tag.
+- Merge characters interacting directly in the same space if they are part of the same emotional exchange.
+- If an action/narration ends with a colon ":" introducing dialogue, keep the action and dialogue in the same beat.
+- For messaging/calls, merge one Question + Answer pair into one beat. If very short, you may merge two Question + Answer pairs into one beat.
+- If several details can be shown in one coherent shot, keep them in the same beat.
 
-ACTION FIELD RULE:
-- action must describe only one main drawable action.
-- Do not combine many actions with "and then".
-- If action needs several verbs for different moments, split the beat.
+ANTI MICRO-BEAT RULES:
+- Do NOT create micro-beats.
+- A micro-beat is a beat that only contains a tiny gesture, slight gaze shift, blink, small facial change, breath, pause, nod, or short continuation dialogue without a new visual story moment.
+- Do not split just because a character looks down, looks up, blinks, smiles slightly, clenches a fist, pauses, breathes, nods, turns slightly, or makes a minor hand movement.
+- Minor gestures should be included inside the current beat as visual detail.
+- Only split when the visual story moment changes enough to require a different image.
+- If adjacent details can be shown clearly in one coherent shot, keep them in the same beat.
+- Avoid over-fragmentation.
+- Maintain a stable cinematic rhythm.
 
-SCENE-CUTTING RULES - CRITICAL:
-Split into a new beat immediately when:
-1. A different character starts a new action, line of dialogue, or thought.
-2. Narration interrupts actions/dialogue.
-3. Location or setting changes.
-4. A character moves from one place to another; separate the movement and the action at the destination.
-5. The target of interaction changes.
-6. Emotion, facial expression, or body action changes inside a long dialogue.
-7. A dialogue is longer than 3 sentences or contains multiple important ideas.
-8. The text switches between present scene and memory/flashback/social media/phone screen.
-9. timeOfDay changes.
-10. POV or central character changes.
+MAJOR VS MINOR CHANGE:
+Split for MAJOR changes:
+- A new central character takes focus.
+- The main visible action changes.
+- The interaction target changes in a meaningful way.
+- Location, time, or scene changes.
+- A major emotional turn happens.
+- A major reveal or plot turn happens.
+- A character moves to a meaningful new position.
+- A long dialogue changes topic, goal, or emotional direction.
 
-MERGE RULES - DO NOT OVER-SPLIT:
-Merge adjacent source segments into one beat when:
-1. Characters directly interact in the same space and there is no narration interruption.
-2. A short line of dialogue has one simple accompanying action.
-3. A sentence ending with a colon introduces the dialogue immediately after it.
-4. One short message/call question-answer pair belongs to the same visual moment.
-5. A filler sentence has no new visual value and supports the same emotion/action.
+Do NOT split for MINOR changes:
+- Small facial expression change.
+- Slight gaze shift.
+- Small hand movement.
+- Blink, breath, pause, nod, slight smile, slight frown.
+- Short continuation dialogue.
+- The same character continuing the same action.
+- Several visual details that can fit in one coherent shot.
 
-CONTINUITY RULES - CRITICAL:
+MERGE BIAS:
+- When uncertain, merge adjacent details instead of splitting.
+- If the same image can show the action, expression, gaze, interaction, and environment clearly, keep them in one beat.
+- Prefer one strong detailed beat over several weak micro-beats.
+- A beat may contain multiple small gestures if they support the same main visual moment.
+- Short reaction lines should stay with the main interaction unless they clearly form a separate visual story moment.
+- Dialogue reactions may be merged when they happen in the same space and support the same emotional exchange.
+
+SENTENCE-LEVEL ILLUSTRATION PRIORITY:
+- The goal is to create detailed illustrations for the novel, close to the sentence-level rhythm.
+- If a sentence contains a strong standalone visual image, it may become its own beat.
+- If adjacent sentences describe the same continuous visual moment, keep them in the same beat.
+- Do not split mechanically by sentence count.
+- Prioritize image clarity over rigid sentence counting.
+- A beat should capture the smallest meaningful visual story moment, not the smallest possible text fragment.
+
+VISUAL PRECISION RULES:
+- Every beat must describe the exact visual moment that should become an image.
+- Do not only summarize the plot.
+- Convert the beat into visible action, posture, facial expression, gaze, position, environment, and composition.
+- For each present character, describe visible state in characterVisualStates:
+  - role in shot (main | supporting | background)
+  - facial expression
+  - body language
+  - gaze target
+  - emotional state
+  - position in the scene
+  - positionSource (explicit | inherited | inferred)
+- If a character is present but not active, still describe where they are and what they are doing visually.
+- Describe important props and environmental details that are visible in the shot.
+- Keep all visual details grounded in the source text.
+- Do not invent major props, locations, outfits, injuries, or actions not supported by the text.
+- Minor cinematic interpretation is allowed only to make the image coherent, but it must not change the story.
+
+ANALYSIS RULES:
+- Always use specific character names.
+- Do not use vague references like "he", "she", "the person", "continues doing that" when the character name is known.
+- Clearly state who acts toward whom.
+- For crowd/background characters, describe what they are doing or watching.
+
+CONTINUITY RULES:
 - Track which characters are present in the scene.
 - If A is present and B enters, the next beat must include both A and B in presentCharacters.
 - A character remains present until the text says they leave, disappear, or the scene changes.
@@ -171,8 +220,30 @@ TIME RULES:
 - timeOfDay should remain consistent within the same scene/screen.
 - Only change timeOfDay when the source text clearly indicates a time change.
 
+SCREEN SKELETON RULE - CRITICAL:
+- Group consecutive beats into screens.
+- A screen is a continuous scene with the same location, timeOfDay, ongoing character presence.
+- Multiple beats can belong to one screen.
+- Do not analyze each beat as an isolated scene.
+- Use screenId to link beats to screens.
+- screenCharacters must include all characters physically present or directly involved in the screen.
+- A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
+
 Selected art style context:
 ${artStyleDescription || "No specific style selected."}
+
+SELF-CHECK BEFORE OUTPUT:
+Before returning JSON, silently review your beats:
+1. Check every beat under 20 words.
+2. Keep it only if it is a major reveal, hard scene cut, strong standalone visual moment, decisive emotional turning point, or critical dialogue.
+3. Otherwise merge it with the previous or next beat.
+4. Check if there are 3 or more consecutive short beats in the same scene.
+5. If yes, merge them into fewer stronger visual beats.
+6. Check if any beat is only a tiny gesture, gaze shift, blink, pause, breath, nod, or short continuation line.
+7. If yes, merge it into the nearest beat with the same action, same emotional exchange, or same character focus.
+8. Ensure every beat is a complete visual story moment, not a fragment.
+9. Ensure all sourceSegmentIds are covered in order.
+10. Do not output this self-check. Only output the final JSON.
 
 Return ONLY valid JSON with this schema:
 
@@ -196,27 +267,27 @@ Return ONLY valid JSON with this schema:
       "beatId": 1,
       "screenId": "screen_001",
       "sourceSegmentIds": ["src_0001", "src_0002"],
-      "summary": "short summary of the beat",
-      "analysis": "specific action/context analysis using character names",
+      "summary": "short plot summary",
+      "visualMoment": "the exact visual moment that should become an image",
+      "mainAction": "specific visible action",
       "beatType": "establishing | action | reaction | dialogue | reveal | transition",
-      "atmosphere": "main emotional atmosphere",
+      "analysis": "specific action/context analysis using character names",
+      "atmosphere": "main mood",
       "timeOfDay": "Early Morning | Morning | Mid-day | Afternoon | Golden Hour | Evening | Late Night | Unknown",
       "mentionedCharacters": ["Character A"],
       "presentCharacters": ["Character A", "Character B"],
       "enteredCharacters": [],
       "exitedCharacters": [],
-      "characterPostures": [
+      "characterVisualStates": [
         {
           "characterName": "Character A",
-          "posture": "standing | sitting | lying | kneeling | walking | running | unknown",
-          "actionState": "specific action state"
-        }
-      ],
-      "characterPositions": [
-        {
-          "characterName": "Character A",
+          "roleInShot": "main | supporting | background",
+          "facialExpression": "specific visible expression",
+          "bodyLanguage": "specific posture/body action",
+          "gazeTarget": "who or what the character is looking at",
+          "emotionalState": "inner emotion visible through expression/body",
           "position": "specific position in the scene",
-          "source": "explicit | inherited | inferred"
+          "positionSource": "explicit | inherited | inferred"
         }
       ],
       "interactionTarget": [
@@ -226,7 +297,11 @@ Return ONLY valid JSON with this schema:
           "interaction": "what the actor does/says toward the target"
         }
       ],
-      "notes": "optional continuity or uncertainty notes",
+      "environmentDetails": "specific visible environment details grounded in the text",
+      "props": ["important visible prop 1", "important visible prop 2"],
+      "cameraHint": "close-up | medium shot | wide shot | over-the-shoulder | low angle | high angle | tracking shot | unknown",
+      "compositionHint": "how the shot should be arranged",
+      "continuityNotes": "anything inherited or uncertain",
       "focusCharacters": ["Character A"],
       "visibleCharacters": ["Character A", "Character B"],
       "offscreenPresentCharacters": ["Character C"],
@@ -244,8 +319,8 @@ FINAL CHECK BEFORE OUTPUT:
 - Did you avoid outputting originalText?
 - Did you avoid rewriting source text?
 - Did beat order follow source segment order?
-- Did each beat target 40-80 words after sourceSegmentIds are joined?
-- Did you split every likely over-80-word beat unless it is truly inseparable?
+- Did each beat target 20-60 words after sourceSegmentIds are joined?
+- Did you merge minor gestures to avoid micro-beats?
 - Did you avoid broad sourceSegmentId ranges that combine multiple visual moments?
 - Did you avoid placeholder fields like "..."?
 
