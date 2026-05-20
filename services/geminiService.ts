@@ -232,6 +232,7 @@ SCREEN SKELETON RULE - CRITICAL:
 - Do not analyze each beat as an isolated scene.
 - Use screenId to link beats to screens.
 - screenCharacters must include all characters physically present or directly involved in the screen.
+- screenCharacters must NOT include mentionedCharacters who are only named, remembered, discussed, or referenced.
 - A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
 
 Selected art style context:
@@ -465,10 +466,23 @@ SCREEN SKELETON RULES:
 - Keep screen metadata simple. Detailed continuity is handled later.
 
 CHARACTER PRESENCE RULES:
-- visibleCharacters = characters physically visible in the beat.
-- offscreenPresentCharacters = characters present in the scene but not visible in the current shot.
+- visibleCharacters = characters physically present and visually visible in the current beat.
+- offscreenPresentCharacters = characters physically present in the same scene but outside the current shot.
+- mentionedCharacters = characters only mentioned, remembered, discussed, compared, imagined, referenced in dialogue/narration, or appearing only as a name.
 - characters = union of visibleCharacters and offscreenPresentCharacters.
+- characters must NOT include mentionedCharacters.
 - A character remains present until the text says they leave, disappear, or the scene changes.
+- The image prompt will draw ONLY visibleCharacters, so never put mentioned-only people in visibleCharacters.
+
+DRAWABLE CHARACTER RULE - CRITICAL:
+- A character is drawable only if they are in visibleCharacters.
+- mentionedCharacters are tracking-only and never drawable.
+- offscreenPresentCharacters are continuity-only and not drawable unless they become visibleCharacters in this beat.
+- If a character is merely mentioned in narration/dialogue, keep them in mentionedCharacters.
+
+FLASHBACK / IMAGINED IMAGE EXCEPTION:
+- If the beat is explicitly a flashback, memory image, imagined insert, photo, screen display, or visualized story moment, the remembered/imagined character may be placed in visibleCharacters only when visualFocus clearly says the image itself shows that person.
+- If the character is merely remembered or named without becoming the visible image, keep them in mentionedCharacters.
 
 STRICT SELF-CHECK BEFORE OUTPUT:
 Before returning JSON, silently check every beat:
@@ -513,6 +527,7 @@ Return ONLY valid JSON with this schema:
       "focusCharacters": ["Character A"],
       "visibleCharacters": ["Character A"],
       "offscreenPresentCharacters": [],
+      "mentionedCharacters": [],
       "characters": ["Character A"],
       "location": "Concrete location",
       "locationId": "loc_001",
@@ -583,6 +598,7 @@ SCREEN SKELETON RULE - CRITICAL:
 - Do not analyze each beat as an isolated scene.
 - Use screenId to link beats to screens.
 - screenCharacters must include all characters physically present or directly involved in the screen.
+- screenCharacters must NOT include mentionedCharacters who are only named, remembered, discussed, or referenced.
 - Do not remove a character from screenCharacters unless the source says they leave, the location changes, time jumps, or a new screen starts.
 - A character can be in screenCharacters but not visibleCharacters. That means the character is still present in the screen, just not in this shot.
 - Do not drop supporting characters from the screen just because the current beat focuses on someone else.
@@ -777,10 +793,12 @@ FIELD RULES:
 - screens: screen-level continuity containers for shared location, time, layout, present characters.
 - screenId: stable link from each beat to its screen.
 - summary: short explanation of the beat, not copied from originalText.
-- characters: legacy compatibility field; include visibleCharacters when possible.
+- characters: legacy compatibility field; use visibleCharacters + offscreenPresentCharacters only.
 - focusCharacters: characters receiving narrative/camera focus in this beat.
-- visibleCharacters: characters visible in this beat's frame.
+- visibleCharacters: characters physically visible in this beat's frame. Only these are drawable.
 - offscreenPresentCharacters: characters still present in the screen but not visible in this beat.
+- mentionedCharacters: characters only mentioned, remembered, discussed, compared, imagined, referenced by name/dialogue/narration, and not physically visible.
+- characters must NOT include mentionedCharacters.
 - location: most specific known place, or "Unknown".
 - locationId: stable location id if inferable from consistent location naming, otherwise omit or use "".
 - action: main action.
@@ -1030,6 +1048,7 @@ function compactStoryboardBeat(beat: StoryBeat) {
     focusCharacters: beat.focusCharacters || [],
     visibleCharacters: beat.visibleCharacters || [],
     offscreenPresentCharacters: beat.offscreenPresentCharacters || [],
+    mentionedCharacters: beat.mentionedCharacters || [],
     characters: beat.characters || beat.charactersInvolved || [],
     location: beat.location || beat.locationName,
     locationId: beat.locationId,
@@ -1151,13 +1170,17 @@ function collectContextKeys(
   const locationKeys = new Set<string>();
 
   for (const beat of beats) {
+    const mentioned = new Set((beat.mentionedCharacters || []).map((name) => normalize(String(name))));
     [
       ...(beat.characters || []),
       ...(beat.charactersInvolved || []),
       ...(beat.focusCharacters || []),
       ...(beat.visibleCharacters || []),
       ...(beat.offscreenPresentCharacters || [])
-    ].forEach((name) => characterKeys.add(normalize(String(name))));
+    ].forEach((name) => {
+      const key = normalize(String(name));
+      if (key && !mentioned.has(key)) characterKeys.add(key);
+    });
     if (beat.locationId) locationIds.add(beat.locationId);
     if (beat.location || beat.locationName) locationKeys.add(normalize(beat.location || beat.locationName));
   }
@@ -1217,6 +1240,7 @@ function compactScreenContinuityBeat(beat: StoryBeat) {
     focusCharacters: beat.focusCharacters || [],
     visibleCharacters: beat.visibleCharacters || [],
     offscreenPresentCharacters: beat.offscreenPresentCharacters || [],
+    mentionedCharacters: beat.mentionedCharacters || [],
     characters: beat.characters || beat.charactersInvolved || [],
     location: beat.location || beat.locationName,
     locationId: beat.locationId,
@@ -1412,15 +1436,31 @@ function buildStoryboardPromptContext(
   const beatMomentItems = normalizeBeatMomentDetails(parseJsonFallback<unknown>(beatMomentDetails, { beatDetails: [] }))
     .filter((item) => selectedBeatIds.has(Number(item.beatId)));
   const keys = collectContextKeys(beats, screens, screenContinuityItems);
+  const visibleByBeatId = new Map(
+    beats.map((beat) => [
+      Number(beat.beatId),
+      new Set((beat.visibleCharacters || []).map((name) => normalize(String(name))).filter(Boolean))
+    ])
+  );
   for (const item of beatMomentItems) {
+    const visibleSet = visibleByBeatId.get(Number(item.beatId)) || new Set<string>();
     (item.characterMomentDetails || []).forEach((detail: any) => {
-      keys.characterKeys.add(normalize(detail.characterName));
-      if (detail.characterId) keys.characterKeys.add(normalize(detail.characterId));
+      const characterName = normalize(detail.characterName);
+      const characterId = normalize(detail.characterId);
+      if (visibleSet.has(characterName) || visibleSet.has(characterId)) {
+        if (characterName) keys.characterKeys.add(characterName);
+        if (characterId) keys.characterKeys.add(characterId);
+      }
     });
-    (item.characterVisualStates || []).forEach((detail: any) => keys.characterKeys.add(normalize(detail.characterName)));
+    (item.characterVisualStates || []).forEach((detail: any) => {
+      const characterName = normalize(detail.characterName);
+      if (visibleSet.has(characterName)) keys.characterKeys.add(characterName);
+    });
     (item.interactionTarget || []).forEach((target: any) => {
-      keys.characterKeys.add(normalize(target.actor));
-      keys.characterKeys.add(normalize(target.target));
+      const actor = normalize(target.actor);
+      const targetName = normalize(target.target);
+      if (visibleSet.has(actor)) keys.characterKeys.add(actor);
+      if (visibleSet.has(targetName)) keys.characterKeys.add(targetName);
     });
   }
   const selectedLibrary = selectLibraryItems(library, selectedBeatIds, keys, {
@@ -1634,6 +1674,14 @@ VISUAL DIRECTION RULES:
 - cameraNotes should mention continuity concerns only when helpful, especially when a present character is cropped/off-frame but remains at the locked anchor.
 - Do not invent or alter character outfits. Outfit identity is owned by Character Library and Screen Continuity.
 
+STORYBOARD CHARACTER BLOCKING RULE - CRITICAL:
+- Only create characterBlocking for characters listed in visibleCharacters of the target beat.
+- Do NOT create characterBlocking for mentionedCharacters.
+- Do NOT frame, pose, place, or draw characters who are only mentioned in narration/dialogue.
+- offscreenPresentCharacters can inform continuity, but must not appear in the image unless they are also in visibleCharacters.
+- If Beat Moment Details contains characterMomentDetails for a non-visible character, ignore it.
+- If a character is not in visibleCharacters, do not include them in foreground, midground, background, or composition.
+
 SCREEN CONTINUITY FOR STORYBOARD:
 - Each beat belongs to a screen.
 - Use screenCharacters as the continuity pool.
@@ -1709,7 +1757,8 @@ SOURCE FIELD MAP:
 - Screen Spatial Lock: copy screenSpatialLayout; if missing, fallback to location layout/keyObjects/screenProps.
 - Character Position Lock: use screenCharacterPositions first. Storyboard blocking may crop/frame the anchor but cannot create a new anchor.
 - Screen Continuity: mention only approved screen characters as visible or off-frame. Do not draw off-frame characters.
-- Visible character identity: use Character Library appearancePrompt; fallback to gender, age, height, face, hair, eyes, body/style notes.
+- Drawable characters: use only visibleCharacters. Do not draw mentionedCharacters or offscreenPresentCharacters.
+- Visible character identity: use Character Library appearancePrompt only for visibleCharacters; fallback to gender, age, height, face, hair, eyes, body/style notes.
 - Outfit: use current screenCharacterStates.outfit first; fallback to Character Library outfitPrompt/outfit. Do not prepend outfit colors before the outfit wording.
 - Accessories: include visible signature accessories, screen-level accessories, and beat-level visible accessories with exact body position.
 - Handheld/variable items: use Beat Moment Details first, then screen-level handheld items only if still visible in this beat.
@@ -1738,6 +1787,7 @@ CONSISTENCY GUARDS:
 - Never move a character away from screenCharacterPositions unless Beat Moment Details explicitly says the character moved.
 - If a close-up crops a character out, say the character remains at the approved anchor but outside the frame.
 - Do not include full profile details for off-frame characters.
+- Do not include mentionedCharacters as visible people, background people, silhouettes, memories, portraits, or extra subjects.
 - Do not include internal IDs, raw hex colors, beat ranges, sourceUsage, panelId, panelNumber, or debug labels.
 
 VISUAL STYLE:
@@ -2098,6 +2148,13 @@ DIRECTION B DETAIL RULES:
 - Do not redefine outfit or stable location identity in this step.
 - Do not add major props, injuries, outfits, locations, characters, or actions not supported by approved input.
 - Return ONLY a valid JSON object. No markdown. No commentary.
+
+DRAWABLE CHARACTER DETAIL RULE - CRITICAL:
+- Only create characterMomentDetails for characters listed in visibleCharacters of the corresponding beat.
+- Do NOT create characterMomentDetails for mentionedCharacters.
+- Do NOT create expression, poseRefinement, handheldItems, visibleAccessories, or momentNotes for a character who is only mentioned.
+- offscreenPresentCharacters may appear only in continuityNotes if needed, not in characterMomentDetails unless they are visibleCharacters in this beat.
+- If a mentioned character affects the story, mention them only as a reference in interaction or continuityNotes, not as a drawable character.
 
 Required JSON Schema:
 {

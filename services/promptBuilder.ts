@@ -83,8 +83,12 @@ export function buildFinalVisualPrompt(params: {
   const source = bundle.sourceFields;
   const effectiveLocation = location || bundle.location || undefined;
   const visibleNames = source.visibleCharacters;
+  const visibleSet = new Set(visibleNames.map((name) => name.trim().toLowerCase()).filter(Boolean));
   const visibleCharacterPrompts = (bundle.characters.length
-    ? bundle.characters
+    ? bundle.characters.filter((character) =>
+      visibleSet.has(character.name.trim().toLowerCase()) ||
+      character.aliases?.some((alias) => visibleSet.has(alias.trim().toLowerCase()))
+    )
     : visibleNames
       .map((name) => characters.find((character) => character.name === name || character.aliases?.includes(name)))
       .filter((character): character is CharacterProfile => Boolean(character))

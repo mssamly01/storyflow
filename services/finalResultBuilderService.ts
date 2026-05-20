@@ -21,7 +21,11 @@ import type {
   InteractionTarget
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
-import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import {
+  filterStoryboardBlockingToVisibleCharacters,
+  normalizeStoryboardPanels,
+  sanitizeStoryboardPanels
+} from "./storyboardDataService";
 import { cleanVisualPrompt } from "./visualPromptCleanupService";
 
 type UnknownRecord = Record<string, any>;
@@ -75,6 +79,38 @@ const asString = (value: unknown, fallback = "") => typeof value === "string" ? 
 const asStringArray = (value: unknown): string[] => Array.isArray(value)
   ? value.map((item) => String(item)).filter(Boolean)
   : [];
+
+function uniqueStringArray(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const clean = String(value || "").trim();
+    const key = normalizeText(clean);
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
+}
+
+function withoutNames(values: string[], excluded: string[]): string[] {
+  const excludedSet = new Set(excluded.map(normalizeText).filter(Boolean));
+  if (!excludedSet.size) return uniqueStringArray(values);
+  return uniqueStringArray(values).filter((value) => !excludedSet.has(normalizeText(value)));
+}
+
+function getVisibleCharacterKeys(beat: StoryBeat): Set<string> {
+  return new Set((beat.visibleCharacters || []).map(normalizeText).filter(Boolean));
+}
+
+function isCharacterVisibleInBeat(character: { characterName?: string; characterId?: string }, beat: StoryBeat): boolean {
+  const visibleKeys = getVisibleCharacterKeys(beat);
+  if (!visibleKeys.size) return false;
+  return Boolean(
+    (character.characterName && visibleKeys.has(normalizeText(character.characterName))) ||
+    (character.characterId && visibleKeys.has(normalizeText(character.characterId)))
+  );
+}
 
 const asNumberArray = (value: unknown): number[] => {
   if (!Array.isArray(value)) return [];
@@ -255,13 +291,20 @@ export function normalizeBeatSkeletons(raw: unknown): StoryBeat[] {
   const items = getItems(raw, ["beats"]);
   return items.map((item, index) => {
     const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
-    const focusCharacters = asStringArray(item.focusCharacters ?? item.focus_characters);
-    const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
-    const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
-    const characters = asStringArray(item.characters ?? item.presentCharacters ?? item.present_characters ?? item.charactersInvolved ?? item.characters_involved);
+    const mentionedCharacters = uniqueStringArray(asStringArray(item.mentionedCharacters ?? item.mentioned_characters));
+    const focusCharacters = withoutNames(asStringArray(item.focusCharacters ?? item.focus_characters), mentionedCharacters);
+    const visibleCharacters = withoutNames(asStringArray(item.visibleCharacters ?? item.visible_characters), mentionedCharacters);
+    const offscreenPresentCharacters = withoutNames(
+      asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters),
+      mentionedCharacters
+    );
+    const characters = withoutNames(
+      asStringArray(item.characters ?? item.presentCharacters ?? item.present_characters ?? item.charactersInvolved ?? item.characters_involved),
+      mentionedCharacters
+    );
     const resolvedCharacters = characters.length
       ? characters
-      : Array.from(new Set([...visibleCharacters, ...offscreenPresentCharacters]));
+      : uniqueStringArray([...visibleCharacters, ...offscreenPresentCharacters]);
 
     return {
       beatId,
@@ -277,6 +320,7 @@ export function normalizeBeatSkeletons(raw: unknown): StoryBeat[] {
       focusCharacters,
       visibleCharacters,
       offscreenPresentCharacters,
+      mentionedCharacters,
       characters: resolvedCharacters,
       presentCharacters: resolvedCharacters,
       charactersInvolved: resolvedCharacters,
@@ -294,11 +338,26 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
   const items = getItems(raw, ["beats"]);
   return items.map((item, index) => {
     const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
-    const presentCharacters = asStringArray(item.presentCharacters ?? item.present_characters ?? item.characters ?? item.charactersInvolved ?? item.characters_involved);
+    const mentionedCharacters = uniqueStringArray(asStringArray(item.mentionedCharacters ?? item.mentioned_characters));
+    const presentCharacters = withoutNames(
+      asStringArray(item.presentCharacters ?? item.present_characters ?? item.characters ?? item.charactersInvolved ?? item.characters_involved),
+      mentionedCharacters
+    );
     const legacyCharacters = presentCharacters;
-    const focusCharacters = asStringArray(item.focusCharacters ?? item.focus_characters);
-    const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
-    const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
+    const focusCharacters = withoutNames(asStringArray(item.focusCharacters ?? item.focus_characters), mentionedCharacters);
+    const visibleCharacters = withoutNames(asStringArray(item.visibleCharacters ?? item.visible_characters), mentionedCharacters);
+    const offscreenPresentCharacters = withoutNames(
+      asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters),
+      mentionedCharacters
+    );
+    const drawableCharacters = visibleCharacters.length
+      ? visibleCharacters
+      : (focusCharacters.length ? focusCharacters : legacyCharacters);
+    const drawableKeys = new Set(drawableCharacters.map(normalizeText).filter(Boolean));
+    const characterMomentDetails = normalizeCharacterMomentDetails(item).filter((detail) =>
+      drawableKeys.has(normalizeText(detail.characterName)) ||
+      (detail.characterId ? drawableKeys.has(normalizeText(detail.characterId)) : false)
+    );
 
     const visualMoment = asString(item.visualMoment ?? item.visual_moment);
     const mainAction = asString(item.mainAction ?? item.main_action);
@@ -322,7 +381,7 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       summary: asString(item.summary),
       characters: legacyCharacters,
       focusCharacters: focusCharacters.length ? focusCharacters : legacyCharacters,
-      visibleCharacters: visibleCharacters.length ? visibleCharacters : (focusCharacters.length ? focusCharacters : legacyCharacters),
+      visibleCharacters: drawableCharacters,
       offscreenPresentCharacters,
       location: asString(item.location ?? item.locationName ?? item.location_name),
       locationId: asString(item.locationId ?? item.location_id),
@@ -334,10 +393,10 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       visualFocus: asString(item.visualFocus ?? item.visual_focus),
       atmosphere: asString(item.atmosphere),
       timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
-      characterMomentDetails: normalizeCharacterMomentDetails(item),
+      characterMomentDetails,
       // new fields
       beatType: asString(item.beatType ?? item.beat_type, "action") as BeatType,
-      mentionedCharacters: asStringArray(item.mentionedCharacters ?? item.mentioned_characters),
+      mentionedCharacters,
       presentCharacters,
       enteredCharacters: asStringArray(item.enteredCharacters ?? item.entered_characters),
       exitedCharacters: asStringArray(item.exitedCharacters ?? item.exited_characters),
@@ -438,6 +497,25 @@ export function normalizeBeatMomentDetails(raw: unknown): BeatMomentDetail[] {
   }).filter((item) => item.beatId > 0);
 }
 
+export function filterBeatMomentDetailsToVisibleCharacters(
+  beatDetails: BeatMomentDetail[],
+  beats: StoryBeat[]
+): BeatMomentDetail[] {
+  const beatById = new Map(beats.map((beat) => [Number(beat.beatId), beat]));
+
+  return beatDetails.map((detail) => {
+    const beat = beatById.get(Number(detail.beatId));
+    if (!beat) return detail;
+
+    return {
+      ...detail,
+      characterMomentDetails: (detail.characterMomentDetails || []).filter((characterDetail) =>
+        isCharacterVisibleInBeat(characterDetail, beat)
+      )
+    };
+  });
+}
+
 export function mergeScreenContinuityIntoScreens(
   screens: StoryScreen[],
   screenContinuityRaw: unknown
@@ -479,7 +557,10 @@ export function mergeBeatMomentDetailsIntoBeats(
   beatMomentDetailsRaw: unknown
 ): StoryBeat[] {
   if (!beatMomentDetailsRaw) return beats;
-  const details = normalizeBeatMomentDetails(beatMomentDetailsRaw);
+  const details = filterBeatMomentDetailsToVisibleCharacters(
+    normalizeBeatMomentDetails(beatMomentDetailsRaw),
+    beats
+  );
   if (!details.length) return beats;
 
   return beats.map((beat) => {
@@ -660,7 +741,7 @@ function getCharacterIds(
 
   return candidates
     .filter((character) => {
-      if (!visibleSet.size && matchedCharacters.length) return true;
+      if (!visibleSet.size) return false;
       if (visibleSet.has(normalizeText(character.name))) return true;
       return (character.aliases || []).some((alias) => visibleSet.has(normalizeText(alias)));
     })
@@ -692,6 +773,14 @@ export function buildFinalResultPanel(params: {
   const subject = source.visibleCharacters.length
     ? source.visibleCharacters.join(", ")
     : source.visualFocus || source.summary || "N/A";
+  const visibleCharacterNames = uniqueStringArray(source.visibleCharacters || []);
+  const safeCharacterBlocking = (panel.characterBlocking || []).filter((blocking) => {
+    const visibleSet = new Set(visibleCharacterNames.map(normalizeText));
+    return Boolean(
+      (blocking.characterName && visibleSet.has(normalizeText(blocking.characterName))) ||
+      (blocking.characterId && visibleSet.has(normalizeText(blocking.characterId)))
+    );
+  });
   let screen = screens.find((item) => item.screenId && item.screenId === bundle.beat?.screenId);
   if (!screen && beatId > 0) {
     screen = screens.find((item) => {
@@ -708,10 +797,7 @@ export function buildFinalResultPanel(params: {
     });
   }
   const characterRefNames = Array.from(new Set([
-    ...(screen?.screenCharacters || []),
-    ...source.focusCharacters,
-    ...source.visibleCharacters,
-    ...source.offscreenPresentCharacters
+    ...visibleCharacterNames
   ].filter(Boolean)));
 
   return {
@@ -742,6 +828,7 @@ export function buildFinalResultPanel(params: {
       focusCharacters: source.focusCharacters,
       visibleCharacters: source.visibleCharacters,
       offscreenPresentCharacters: source.offscreenPresentCharacters,
+      mentionedCharacters: source.mentionedCharacters,
       props: source.props,
       action: source.action,
       visualMoment: source.visualMoment,
@@ -765,7 +852,7 @@ export function buildFinalResultPanel(params: {
       foreground: panel.foreground || "",
       midground: panel.midground || "",
       background: panel.background || "",
-      characterBlocking: panel.characterBlocking || [],
+      characterBlocking: safeCharacterBlocking,
       lightingDirection: panel.lightingDirection || panel.lighting || "",
       depthAndPerspective: panel.depthAndPerspective || "",
       visualEmphasis: panel.visualEmphasis || "",
@@ -781,6 +868,9 @@ export function buildFinalResultPanel(params: {
     },
     refs: {
       characterIds: getCharacterIds(characterRefNames, bundle.characters, characters),
+      drawableCharacterNames: visibleCharacterNames,
+      offscreenPresentCharacters: source.offscreenPresentCharacters,
+      mentionedCharacters: source.mentionedCharacters,
       locationId: source.locationId || bundle.location?.locationId,
       screenId: bundle.beat?.screenId
     },
@@ -805,7 +895,10 @@ export function buildFinalResult(params: {
   characters: CharacterProfile[];
   locations: LocationProfile[];
 }): FinalResult {
-  const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(params.panels));
+  const panels = filterStoryboardBlockingToVisibleCharacters(
+    sanitizeStoryboardPanels(normalizeStoryboardPanels(params.panels)),
+    params.beats
+  );
   const finalPanels = panels.map((panel) => buildFinalResultPanel({
     panel,
     screens: params.screens,

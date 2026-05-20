@@ -21,7 +21,11 @@ import {
   normalizeScreenContinuity,
   parseJsonSafe
 } from "./finalResultBuilderService";
-import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import {
+  filterStoryboardBlockingToVisibleCharacters,
+  normalizeStoryboardPanels,
+  sanitizeStoryboardPanels
+} from "./storyboardDataService";
 import { normalizePromptSpacing } from "./visualPromptCleanupService";
 
 const DEFAULT_STYLE =
@@ -74,6 +78,34 @@ function unique(items: string[]): string[] {
 function formatList(items: string[] | undefined, fallback = "none"): string {
   const clean = unique((items || []).map(String));
   return clean.length ? clean.join(", ") : fallback;
+}
+
+function withoutMentioned(values: string[], beat: StoryBeat): string[] {
+  const mentionedSet = new Set((beat.mentionedCharacters || []).map(normalize).filter(Boolean));
+  return unique(values).filter((name) => !mentionedSet.has(normalize(name)));
+}
+
+function getDrawableCharacterNames(beat: StoryBeat): string[] {
+  return withoutMentioned(beat.visibleCharacters || [], beat);
+}
+
+function warnIfMentionedCharactersLeakIntoPrompt(beat: StoryBeat, visualPrompt: string) {
+  for (const name of beat.mentionedCharacters || []) {
+    if (name && visualPrompt.includes(name)) {
+      console.warn(
+        `[Storyflow] Mentioned-only character leaked into visualPrompt: ${name} in beat ${beat.beatId}`
+      );
+    }
+  }
+}
+
+function containsMentionedOnlyName(value: string | undefined, beat: StoryBeat): boolean {
+  const haystack = value || "";
+  return (beat.mentionedCharacters || []).some((name) => Boolean(name && haystack.includes(name)));
+}
+
+function omitIfMentionsMentionedOnly(value: string | undefined, beat: StoryBeat): string {
+  return containsMentionedOnlyName(value, beat) ? "" : (value || "");
 }
 
 function cleanCopyReadyText(value?: string): string {
@@ -293,15 +325,16 @@ function resolveVisibleCharacterNames(
   panel: StoryboardPanel,
   profiles: CharacterProfile[]
 ): string[] {
-  const approvedVisibleNames = unique(beat.visibleCharacters || []);
+  const approvedVisibleNames = getDrawableCharacterNames(beat);
   if (approvedVisibleNames.length) return approvedVisibleNames;
 
+  const mentionedSet = new Set((beat.mentionedCharacters || []).map(normalize).filter(Boolean));
   const blockingNames = (panel.characterBlocking || [])
     .map((blocking) => blocking.characterName)
-    .filter(Boolean);
+    .filter((name): name is string => Boolean(name && !mentionedSet.has(normalize(name))));
 
   if (blockingNames.length) {
-    const additionalBeatNames = (beat.visibleCharacters || [])
+    const additionalBeatNames = getDrawableCharacterNames(beat)
       .filter((name) => {
         const profile = findCharacterProfile(name, undefined, profiles);
         return characterMentionedInPanelText(name, profile, panel);
@@ -309,11 +342,7 @@ function resolveVisibleCharacterNames(
     return unique([...blockingNames, ...additionalBeatNames]);
   }
 
-  return unique([
-    ...(beat.visibleCharacters || []),
-    ...(beat.focusCharacters || []),
-    ...(beat.characters || [])
-  ]);
+  return [];
 }
 
 function buildLocationDescription(location: LocationProfile | undefined, fallbackName: string): string {
@@ -418,13 +447,13 @@ function buildCharacterPositionLock(
   visibleNames: string[],
   profiles: CharacterProfile[]
 ): string {
-  const characterPool = unique([
+  const characterPool = withoutMentioned([
     ...(screen?.screenCharacters || []),
     ...(beat.characters || []),
     ...(beat.focusCharacters || []),
     ...(beat.visibleCharacters || []),
     ...(beat.offscreenPresentCharacters || [])
-  ]);
+  ], beat);
   const visibleSet = new Set(visibleNames.map(normalize));
   const entries = characterPool.map((name) => {
     const profile = findCharacterProfile(name, undefined, profiles);
@@ -618,14 +647,14 @@ function buildScreenContinuityLine(
   locationName: string
 ): string {
   const screenCharacters = screen?.screenCharacters?.length
-    ? unique(screen.screenCharacters)
-    : unique([
+    ? withoutMentioned(screen.screenCharacters, beat)
+    : withoutMentioned([
       ...(beat.visibleCharacters || []),
       ...(beat.characters || [])
-    ]);
+    ], beat);
   const visibleSet = new Set(visibleNames.map(normalize));
   const offscreenNames = screenCharacters.filter((name) => !visibleSet.has(normalize(name)));
-  const focus = beat.focusCharacters?.length ? beat.focusCharacters : visibleNames;
+  const focus = beat.focusCharacters?.length ? withoutMentioned(beat.focusCharacters, beat) : visibleNames;
 
   return `Screen Continuity: ${formatList(screenCharacters, "approved characters")} remain present in or around ${locationName}; this shot visually frames ${formatList(visibleNames, "the active subject")}; focus stays on ${formatList(focus, "the active subject")}; ${offscreenNames.length ? `${offscreenNames.join(", ")} stay nearby but outside the frame` : "no extra characters are added"}.`;
 }
@@ -636,7 +665,7 @@ function buildSceneLine(panel: StoryboardPanel, beat: StoryBeat): string {
   const legacyComposition = beat.compositionHint || "";
   const shotType = panel.shotType || legacyShotType;
   const cameraAngle = panel.cameraAngle;
-  const composition = panel.composition || legacyComposition;
+  const composition = omitIfMentionsMentionedOnly(panel.composition || legacyComposition, beat);
 
   const scene = compact([
     shotType,
@@ -676,14 +705,19 @@ function buildActionLine(
     return action;
   }).filter(Boolean);
 
-  const interactionDetails = (beat.interactionTarget || []).map((it) => 
-    `${it.actor} acts/says toward ${it.target}: ${it.interaction}`
-  );
+  const drawableSet = new Set(visibleNames.map(normalize));
+  const interactionDetails = (beat.interactionTarget || [])
+    .filter((it) => {
+      const actor = normalize(it.actor);
+      const target = normalize(it.target);
+      return (!actor || drawableSet.has(actor)) && (!target || drawableSet.has(target));
+    })
+    .map((it) => `${it.actor} acts/says toward ${it.target}: ${it.interaction}`);
 
   return `Action and interaction: ${compact([
-    beat.visualMoment,
-    beat.mainAction || beat.action || beat.actionAnalysis,
-    beat.interaction,
+    omitIfMentionsMentionedOnly(beat.visualMoment, beat),
+    omitIfMentionsMentionedOnly(beat.mainAction || beat.action || beat.actionAnalysis, beat),
+    omitIfMentionsMentionedOnly(beat.interaction, beat),
     beat.posture ? `posture: ${beat.posture}` : "",
     beat.props?.length ? `props: ${beat.props.join(", ")}` : "",
     beat.locationState ? `location state: ${beat.locationState}` : "",
@@ -692,12 +726,12 @@ function buildActionLine(
   ], "; ") || "the approved beat action remains the focus"}`;
 }
 
-function buildLayerLines(panel: StoryboardPanel): string[] {
+function buildLayerLines(panel: StoryboardPanel, beat: StoryBeat): string[] {
   return [
-    panel.foreground ? `Foreground: ${panel.foreground}` : "",
-    panel.midground ? `Midground: ${panel.midground}` : "",
-    panel.background ? `Background: ${panel.background}` : "",
-    panel.visualEmphasis ? `Visual emphasis: ${panel.visualEmphasis}` : ""
+    panel.foreground && !containsMentionedOnlyName(panel.foreground, beat) ? `Foreground: ${panel.foreground}` : "",
+    panel.midground && !containsMentionedOnlyName(panel.midground, beat) ? `Midground: ${panel.midground}` : "",
+    panel.background && !containsMentionedOnlyName(panel.background, beat) ? `Background: ${panel.background}` : "",
+    panel.visualEmphasis && !containsMentionedOnlyName(panel.visualEmphasis, beat) ? `Visual emphasis: ${panel.visualEmphasis}` : ""
   ].filter(Boolean);
 }
 
@@ -756,14 +790,16 @@ function buildPromptForPanel(params: {
     sentence(buildSceneLine(panel, beat)),
     characterLines.map(sentence).join(" "),
     sentence(buildActionLine(beat, visibleNames, panel, characters, screen)),
-    buildLayerLines(panel).map(sentence).join(" "),
+    buildLayerLines(panel, beat).map(sentence).join(" "),
     sentence("no text, no speech bubbles, no captions, no subtitles, no watermark, no logo"),
     `Negative prompt: ${DEFAULT_NEGATIVE_PROMPT}.`
   ].filter(Boolean);
+  const visualPrompt = normalizePromptSpacing(promptParts.join(" "));
+  warnIfMentionedCharactersLeakIntoPrompt(beat, visualPrompt);
 
   return {
     beatId: beat.beatId,
-    visualPrompt: normalizePromptSpacing(promptParts.join(" "))
+    visualPrompt
   };
 }
 
@@ -788,7 +824,10 @@ export function buildEngineerPromptsWithResolver(input: VisualPromptResolverInpu
   const parsedScreens = normalizeScreens(analysisData);
   const baseScreens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
   const screens = mergeScreenContinuityIntoScreens(baseScreens, screenContinuityData);
-  const panels = sanitizeStoryboardPanels(normalizeStoryboardPanels(storyboardData));
+  const panels = filterStoryboardBlockingToVisibleCharacters(
+    sanitizeStoryboardPanels(normalizeStoryboardPanels(storyboardData)),
+    beats
+  );
   const targetPanels = panels.length
     ? panels
     : beats.map((beat) => ({ beatId: beat.beatId } as StoryboardPanel));

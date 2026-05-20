@@ -22,9 +22,15 @@ import {
   parseJsonSafe,
   mergeScreenContinuityIntoScreens,
   mergeBeatMomentDetailsIntoBeats,
+  filterBeatMomentDetailsToVisibleCharacters,
+  normalizeBeatMomentDetails,
   extractBeatMomentDetailsFromLegacyBeats
 } from "./finalResultBuilderService";
-import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
+import {
+  filterStoryboardBlockingToVisibleCharacters,
+  normalizeStoryboardPanels,
+  sanitizeStoryboardPanels
+} from "./storyboardDataService";
 import {
   createEmptyWorkflow,
   createWorkflowStep,
@@ -79,6 +85,16 @@ function hydrateWorkflowStep(raw: unknown, fallback: StoryFlowProject["workflow"
 
 function normalizeText(value?: string): string {
   return (value || "").trim().toLowerCase();
+}
+
+function sanitizeBeatMomentDetailsForProject(beats: StoryBeat[], beatMomentDetails: string): string {
+  if (!beatMomentDetails) return "";
+  return JSON.stringify({
+    beatDetails: filterBeatMomentDetailsToVisibleCharacters(
+      normalizeBeatMomentDetails(parseJsonSafe<unknown>(beatMomentDetails, { beatDetails: [] })),
+      beats
+    )
+  }, null, 2);
 }
 
 function aliasesOverlap(currentAliases?: string[], incomingAliases?: string[]): boolean {
@@ -169,12 +185,17 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
   const beats = normalizeBeats(analysisData);
   const screens = normalizeScreens(analysisData);
   const extractedBeatMomentDetails = extractBeatMomentDetailsFromLegacyBeats(analysisData);
-  const beatMomentDetails = production.beatMomentDetails || (
+  const rawBeatMomentDetails = production.beatMomentDetails || (
     extractedBeatMomentDetails.length
       ? JSON.stringify({ beatDetails: extractedBeatMomentDetails }, null, 2)
       : ""
   );
+  const beatMomentDetails = sanitizeBeatMomentDetailsForProject(beats, rawBeatMomentDetails);
   const mergedBeats = mergeBeatMomentDetailsIntoBeats(beats, beatMomentDetails);
+  const storyboardPanels = filterStoryboardBlockingToVisibleCharacters(
+    sanitizeStoryboardPanels(normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }))),
+    mergedBeats
+  );
 
   return withTimestamp({
     ...project,
@@ -182,7 +203,7 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
     beats: mergedBeats,
     characters: library.characters,
     locations: library.locations,
-    storyboardPanels: sanitizeStoryboardPanels(normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }))),
+    storyboardPanels,
     engineerPrompts: normalizeEngineerPrompts(parseJsonSafe<unknown>(production.prompts, [])),
     qaResults: normalizeQAResults(parseJsonSafe<unknown>(production.qaReport, [])),
     screenContinuity: production.screenContinuity || "",
@@ -209,17 +230,22 @@ export function hydrateStoryFlowProject(
   if (!isRecord(rawProject)) return fallback;
 
   const rawWorkflow = isRecord(rawProject.workflow) ? rawProject.workflow : {};
-  const hydratedBeats = asArray<StoryBeat>(rawProject.beats, fallback.beats);
+  const hydratedBeats = normalizeBeats({ beats: asArray<StoryBeat>(rawProject.beats, fallback.beats) });
   const rawBeatMomentDetails = typeof rawProject.beatMomentDetails === "string"
     ? rawProject.beatMomentDetails
     : fallback.beatMomentDetails;
   const extractedBeatMomentDetails = extractBeatMomentDetailsFromLegacyBeats(rawProject.beats);
-  const beatMomentDetails = rawBeatMomentDetails || fallback.beatMomentDetails || (
+  const unsanitizedBeatMomentDetails = rawBeatMomentDetails || fallback.beatMomentDetails || (
     extractedBeatMomentDetails.length
       ? JSON.stringify({ beatDetails: extractedBeatMomentDetails }, null, 2)
       : ""
   );
+  const beatMomentDetails = sanitizeBeatMomentDetailsForProject(hydratedBeats, unsanitizedBeatMomentDetails);
   const mergedBeats = mergeBeatMomentDetailsIntoBeats(hydratedBeats, beatMomentDetails);
+  const storyboardPanels = filterStoryboardBlockingToVisibleCharacters(
+    sanitizeStoryboardPanels(asArray<StoryboardPanel>(rawProject.storyboardPanels, fallback.storyboardPanels)),
+    mergedBeats
+  );
 
   return withTimestamp({
     ...fallback,
@@ -232,7 +258,7 @@ export function hydrateStoryFlowProject(
     beats: mergedBeats,
     characters: asArray<CharacterProfile>(rawProject.characters, fallback.characters),
     locations: asArray<LocationProfile>(rawProject.locations, fallback.locations),
-    storyboardPanels: asArray<StoryboardPanel>(rawProject.storyboardPanels, fallback.storyboardPanels),
+    storyboardPanels,
     engineerPrompts: asArray<EngineerPrompt>(rawProject.engineerPrompts, fallback.engineerPrompts),
     qaResults: asArray<QAResult>(rawProject.qaResults, fallback.qaResults),
     screenContinuity: typeof rawProject.screenContinuity === "string" ? rawProject.screenContinuity : fallback.screenContinuity,
@@ -344,7 +370,10 @@ export function replaceCharacterLocationLibrary(project: StoryFlowProject, libra
 }
 
 export function replaceStoryboardPanels(project: StoryFlowProject, storyboardPanels: StoryboardPanel[]): StoryFlowProject {
-  const sanitizedPanels = sanitizeStoryboardPanels(storyboardPanels);
+  const sanitizedPanels = filterStoryboardBlockingToVisibleCharacters(
+    sanitizeStoryboardPanels(storyboardPanels),
+    project.beats
+  );
   const mergedPanels = sanitizedPanels.map((incomingPanel) => {
     const currentPanel = findPanelMatch(project.storyboardPanels, incomingPanel);
     return currentPanel ? mergeRespectingLocks(currentPanel, incomingPanel) : incomingPanel;
@@ -660,10 +689,12 @@ export function replaceScreenContinuity(project: StoryFlowProject, screenContinu
 }
 
 export function replaceBeatMomentDetails(project: StoryFlowProject, beatMomentDetails: string): StoryFlowProject {
+  const safeBeatMomentDetails = sanitizeBeatMomentDetailsForProject(project.beats, beatMomentDetails);
+
   return withTimestamp({
     ...project,
-    beatMomentDetails,
-    beats: mergeBeatMomentDetailsIntoBeats(project.beats, beatMomentDetails),
+    beatMomentDetails: safeBeatMomentDetails,
+    beats: mergeBeatMomentDetailsIntoBeats(project.beats, safeBeatMomentDetails),
     workflow: {
       ...project.workflow,
       beatMomentDetails: markStepNeedsReview(project.workflow.beatMomentDetails || createWorkflowStep())

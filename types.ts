@@ -202,6 +202,7 @@ export interface StoryBeat extends BeatAnalysis {
   /** @deprecated Use focusCharacters / visibleCharacters / offscreenPresentCharacters. */
   characters?: string[];
   focusCharacters?: string[];
+  mentionedCharacters?: string[];
   visibleCharacters?: string[];
   offscreenPresentCharacters?: string[];
   location?: string;
@@ -224,6 +225,7 @@ export interface BeatSkeleton {
   focusCharacters?: string[];
   visibleCharacters?: string[];
   offscreenPresentCharacters?: string[];
+  mentionedCharacters?: string[];
   characters?: string[];
   location?: string;
   locationId?: string;
@@ -462,6 +464,7 @@ export interface FinalResultPanel {
     focusCharacters: string[];
     visibleCharacters: string[];
     offscreenPresentCharacters: string[];
+    mentionedCharacters?: string[];
     props: string[];
     action: string;
     visualMoment?: string;
@@ -501,6 +504,9 @@ export interface FinalResultPanel {
   };
   refs: {
     characterIds: string[];
+    drawableCharacterNames?: string[];
+    offscreenPresentCharacters?: string[];
+    mentionedCharacters?: string[];
     locationId?: string;
     screenId?: string;
   };

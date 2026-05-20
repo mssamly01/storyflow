@@ -22,6 +22,7 @@ export interface PanelSourceBundle {
     focusCharacters: string[];
     visibleCharacters: string[];
     offscreenPresentCharacters: string[];
+    mentionedCharacters: string[];
     props: string[];
     action: string;
     visualMoment: string;
@@ -38,6 +39,24 @@ export interface PanelSourceBundle {
 }
 
 const normalize = (value?: string) => (value || "").trim().toLowerCase();
+
+function unique(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const clean = String(value || "").trim();
+    const key = normalize(clean);
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
+}
+
+function withoutMentioned(values: string[], mentionedCharacters: string[]): string[] {
+  const mentionedSet = new Set(mentionedCharacters.map(normalize).filter(Boolean));
+  return unique(values).filter((name) => !mentionedSet.has(normalize(name)));
+}
 
 export function getBeatById(beats: StoryBeat[], beatId?: number): StoryBeat | null {
   if (!beatId) return null;
@@ -69,17 +88,16 @@ export function getCharactersForBeat(
   characters: CharacterProfile[]
 ): CharacterProfile[] {
   if (!beat) return [];
+  const mentionedCharacters = beat.mentionedCharacters || [];
 
   const names = new Set(
-    [
+    withoutMentioned([
       ...(beat.focusCharacters || []),
       ...(beat.visibleCharacters || []),
       ...(beat.offscreenPresentCharacters || []),
       ...(beat.characters || []),
       ...(beat.charactersInvolved || [])
-    ]
-      .map((name) => normalize(name))
-      .filter(Boolean)
+    ], mentionedCharacters).map((name) => normalize(name))
   );
 
   return characters.filter((character) => {
@@ -97,15 +115,16 @@ export function getPanelSourceBundle(
   const beat = getBeatById(beats, panel.beatId || panel.panelNumber);
   const location = getLocationForBeat(beat, locations);
   const matchedCharacters = getCharactersForBeat(beat, characters);
+  const mentionedCharacters = unique(beat?.mentionedCharacters || []);
   const focusCharacters = beat?.focusCharacters?.length
-    ? beat.focusCharacters
-    : beat?.characters || beat?.charactersInvolved || [];
+    ? withoutMentioned(beat.focusCharacters, mentionedCharacters)
+    : withoutMentioned(beat?.characters || beat?.charactersInvolved || [], mentionedCharacters);
   const visibleCharacters = beat?.visibleCharacters?.length
-    ? beat.visibleCharacters
+    ? withoutMentioned(beat.visibleCharacters, mentionedCharacters)
     : focusCharacters.length
       ? focusCharacters
-      : panel.visibleCharacters || [];
-  const offscreenPresentCharacters = beat?.offscreenPresentCharacters || [];
+      : withoutMentioned(panel.visibleCharacters || [], mentionedCharacters);
+  const offscreenPresentCharacters = withoutMentioned(beat?.offscreenPresentCharacters || [], mentionedCharacters);
 
   return {
     panel,
@@ -122,6 +141,7 @@ export function getPanelSourceBundle(
       focusCharacters,
       visibleCharacters,
       offscreenPresentCharacters,
+      mentionedCharacters,
       props: beat?.props ?? [],
       action: beat?.action ?? beat?.actionAnalysis ?? panel.actionInFrame ?? panel.description ?? "",
       visualMoment: beat?.visualMoment ?? "",

@@ -6,11 +6,16 @@ import { buildCharacterReferenceSheetPrompt } from '../services/referencePromptS
 import { buildLocationReferenceSheetPrompt } from '../services/locationContinuityService';
 import { ScreenStudioView } from './storyflow/ScreenStudioView';
 import { ScreenContinuityView } from './storyflow/ScreenContinuityView';
-import { getPanelSourceFields, normalizeStoryboardPanels } from '../services/storyboardDataService';
+import {
+  filterStoryboardBlockingToVisibleCharacters,
+  getPanelSourceFields,
+  normalizeStoryboardPanels
+} from '../services/storyboardDataService';
 import {
   buildFinalResult,
   createFallbackScreensFromBeats,
   ensureVisualPromptHasNegativePrompt,
+  filterBeatMomentDetailsToVisibleCharacters,
   getFinalResultMissingInputs,
   mergeBeatMomentDetailsIntoBeats,
   mergeScreenContinuityIntoScreens,
@@ -920,10 +925,21 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   const normalizeBeatForUi = (beat: any, index: number) => {
     if (!beat || typeof beat !== 'object' || Array.isArray(beat)) return beat;
 
-    const characters = beat.charactersInvolved ?? beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? [];
-    const focusCharacters = beat.focusCharacters ?? beat.focus_characters ?? characters;
-    const visibleCharacters = beat.visibleCharacters ?? beat.visible_characters ?? focusCharacters;
-    const offscreenPresentCharacters = beat.offscreenPresentCharacters ?? beat.offscreen_present_characters ?? [];
+    const mentionedCharacters = Array.isArray(beat.mentionedCharacters ?? beat.mentioned_characters)
+      ? (beat.mentionedCharacters ?? beat.mentioned_characters).map(String).filter(Boolean)
+      : [];
+    const mentionedSet = new Set(mentionedCharacters.map((name: string) => name.toLocaleLowerCase()));
+    const cleanNames = (value: any) => {
+      const items = Array.isArray(value) ? value : [value].filter(Boolean);
+      return items
+        .map(String)
+        .filter(Boolean)
+        .filter((name) => !mentionedSet.has(name.toLocaleLowerCase()));
+    };
+    const characters = cleanNames(beat.charactersInvolved ?? beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? []);
+    const focusCharacters = cleanNames(beat.focusCharacters ?? beat.focus_characters ?? characters);
+    const visibleCharacters = cleanNames(beat.visibleCharacters ?? beat.visible_characters ?? focusCharacters);
+    const offscreenPresentCharacters = cleanNames(beat.offscreenPresentCharacters ?? beat.offscreen_present_characters ?? []);
     const sourceSegmentIds = beat.sourceSegmentIds ?? beat.source_segment_ids ?? [];
 
     return {
@@ -932,15 +948,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       originalText: beat.originalText ?? beat.original_text ?? '',
       sourceSegmentIds: Array.isArray(sourceSegmentIds) ? sourceSegmentIds.map(String).filter(Boolean) : [],
       actionAnalysis: beat.actionAnalysis || beat.analysis || beat.action || beat.summary || '',
-      charactersInvolved: Array.isArray(characters) ? characters : [characters].filter(Boolean),
-      focusCharacters: Array.isArray(focusCharacters) ? focusCharacters : [focusCharacters].filter(Boolean),
-      visibleCharacters: Array.isArray(visibleCharacters) ? visibleCharacters : [visibleCharacters].filter(Boolean),
-      offscreenPresentCharacters: Array.isArray(offscreenPresentCharacters) ? offscreenPresentCharacters : [offscreenPresentCharacters].filter(Boolean),
+      charactersInvolved: characters,
+      focusCharacters,
+      visibleCharacters,
+      offscreenPresentCharacters,
       locationName: beat.locationName || beat.location || '',
       locationId: beat.locationId || '',
       beatType: beat.beatType || 'action',
-      mentionedCharacters: Array.isArray(beat.mentionedCharacters) ? beat.mentionedCharacters : [],
-      presentCharacters: Array.isArray(beat.presentCharacters) ? beat.presentCharacters : (Array.isArray(characters) ? characters : []),
+      mentionedCharacters,
+      presentCharacters: cleanNames(beat.presentCharacters ?? characters),
       enteredCharacters: Array.isArray(beat.enteredCharacters) ? beat.enteredCharacters : [],
       exitedCharacters: Array.isArray(beat.exitedCharacters) ? beat.exitedCharacters : [],
       characterPostures: Array.isArray(beat.characterPostures) ? beat.characterPostures : [],
@@ -960,6 +976,23 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     return value.map((item) => String(item).trim()).filter(Boolean);
   };
 
+  const toUniqueStringArray = (value: any): string[] => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const item of toCleanStringArray(value)) {
+      const key = item.toLocaleLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(item);
+    }
+    return result;
+  };
+
+  const withoutMentionedCharacters = (values: string[], mentionedCharacters: string[]) => {
+    const mentionedSet = new Set(mentionedCharacters.map((item) => item.toLocaleLowerCase()));
+    return values.filter((item) => !mentionedSet.has(item.toLocaleLowerCase()));
+  };
+
   const sanitizeBeatSkeleton = (beat: any, index = 0) => {
     if (!beat || typeof beat !== "object" || Array.isArray(beat)) {
       return {
@@ -974,6 +1007,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         focusCharacters: [],
         visibleCharacters: [],
         offscreenPresentCharacters: [],
+        mentionedCharacters: [],
         characters: [],
         location: "",
         locationId: "",
@@ -982,11 +1016,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       };
     }
 
-    const focusCharacters = toCleanStringArray(beat.focusCharacters ?? beat.focus_characters);
-    const visibleCharacters = toCleanStringArray(beat.visibleCharacters ?? beat.visible_characters);
-    const offscreenPresentCharacters = toCleanStringArray(beat.offscreenPresentCharacters ?? beat.offscreen_present_characters);
-    const legacyCharacters = toCleanStringArray(
-      beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? beat.charactersInvolved ?? beat.characters_involved
+    const mentionedCharacters = toUniqueStringArray(beat.mentionedCharacters ?? beat.mentioned_characters);
+    const focusCharacters = withoutMentionedCharacters(
+      toUniqueStringArray(beat.focusCharacters ?? beat.focus_characters),
+      mentionedCharacters
+    );
+    const visibleCharacters = withoutMentionedCharacters(
+      toUniqueStringArray(beat.visibleCharacters ?? beat.visible_characters),
+      mentionedCharacters
+    );
+    const offscreenPresentCharacters = withoutMentionedCharacters(
+      toUniqueStringArray(beat.offscreenPresentCharacters ?? beat.offscreen_present_characters),
+      mentionedCharacters
+    );
+    const legacyCharacters = withoutMentionedCharacters(
+      toUniqueStringArray(beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? beat.charactersInvolved ?? beat.characters_involved),
+      mentionedCharacters
     );
     const characters = legacyCharacters.length
       ? legacyCharacters
@@ -1004,6 +1049,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       focusCharacters,
       visibleCharacters,
       offscreenPresentCharacters,
+      mentionedCharacters,
       characters,
       location: beat.location ?? beat.locationName ?? beat.location_name ?? "",
       locationId: beat.locationId ?? beat.location_id ?? "",
@@ -1573,11 +1619,36 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     ));
   };
 
+  const sanitizeProductionResultForStage = (result: string, targetStage: ProductionStage) => {
+    if (targetStage === ProductionStage.BEAT_MOMENT) {
+      const analysisBeats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
+      const beats = analysisBeats.length ? analysisBeats : project.beats;
+      const safeDetails = filterBeatMomentDetailsToVisibleCharacters(
+        normalizeBeatMomentDetails(parseJsonSafe<unknown>(result, { beatDetails: [] })),
+        beats
+      );
+      return JSON.stringify({ beatDetails: safeDetails }, null, 2);
+    }
+
+    if (targetStage === ProductionStage.STORYBOARD) {
+      const analysisBeats = normalizeBeats(parseJsonSafe<unknown>(production.analysis, {}));
+      const beats = analysisBeats.length ? analysisBeats : project.beats;
+      const safePanels = filterStoryboardBlockingToVisibleCharacters(
+        normalizeStoryboardPanels(parseJsonSafe<unknown>(result, { panels: [] })),
+        beats
+      );
+      return JSON.stringify({ panels: safePanels }, null, 2);
+    }
+
+    return result;
+  };
+
   const updateProjectDataByStage = (result: string, targetStage: ProductionStage) => {
+    const safeResult = sanitizeProductionResultForStage(result, targetStage);
     setProject(prev => {
       try {
         if (targetStage === ProductionStage.ANALYSIS) {
-          const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(result, []));
+          const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(safeResult, []));
           const beats = normalizeBeatSkeletons(analysisData);
           const parsedScreens = normalizeScreens(analysisData);
           return replaceScreens(
@@ -1588,23 +1659,23 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         if (targetStage === ProductionStage.CHARACTER_LOCATION) {
           return replaceCharacterLocationLibrary(
             prev,
-            normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(result, {}))
+            normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(safeResult, {}))
           );
         }
         if (targetStage === ProductionStage.SCREEN_CONTINUITY) {
-          return replaceScreenContinuity(prev, result);
+          return replaceScreenContinuity(prev, safeResult);
         }
         if (targetStage === ProductionStage.BEAT_MOMENT) {
-          return replaceBeatMomentDetails(prev, result);
+          return replaceBeatMomentDetails(prev, safeResult);
         }
         if (targetStage === ProductionStage.STORYBOARD) {
-          return replaceStoryboardPanels(prev, normalizeStoryboardPanels(parseJsonSafe<unknown>(result, { panels: [] })));
+          return replaceStoryboardPanels(prev, normalizeStoryboardPanels(parseJsonSafe<unknown>(safeResult, { panels: [] })));
         }
         if (targetStage === ProductionStage.PROMPTS) {
-          return replaceEngineerPrompts(prev, normalizeEngineerPrompts(parseJsonSafe<unknown>(result, [])));
+          return replaceEngineerPrompts(prev, normalizeEngineerPrompts(parseJsonSafe<unknown>(safeResult, [])));
         }
         if (targetStage === ProductionStage.FINAL) {
-          const finalResult = parseJsonSafe<FinalResult | null>(result, null);
+          const finalResult = parseJsonSafe<FinalResult | null>(safeResult, null);
           return finalResult ? replaceFinalResult(prev, finalResult) : prev;
         }
       } catch (err) {
@@ -1615,18 +1686,19 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const updateProductionDataByStage = (result: string, targetStage: ProductionStage) => {
+    const safeResult = sanitizeProductionResultForStage(result, targetStage);
     setProduction(prev => {
       const updated = { ...prev };
-      if (targetStage === ProductionStage.ANALYSIS) updated.analysis = result;
-      else if (targetStage === ProductionStage.CHARACTER_LOCATION) updated.characterLocationAnalysis = result;
-      else if (targetStage === ProductionStage.SCREEN_CONTINUITY) updated.screenContinuity = result;
-      else if (targetStage === ProductionStage.BEAT_MOMENT) updated.beatMomentDetails = result;
-      else if (targetStage === ProductionStage.STORYBOARD) updated.storyboard = result;
-      else if (targetStage === ProductionStage.PROMPTS) updated.prompts = result;
-      else if (targetStage === ProductionStage.FINAL) updated.finalResult = result;
+      if (targetStage === ProductionStage.ANALYSIS) updated.analysis = safeResult;
+      else if (targetStage === ProductionStage.CHARACTER_LOCATION) updated.characterLocationAnalysis = safeResult;
+      else if (targetStage === ProductionStage.SCREEN_CONTINUITY) updated.screenContinuity = safeResult;
+      else if (targetStage === ProductionStage.BEAT_MOMENT) updated.beatMomentDetails = safeResult;
+      else if (targetStage === ProductionStage.STORYBOARD) updated.storyboard = safeResult;
+      else if (targetStage === ProductionStage.PROMPTS) updated.prompts = safeResult;
+      else if (targetStage === ProductionStage.FINAL) updated.finalResult = safeResult;
       return updated;
     });
-    updateProjectDataByStage(result, targetStage);
+    updateProjectDataByStage(safeResult, targetStage);
   };
 
   const handleUpdateBeat = (index: number) => {

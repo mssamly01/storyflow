@@ -1,6 +1,12 @@
 import type { StoryBeat, StoryboardPanel } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 
+const normalizeName = (value?: string) => (value || "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .trim()
+  .toLowerCase();
+
 export function findBeatForPanel(
   panel: StoryboardPanel,
   beats: StoryBeat[]
@@ -47,4 +53,29 @@ export function sanitizeStoryboardPanels(panels: StoryboardPanel[]): StoryboardP
     cameraNotes: panel.cameraNotes || panel.continuityNotes || "",
     framing: panel.framing
   }));
+}
+
+export function filterStoryboardBlockingToVisibleCharacters(
+  panels: StoryboardPanel[],
+  beats: StoryBeat[]
+): StoryboardPanel[] {
+  const visibleByBeatId = new Map(
+    beats.map((beat) => [
+      Number(beat.beatId),
+      new Set((beat.visibleCharacters || []).map(normalizeName).filter(Boolean))
+    ])
+  );
+
+  return panels.map((panel) => {
+    const visibleSet = visibleByBeatId.get(Number(panel.beatId));
+    if (!visibleSet?.size) return panel;
+
+    return {
+      ...panel,
+      characterBlocking: (panel.characterBlocking || []).filter((blocking) =>
+        visibleSet.has(normalizeName(blocking.characterName)) ||
+        visibleSet.has(normalizeName(blocking.characterId))
+      )
+    };
+  });
 }
