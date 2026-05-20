@@ -65,7 +65,7 @@ export interface InteractionTarget {
   interaction: string;
 }
 
-export type RoleInShot = "main" | "supporting" | "background";
+export type RoleInShot = "main" | "supporting" | "background" | "offscreen";
 
 export interface CharacterVisualState {
   characterName: string;
@@ -195,6 +195,25 @@ export interface StoryBeat extends BeatAnalysis {
   characterMomentDetails?: BeatCharacterMomentDetail[];
 }
 
+export interface BeatSkeleton {
+  beatId: number;
+  screenId?: string;
+  sourceSegmentIds?: string[];
+  originalText: string;
+  summary?: string;
+  action?: string;
+  visualFocus?: string;
+  beatType?: BeatType;
+  focusCharacters?: string[];
+  visibleCharacters?: string[];
+  offscreenPresentCharacters?: string[];
+  characters?: string[];
+  location?: string;
+  locationId?: string;
+  timeOfDay?: string;
+  atmosphere?: string;
+}
+
 export interface ScreenContinuityItem {
   screenId: string;
   beatIds?: number[];
@@ -215,6 +234,12 @@ export interface ScreenContinuityResult {
 
 export interface BeatMomentDetail {
   beatId: number;
+  visualMoment?: string;
+  mainAction?: string;
+  characterVisualStates?: CharacterVisualState[];
+  interactionTarget?: InteractionTarget[];
+  environmentDetails?: string;
+  continuityNotes?: string;
   interaction?: string;
   posture?: string;
   props?: string[];
@@ -224,6 +249,7 @@ export interface BeatMomentDetail {
 
 export interface BeatMomentDetailResult {
   beatDetails: BeatMomentDetail[];
+  beatMomentDetails?: BeatMomentDetail[];
 }
 
 export interface SourceSegment {
@@ -419,8 +445,14 @@ export interface FinalResultPanel {
     offscreenPresentCharacters: string[];
     props: string[];
     action: string;
+    visualMoment?: string;
+    mainAction?: string;
     interaction: string;
+    interactionTarget?: InteractionTarget[];
     posture: string;
+    characterVisualStates?: CharacterVisualState[];
+    environmentDetails?: string;
+    continuityNotes?: string;
     atmosphere: string;
     visualFocus: string;
     characterMomentDetails?: BeatCharacterMomentDetail[];

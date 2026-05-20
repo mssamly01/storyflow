@@ -1,5 +1,7 @@
 import type {
   CharacterProfile,
+  CharacterVisualState,
+  InteractionTarget,
   LocationProfile,
   StoryBeat,
   StoryboardPanel
@@ -22,8 +24,14 @@ export interface PanelSourceBundle {
     offscreenPresentCharacters: string[];
     props: string[];
     action: string;
+    visualMoment: string;
+    mainAction: string;
     interaction: string;
+    interactionTarget: InteractionTarget[];
     posture: string;
+    characterVisualStates: CharacterVisualState[];
+    environmentDetails: string;
+    continuityNotes: string;
     atmosphere: string;
     visualFocus: string;
   };
@@ -116,8 +124,14 @@ export function getPanelSourceBundle(
       offscreenPresentCharacters,
       props: beat?.props ?? [],
       action: beat?.action ?? beat?.actionAnalysis ?? panel.actionInFrame ?? panel.description ?? "",
+      visualMoment: beat?.visualMoment ?? "",
+      mainAction: beat?.mainAction ?? "",
       interaction: beat?.interaction ?? "",
+      interactionTarget: beat?.interactionTarget ?? [],
       posture: beat?.posture ?? "",
+      characterVisualStates: beat?.characterVisualStates ?? [],
+      environmentDetails: beat?.environmentDetails ?? "",
+      continuityNotes: beat?.continuityNotes ?? "",
       atmosphere: beat?.atmosphere ?? "",
       visualFocus: beat?.visualFocus ?? ""
     }

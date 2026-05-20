@@ -21,7 +21,8 @@ import {
   normalizeScreens,
   parseJsonSafe,
   mergeScreenContinuityIntoScreens,
-  mergeBeatMomentDetailsIntoBeats
+  mergeBeatMomentDetailsIntoBeats,
+  extractBeatMomentDetailsFromLegacyBeats
 } from "./finalResultBuilderService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
 import {
@@ -167,18 +168,25 @@ export function normalizeLegacyProductionToProject(inputData: ScriptData, produc
   const analysisData = parseJsonSafe<unknown>(production.analysis, []);
   const beats = normalizeBeats(analysisData);
   const screens = normalizeScreens(analysisData);
+  const extractedBeatMomentDetails = extractBeatMomentDetailsFromLegacyBeats(analysisData);
+  const beatMomentDetails = production.beatMomentDetails || (
+    extractedBeatMomentDetails.length
+      ? JSON.stringify({ beatDetails: extractedBeatMomentDetails }, null, 2)
+      : ""
+  );
+  const mergedBeats = mergeBeatMomentDetailsIntoBeats(beats, beatMomentDetails);
 
   return withTimestamp({
     ...project,
-    screens: screens.length ? screens : createFallbackScreensFromBeats(beats),
-    beats,
+    screens: screens.length ? screens : createFallbackScreensFromBeats(mergedBeats),
+    beats: mergedBeats,
     characters: library.characters,
     locations: library.locations,
     storyboardPanels: sanitizeStoryboardPanels(normalizeStoryboardPanels(parseJsonSafe<unknown>(production.storyboard, { panels: [] }))),
     engineerPrompts: normalizeEngineerPrompts(parseJsonSafe<unknown>(production.prompts, [])),
     qaResults: normalizeQAResults(parseJsonSafe<unknown>(production.qaReport, [])),
     screenContinuity: production.screenContinuity || "",
-    beatMomentDetails: production.beatMomentDetails || "",
+    beatMomentDetails,
     finalResult,
     workflow: {
       ...project.workflow,
@@ -201,6 +209,17 @@ export function hydrateStoryFlowProject(
   if (!isRecord(rawProject)) return fallback;
 
   const rawWorkflow = isRecord(rawProject.workflow) ? rawProject.workflow : {};
+  const hydratedBeats = asArray<StoryBeat>(rawProject.beats, fallback.beats);
+  const rawBeatMomentDetails = typeof rawProject.beatMomentDetails === "string"
+    ? rawProject.beatMomentDetails
+    : fallback.beatMomentDetails;
+  const extractedBeatMomentDetails = extractBeatMomentDetailsFromLegacyBeats(rawProject.beats);
+  const beatMomentDetails = rawBeatMomentDetails || fallback.beatMomentDetails || (
+    extractedBeatMomentDetails.length
+      ? JSON.stringify({ beatDetails: extractedBeatMomentDetails }, null, 2)
+      : ""
+  );
+  const mergedBeats = mergeBeatMomentDetailsIntoBeats(hydratedBeats, beatMomentDetails);
 
   return withTimestamp({
     ...fallback,
@@ -210,14 +229,14 @@ export function hydrateStoryFlowProject(
     sourceText: typeof rawProject.sourceText === "string" ? rawProject.sourceText : fallback.sourceText,
     selectedStyleId: typeof rawProject.selectedStyleId === "string" ? rawProject.selectedStyleId : fallback.selectedStyleId,
     screens: asArray<StoryScreen>(rawProject.screens, fallback.screens),
-    beats: asArray<StoryBeat>(rawProject.beats, fallback.beats),
+    beats: mergedBeats,
     characters: asArray<CharacterProfile>(rawProject.characters, fallback.characters),
     locations: asArray<LocationProfile>(rawProject.locations, fallback.locations),
     storyboardPanels: asArray<StoryboardPanel>(rawProject.storyboardPanels, fallback.storyboardPanels),
     engineerPrompts: asArray<EngineerPrompt>(rawProject.engineerPrompts, fallback.engineerPrompts),
     qaResults: asArray<QAResult>(rawProject.qaResults, fallback.qaResults),
     screenContinuity: typeof rawProject.screenContinuity === "string" ? rawProject.screenContinuity : fallback.screenContinuity,
-    beatMomentDetails: typeof rawProject.beatMomentDetails === "string" ? rawProject.beatMomentDetails : fallback.beatMomentDetails,
+    beatMomentDetails,
     finalResult: isRecord(rawProject.finalResult) ? rawProject.finalResult as FinalResult : fallback.finalResult,
     workflow: {
       beatAnalysis: hydrateWorkflowStep(rawWorkflow.beatAnalysis, fallback.workflow.beatAnalysis),
@@ -644,6 +663,7 @@ export function replaceBeatMomentDetails(project: StoryFlowProject, beatMomentDe
   return withTimestamp({
     ...project,
     beatMomentDetails,
+    beats: mergeBeatMomentDetailsIntoBeats(project.beats, beatMomentDetails),
     workflow: {
       ...project.workflow,
       beatMomentDetails: markStepNeedsReview(project.workflow.beatMomentDetails || createWorkflowStep())

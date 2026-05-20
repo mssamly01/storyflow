@@ -14,6 +14,7 @@ import {
   getFinalResultMissingInputs,
   mergeBeatMomentDetailsIntoBeats,
   mergeScreenContinuityIntoScreens,
+  normalizeBeatSkeletons,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
   normalizeEngineerPrompts,
@@ -318,6 +319,8 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [isGlobalManualMode, setIsGlobalManualMode] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
+  const [analysisManualInputValue, setAnalysisManualInputValue] = useState('');
+  const [beatMomentManualInputValue, setBeatMomentManualInputValue] = useState('');
   const [storyboardBatchIndex, setStoryboardBatchIndex] = useState(0);
   const [storyboardBatchInputs, setStoryboardBatchInputs] = useState<Record<number, string>>({});
   const [showStoryboardPreview, setShowStoryboardPreview] = useState(false);
@@ -888,8 +891,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
     }
     if (targetStage === ProductionStage.BEAT_MOMENT) {
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.beatDetails)) {
-        return "Định dạng JSON không hợp lệ cho Beat Moment Details. JSON phải là một đối tượng chứa mảng 'beatDetails': { \"beatDetails\": [...] }";
+      const details = parsed?.beatDetails ?? parsed?.beatMomentDetails;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(details)) {
+        return "Dinh dang JSON khong hop le cho Beat Moment Details. JSON phai chua mang 'beatDetails' hoac 'beatMomentDetails'.";
       }
     }
     if (targetStage === ProductionStage.STORYBOARD) {
@@ -1398,7 +1402,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           ...prev,
           analysis: JSON.stringify(analysisPayload, null, 2)
         }));
-        const beats = normalizeBeats(analysisPayload);
+        const beats = normalizeBeatSkeletons(analysisPayload);
         const parsedScreens = normalizeScreens(analysisPayload);
         setProject(prev => replaceScreens(
           replaceBeats(prev, beats),
@@ -1466,7 +1470,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
 
   const syncPhaseOneProjectData = (analysisValue: string, characterLocationValue: string) => {
     const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(analysisValue, []));
-    const beats = normalizeBeats(analysisData);
+    const beats = normalizeBeatSkeletons(analysisData);
     const parsedScreens = normalizeScreens(analysisData);
     const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
     const library = normalizeCharacterLocationLibrary(parseJsonSafe<unknown>(characterLocationValue, {}));
@@ -1481,7 +1485,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       try {
         if (targetStage === ProductionStage.ANALYSIS) {
           const analysisData = hydratePastedAnalysisIfNeeded(parseJsonSafe<unknown>(result, []));
-          const beats = normalizeBeats(analysisData);
+          const beats = normalizeBeatSkeletons(analysisData);
           const parsedScreens = normalizeScreens(analysisData);
           return replaceScreens(
             replaceBeats(prev, beats),
@@ -1644,7 +1648,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           ...prev,
           analysis: analysisValue
         }));
-        const beats = normalizeBeats(hydratedResult);
+        const beats = normalizeBeatSkeletons(hydratedResult);
         const parsedScreens = normalizeScreens(hydratedResult);
         const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
         setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
@@ -1655,7 +1659,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       } else if (stage === ProductionStage.CHARACTER_LOCATION) {
         const existingLibrary = getMasterLibrary();
         const analysisData = parseJsonSafe<unknown>(production.analysis, []);
-        const beats = normalizeBeats(analysisData);
+        const beats = normalizeBeatSkeletons(analysisData);
         const parsedScreens = normalizeScreens(analysisData);
         const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
         
@@ -1768,7 +1772,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         analysis: analysisValue
       }));
 
-      const beats = normalizeBeats(hydratedResult);
+      const beats = normalizeBeatSkeletons(hydratedResult);
       const parsedScreens = normalizeScreens(hydratedResult);
       const screens = parsedScreens.length ? parsedScreens : createFallbackScreensFromBeats(beats);
       setProject(prev => replaceScreens(replaceBeats(prev, beats), screens));
@@ -2414,13 +2418,244 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     );
   };
 
-  const renderManualView = () => (
+  const saveManualBeatSkeletonResult = (rawValue: string) => {
+    if (!rawValue.trim()) return;
+    setError(null);
+
+    let parsedJson: any = null;
+    try {
+      parsedJson = JSON.parse(rawValue);
+    } catch {
+      setError("Du lieu Chia Beats khong phai JSON hop le.");
+      return;
+    }
+
+    const pastedBeatAnalysis = getAnalysisBeatsFromParsed(parsedJson);
+    if (!pastedBeatAnalysis) {
+      setError("JSON Chia Beats phai co mang beats hoac co cau truc { \"beats\": [...] }.");
+      return;
+    }
+
+    const rawAnalysisPayload = Array.isArray(parsedJson)
+      ? { beats: parsedJson }
+      : { ...parsedJson, beats: pastedBeatAnalysis };
+    const analysisPayload = hydratePastedAnalysisIfNeeded(rawAnalysisPayload);
+    const analysisValue = JSON.stringify(analysisPayload, null, 2);
+
+    updateProductionDataByStage(analysisValue, ProductionStage.ANALYSIS);
+    setAnalysisManualInputValue('');
+    setManualInputValue('');
+    showToast("Da luu Chia Beats. Prompt Buoc 2 da san sang.");
+  };
+
+  const saveManualBeatMomentResult = (rawValue: string) => {
+    if (!rawValue.trim()) return;
+    setError(null);
+
+    let parsedJson: any = null;
+    try {
+      parsedJson = JSON.parse(rawValue);
+    } catch {
+      setError("Du lieu Chi tiet Beat khong phai JSON hop le.");
+      return;
+    }
+
+    const validationError = validateStageJsonShape(parsedJson, ProductionStage.BEAT_MOMENT);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    const beatMomentValue = JSON.stringify(parsedJson, null, 2);
+    updateProductionDataByStage(beatMomentValue, ProductionStage.BEAT_MOMENT);
+    setBeatMomentManualInputValue('');
+    setManualInputValue('');
+    showToast("Da luu Chi tiet Beat.");
+  };
+
+  const renderAnalysisManualSplitView = () => {
+    const stylePrompt = getSelectedStylePrompt();
+    const beatSkeletonPrompt = gemini.getBeatAnalysisPrompt(inputData.script, stylePrompt);
+    const canUseBeatMomentPrompt = !!production.analysis?.trim();
+    const beatMomentPrompt = canUseBeatMomentPrompt
+      ? gemini.getBeatMomentDetailsPrompt(
+          production.analysis || '',
+          production.characterLocationAnalysis || '',
+          production.screenContinuity || '',
+          stylePrompt
+        )
+      : "Luu ket qua Chia Beats truoc de tao Prompt Buoc 2 - Chi tiet Beat.";
+    const hasBeatSkeleton = !!production.analysis?.trim();
+    const hasBeatMomentDetails = !!production.beatMomentDetails?.trim();
+    const hasCharacterLocation = !!production.characterLocationAnalysis?.trim();
+    const hasScreenContinuity = !!production.screenContinuity?.trim();
+    const completionTargetStage = hasCharacterLocation && hasScreenContinuity
+      ? ProductionStage.STORYBOARD
+      : ProductionStage.CHARACTER_LOCATION;
+    const completionTargetLabel = completionTargetStage === ProductionStage.STORYBOARD
+      ? "Qua Phac thao minh hoa"
+      : "Qua Nhan vat & Boi canh";
+
+    const promptPanels = [
+      {
+        key: "beat-skeleton",
+        step: "Buoc 1",
+        title: "Chia Beats",
+        prompt: beatSkeletonPrompt,
+        complete: hasBeatSkeleton,
+        locked: false,
+        value: analysisManualInputValue,
+        setValue: setAnalysisManualInputValue,
+        pasteTitle: "Dan ket qua Chia Beats vao day",
+        placeholder: "Dan JSON Beat Skeleton tu AI vao day. Dinh dang can co { \"screens\": [...], \"beats\": [...] }.",
+        saveLabel: "Luu Chia Beats",
+        onSave: () => saveManualBeatSkeletonResult(analysisManualInputValue)
+      },
+      {
+        key: "beat-moment",
+        step: "Buoc 2",
+        title: "Chi tiet Beat",
+        prompt: beatMomentPrompt,
+        complete: hasBeatMomentDetails,
+        locked: !canUseBeatMomentPrompt,
+        value: beatMomentManualInputValue,
+        setValue: setBeatMomentManualInputValue,
+        pasteTitle: "Dan ket qua Chi tiet Beat vao day",
+        placeholder: "Dan JSON Beat Moment Details tu AI vao day. Dinh dang can co { \"beatDetails\": [...] } hoac { \"beatMomentDetails\": [...] }.",
+        saveLabel: "Luu Chi tiet Beat",
+        onSave: () => saveManualBeatMomentResult(beatMomentManualInputValue)
+      }
+    ];
+
+    return (
+      <div className="max-w-6xl mx-auto space-y-6">
+        {renderAnalysisSplitOverview()}
+
+        <div className="grid grid-cols-1 gap-6">
+          {promptPanels.map((panel) => (
+            <section key={panel.key} className={`rounded-3xl border bg-white shadow-sm overflow-hidden ${panel.locked ? "border-slate-200 opacity-75" : panel.complete ? "border-emerald-100" : "border-indigo-100"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${panel.complete ? "bg-emerald-600 text-white" : panel.locked ? "bg-slate-200 text-slate-400" : "bg-indigo-600 text-white"}`}>
+                    {panel.complete ? <CheckCircle2 className="h-5 w-5" /> : <Terminal className="h-5 w-5" />}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">{panel.step}</p>
+                    <h3 className="text-sm font-black text-slate-900">Prompt {panel.title}</h3>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${panel.complete ? "bg-emerald-100 text-emerald-700" : panel.locked ? "bg-slate-200 text-slate-500" : "bg-amber-100 text-amber-700"}`}>
+                    {panel.complete ? "Da luu" : panel.locked ? "Cho buoc 1" : "Cho ket qua"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => !panel.locked && copyToClipboard(panel.prompt)}
+                    disabled={panel.locked}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy Prompt
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2">
+                <div className="border-b border-slate-100 bg-slate-950 p-5 lg:border-b-0 lg:border-r">
+                  <pre className="h-80 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-300">
+                    {panel.prompt}
+                  </pre>
+                </div>
+
+                <div className="p-5">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-900">
+                    <Save className="h-4 w-4 text-indigo-600" />
+                    <span>{panel.pasteTitle}</span>
+                  </div>
+                  <textarea
+                    value={panel.value}
+                    onChange={(event) => panel.setValue(event.target.value)}
+                    disabled={panel.locked}
+                    placeholder={panel.placeholder}
+                    className="h-64 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed outline-none transition focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={panel.onSave}
+                    disabled={panel.locked || !panel.value.trim()}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-4 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="h-5 w-5" /> {panel.saveLabel}
+                  </button>
+                </div>
+              </div>
+            </section>
+          ))}
+        </div>
+
+        {hasBeatSkeleton && hasBeatMomentDetails && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-emerald-900">Da du 2 phan Phan tich noi dung</h3>
+              <p className="mt-1 text-xs font-semibold text-emerald-700">
+                Chia Beats va Chi tiet Beat da duoc luu. Ban co the tiep tuc qua Nhan vat & Boi canh.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsManualMode(false);
+                setStage(completionTargetStage);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-100 transition-colors hover:bg-emerald-700"
+            >
+              {completionTargetLabel} <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderManualView = () => {
+    if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.BEAT_MOMENT) {
+      return renderAnalysisManualSplitView();
+    }
+
+    const isBeatSkeletonManual = stage === ProductionStage.ANALYSIS;
+    const isBeatMomentManual = stage === ProductionStage.BEAT_MOMENT;
+    const manualPromptTitle = isBeatSkeletonManual
+      ? "Prompt Buoc 1 - Chia Beats"
+      : isBeatMomentManual
+        ? "Prompt Buoc 2 - Chi tiet Beat"
+        : "Prompt cho AI ben ngoai";
+    const manualPasteTitle = isBeatSkeletonManual
+      ? "Dan ket qua Chia Beats vao day"
+      : isBeatMomentManual
+        ? "Dan ket qua Chi tiet Beat vao day"
+        : "Dan ket qua AI tra ve vao day";
+    const manualPlaceholder = isBeatSkeletonManual
+      ? "Dan JSON Beat Skeleton tu AI vao day. Dinh dang can co { \"screens\": [...], \"beats\": [...] }."
+      : isBeatMomentManual
+        ? "Dan JSON Beat Moment Details tu AI vao day. Dinh dang can co { \"beatDetails\": [...] } hoac { \"beatMomentDetails\": [...] }."
+        : "Dan noi dung AI da phan tich duoc tu ben ngoai vao day...";
+    const manualSaveLabel = isBeatSkeletonManual
+      ? "Luu Chia Beats va tiep tuc"
+      : isBeatMomentManual
+        ? "Luu Chi tiet Beat va tiep tuc"
+        : "Luu va Tiep tuc";
+
+    return (
     <div className="max-w-5xl mx-auto space-y-6">
+      {(isBeatSkeletonManual || isBeatMomentManual) && renderAnalysisSplitOverview()}
       <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
         <div className="bg-slate-800 px-6 py-3 flex flex-wrap justify-between items-center gap-3 border-b border-slate-700">
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-indigo-400" />
             <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+              {manualPromptTitle}
+            </span>
+            <span className="hidden">
               Prompt cho AI bên ngoài
             </span>
           </div>
@@ -2473,19 +2708,33 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       {stage === ProductionStage.STORYBOARD ? (
         renderStoryboardBatchPasteView()
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 [&>textarea:not(:first-of-type)]:hidden [&>button:not(:first-of-type)]:hidden">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2 text-slate-800 font-bold">
+            <div className="flex items-center gap-2 text-slate-800 font-bold [&>span:last-child]:hidden">
               <Save className="w-5 h-5 text-indigo-600" />
+              <span>{manualPasteTitle}</span>
               <span>Dán kết quả AI trả về vào đây</span>
             </div>
           </div>
           <textarea
             value={manualInputValue}
             onChange={(e) => setManualInputValue(e.target.value)}
+            placeholder={manualPlaceholder}
+            className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
+          />
+          <textarea
+            value={manualInputValue}
+            onChange={(e) => setManualInputValue(e.target.value)}
             placeholder="Dán nội dung AI đã phân tích được từ bên ngoài vào đây..."
             className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
           />
+          <button
+            onClick={handleManualSave}
+            disabled={!manualInputValue.trim()}
+            className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-5 h-5" /> {manualSaveLabel}
+          </button>
           <button 
             onClick={handleManualSave}
             disabled={!manualInputValue.trim()}
@@ -2496,7 +2745,8 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   const renderFinalPanelCard = (panel: FinalResultPanel) => {
     const source = panel.source;
@@ -3019,10 +3269,12 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         const showLegacyBeatCards = false;
         return (
           <div className="space-y-6">
+            {renderAnalysisSplitOverview()}
+
             <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex items-center gap-2">
                 <BarChart2 className="w-5 h-5 text-indigo-600" />
-                <span className="text-sm font-bold text-slate-800">Beat Analysis Export</span>
+                <span className="text-sm font-bold text-slate-800">Beat Skeleton / Chia Beats</span>
               </div>
               <div className="flex items-center gap-2">
                 <button 
@@ -3631,7 +3883,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
 
       case ProductionStage.BEAT_MOMENT: {
-        const beatDetails = parsed.beatDetails || [];
+        const beatDetails = parsed.beatDetails || parsed.beatMomentDetails || [];
         return (
           <div className="space-y-6">
             <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -3667,6 +3919,78 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <div className="space-y-1">
                         <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block">Nội dung gốc</span>
                         <p className="text-sm text-slate-600 italic border-l-2 border-slate-200 pl-4">{beat.originalText}</p>
+                      </div>
+                    )}
+
+                    {(beat.visualMoment || beat.mainAction || beat.environmentDetails || beat.continuityNotes) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {beat.visualMoment && (
+                          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 md:col-span-2">
+                            <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block mb-1">Visual Moment</span>
+                            <p className="text-sm text-slate-800 font-semibold leading-relaxed">{beat.visualMoment}</p>
+                          </div>
+                        )}
+                        {beat.mainAction && (
+                          <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                            <span className="font-black text-[9px] uppercase tracking-wider text-emerald-600 block mb-1">Main Action</span>
+                            <p className="text-xs text-slate-700 font-semibold leading-relaxed">{beat.mainAction}</p>
+                          </div>
+                        )}
+                        {beat.environmentDetails && (
+                          <div className="bg-sky-50 p-4 rounded-xl border border-sky-100">
+                            <span className="font-black text-[9px] uppercase tracking-wider text-sky-600 block mb-1">Environment</span>
+                            <p className="text-xs text-slate-700 font-semibold leading-relaxed">{beat.environmentDetails}</p>
+                          </div>
+                        )}
+                        {beat.continuityNotes && (
+                          <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 md:col-span-2">
+                            <span className="font-black text-[9px] uppercase tracking-wider text-amber-600 block mb-1">Continuity Notes</span>
+                            <p className="text-xs text-slate-700 font-semibold leading-relaxed">{beat.continuityNotes}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {Array.isArray(beat.characterVisualStates) && beat.characterVisualStates.length > 0 && (
+                      <div className="space-y-3 pt-3 border-t border-slate-100">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-indigo-500 block">Character Visual States</span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {beat.characterVisualStates.map((c: any, ci: number) => (
+                            <div key={c.characterName || ci} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                              <div className="mb-3 flex items-center justify-between gap-2">
+                                <h5 className="font-bold text-indigo-600 text-xs">{c.characterName || "Character"}</h5>
+                                {c.roleInShot && (
+                                  <span className="rounded-lg bg-indigo-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-indigo-600 border border-indigo-100">
+                                    {c.roleInShot}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2 text-[11px] text-slate-600">
+                                {c.facialExpression && <p><span className="font-black text-slate-400 uppercase">Expression:</span> {c.facialExpression}</p>}
+                                {c.bodyLanguage && <p><span className="font-black text-slate-400 uppercase">Body:</span> {c.bodyLanguage}</p>}
+                                {c.gazeTarget && <p><span className="font-black text-slate-400 uppercase">Gaze:</span> {c.gazeTarget}</p>}
+                                {c.emotionalState && <p><span className="font-black text-slate-400 uppercase">Emotion:</span> {c.emotionalState}</p>}
+                                {c.position && <p><span className="font-black text-slate-400 uppercase">Position:</span> {c.position}</p>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {Array.isArray(beat.interactionTarget) && beat.interactionTarget.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="font-black text-[9px] uppercase tracking-wider text-slate-400 block">Interaction Targets</span>
+                        <div className="flex flex-col gap-2">
+                          {beat.interactionTarget.map((item: any, targetIndex: number) => (
+                            <div key={`${item.actor || "actor"}-${item.target || "target"}-${targetIndex}`} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-700">
+                              <span className="font-black text-indigo-600">{item.actor || "Actor"}</span>
+                              <span className="mx-2 text-slate-400">{"->"}</span>
+                              <span className="font-black text-indigo-600">{item.target || "Target"}</span>
+                              {item.interaction && <span className="ml-2 font-semibold">{item.interaction}</span>}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -4480,6 +4804,76 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     </div>
   );
 
+  const renderAnalysisSplitOverview = () => {
+    const hasBeatSkeleton = !!production.analysis?.trim();
+    const hasBeatMomentDetails = !!production.beatMomentDetails?.trim();
+    const hasCharacterLocation = !!production.characterLocationAnalysis?.trim();
+    const hasScreenContinuity = !!production.screenContinuity?.trim();
+    const canOpenBeatMoment = hasBeatSkeleton && hasCharacterLocation && hasScreenContinuity;
+    const beatMomentStatus = hasBeatMomentDetails
+      ? "Da co du lieu"
+      : canOpenBeatMoment
+        ? "San sang chay"
+        : "Cho nhan vat va boi canh";
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">
+        <div className="bg-white rounded-2xl border border-emerald-100 p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${hasBeatSkeleton ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                {hasBeatSkeleton ? <CheckCircle2 className="w-5 h-5" /> : <BarChart2 className="w-5 h-5" />}
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Buoc 1</p>
+                <h3 className="text-sm font-black text-slate-900">Chia Beats</h3>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
+                  Tach source text thanh beat skeleton va hydrate originalText tu sourceSegmentIds.
+                </p>
+              </div>
+            </div>
+            <span className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${hasBeatSkeleton ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-100 text-slate-500 border border-slate-200"}`}>
+              {hasBeatSkeleton ? "Done" : "Pending"}
+            </span>
+          </div>
+        </div>
+
+        <div className="hidden lg:flex items-center justify-center text-slate-300">
+          <ArrowRight className="w-6 h-6" />
+        </div>
+
+        <div className={`bg-white rounded-2xl border p-5 shadow-sm ${hasBeatMomentDetails ? "border-emerald-100" : canOpenBeatMoment ? "border-indigo-100" : "border-slate-200"}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${hasBeatMomentDetails ? "bg-emerald-600 text-white" : canOpenBeatMoment ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                {hasBeatMomentDetails ? <CheckCircle2 className="w-5 h-5" /> : <Table className="w-5 h-5" />}
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Buoc 2</p>
+                <h3 className="text-sm font-black text-slate-900">Chi tiet Beat</h3>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
+                  Them visualMoment, mainAction, characterVisualStates, props va continuityNotes cho tung beat.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setStage(ProductionStage.BEAT_MOMENT)}
+                  disabled={!hasBeatMomentDetails && !canOpenBeatMoment}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-sm transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                >
+                  {hasBeatMomentDetails ? "Xem Chi tiet Beat" : "Mo buoc Chi tiet Beat"}
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            <span className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${hasBeatMomentDetails ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : canOpenBeatMoment ? "bg-indigo-50 text-indigo-700 border border-indigo-100" : "bg-slate-100 text-slate-500 border border-slate-200"}`}>
+              {beatMomentStatus}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderContent = () => {
     if (stage === ProductionStage.LIBRARY) return renderLibraryView();
     if (stage === ProductionStage.INPUT) return (
@@ -4626,6 +5020,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
               <p className="mt-3 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
                 Bước này không gọi AI, không cần copy prompt và không cần dán JSON. App sẽ gom các field đã duyệt từ những bước trước để tạo `engineerPrompts[]`.
               </p>
+            </div>
+          ) : stage === ProductionStage.ANALYSIS ? (
+            <div className="space-y-6">
+              {renderAnalysisSplitOverview()}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">San sang chia Beats</h3></div>
             </div>
           ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-16 text-center h-full flex flex-col items-center justify-center"><Send className="w-12 h-12 text-indigo-200 mb-6" /><h3 className="text-xl font-bold text-slate-900">Sẵn sàng phân tích</h3></div>

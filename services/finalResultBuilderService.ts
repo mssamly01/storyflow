@@ -16,7 +16,9 @@ import type {
   RoleInShot,
   CharacterVisualState,
   CameraHint,
-  PositionSource
+  PositionSource,
+  BeatMomentDetail,
+  InteractionTarget
 } from "../types";
 import { getPanelSourceBundle } from "./sourceOfTruthService";
 import { normalizeStoryboardPanels, sanitizeStoryboardPanels } from "./storyboardDataService";
@@ -179,6 +181,49 @@ export function normalizeCharacterMomentDetails(raw: any): BeatCharacterMomentDe
   }));
 }
 
+function normalizeRoleInShot(value: unknown): RoleInShot {
+  const role = asString(value, "supporting");
+  return role === "main" || role === "supporting" || role === "background" || role === "offscreen"
+    ? role
+    : "supporting";
+}
+
+function normalizePositionSource(value: unknown): PositionSource {
+  const source = asString(value, "inferred");
+  return source === "explicit" || source === "inherited" || source === "inferred"
+    ? source
+    : "inferred";
+}
+
+export function normalizeCharacterVisualStates(raw: unknown): CharacterVisualState[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item: any) => ({
+      characterName: asString(item?.characterName ?? item?.character_name ?? item?.name),
+      roleInShot: normalizeRoleInShot(item?.roleInShot ?? item?.role_in_shot),
+      facialExpression: asString(item?.facialExpression ?? item?.facial_expression),
+      bodyLanguage: asString(item?.bodyLanguage ?? item?.body_language ?? item?.posture),
+      gazeTarget: asString(item?.gazeTarget ?? item?.gaze_target),
+      emotionalState: asString(item?.emotionalState ?? item?.emotional_state),
+      position: asString(item?.position),
+      positionSource: normalizePositionSource(item?.positionSource ?? item?.position_source)
+    }))
+    .filter((item) => item.characterName);
+}
+
+export function normalizeInteractionTargets(raw: unknown): InteractionTarget[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item: any) => ({
+      actor: asString(item?.actor),
+      target: asString(item?.target),
+      interaction: asString(item?.interaction)
+    }))
+    .filter((item) => item.actor || item.target || item.interaction);
+}
+
 export function normalizeScreens(raw: unknown): StoryScreen[] {
   return getItems(raw, ["screens", "storyScreens"]).map((item, index) => {
     const screenNumber = asNumber(item.screenNumber ?? item.screen_number, index + 1);
@@ -206,6 +251,45 @@ export function normalizeScreens(raw: unknown): StoryScreen[] {
   });
 }
 
+export function normalizeBeatSkeletons(raw: unknown): StoryBeat[] {
+  const items = getItems(raw, ["beats"]);
+  return items.map((item, index) => {
+    const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
+    const focusCharacters = asStringArray(item.focusCharacters ?? item.focus_characters);
+    const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
+    const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
+    const characters = asStringArray(item.characters ?? item.presentCharacters ?? item.present_characters ?? item.charactersInvolved ?? item.characters_involved);
+    const resolvedCharacters = characters.length
+      ? characters
+      : Array.from(new Set([...visibleCharacters, ...offscreenPresentCharacters]));
+
+    return {
+      beatId,
+      screenId: asString(item.screenId ?? item.screen_id, "screen_001"),
+      originalText: asString(item.originalText ?? item.original_text),
+      sourceSegmentIds: asStringArray(item.sourceSegmentIds ?? item.source_segment_ids),
+      sourceStartOffset: asOptionalNumber(item.sourceStartOffset ?? item.source_start_offset),
+      sourceEndOffset: asOptionalNumber(item.sourceEndOffset ?? item.source_end_offset),
+      summary: asString(item.summary),
+      action: asString(item.action ?? item.actionAnalysis ?? item.action_analysis),
+      visualFocus: asString(item.visualFocus ?? item.visual_focus),
+      beatType: asString(item.beatType ?? item.beat_type, "action") as BeatType,
+      focusCharacters,
+      visibleCharacters,
+      offscreenPresentCharacters,
+      characters: resolvedCharacters,
+      presentCharacters: resolvedCharacters,
+      charactersInvolved: resolvedCharacters,
+      location: asString(item.location ?? item.locationName ?? item.location_name),
+      locationName: asString(item.locationName ?? item.location_name ?? item.location),
+      locationId: asString(item.locationId ?? item.location_id),
+      timeOfDay: asString(item.timeOfDay ?? item.time_of_day),
+      atmosphere: asString(item.atmosphere),
+      meta: item.meta
+    } as StoryBeat;
+  });
+}
+
 export function normalizeBeats(raw: unknown): StoryBeat[] {
   const items = getItems(raw, ["beats"]);
   return items.map((item, index) => {
@@ -221,23 +305,8 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
     const mainAction = asString(item.mainAction ?? item.main_action ?? item.action ?? item.actionAnalysis ?? "");
 
     const rawVisualStates = item.characterVisualStates ?? item.character_visual_states;
-    const characterVisualStates: CharacterVisualState[] = [];
-    if (Array.isArray(rawVisualStates)) {
-      rawVisualStates.forEach((vs: any) => {
-        if (vs && typeof vs === "object") {
-          characterVisualStates.push({
-            characterName: asString(vs.characterName ?? vs.character_name),
-            roleInShot: asString(vs.roleInShot ?? vs.role_in_shot, "supporting") as RoleInShot,
-            facialExpression: asString(vs.facialExpression ?? vs.facial_expression),
-            bodyLanguage: asString(vs.bodyLanguage ?? vs.body_language ?? vs.posture ?? ""),
-            gazeTarget: asString(vs.gazeTarget ?? vs.gaze_target),
-            emotionalState: asString(vs.emotionalState ?? vs.emotional_state),
-            position: asString(vs.position),
-            positionSource: asString(vs.positionSource ?? vs.position_source, "inferred") as PositionSource
-          });
-        }
-      });
-    } else {
+    let characterVisualStates = normalizeCharacterVisualStates(rawVisualStates);
+    if (!characterVisualStates.length) {
       // Build fallback from presentCharacters + legacy postures/positions
       presentCharacters.forEach((charName) => {
         const rawPostures = item.characterPostures ?? item.character_postures ?? [];
@@ -295,7 +364,7 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
       exitedCharacters: asStringArray(item.exitedCharacters ?? item.exited_characters),
       characterPostures: Array.isArray(item.characterPostures ?? item.character_postures) ? (item.characterPostures ?? item.character_postures) : [],
       characterPositions: Array.isArray(item.characterPositions ?? item.character_positions) ? (item.characterPositions ?? item.character_positions) : [],
-      interactionTarget: Array.isArray(item.interactionTarget ?? item.interaction_target) ? (item.interactionTarget ?? item.interaction_target) : [],
+      interactionTarget: normalizeInteractionTargets(item.interactionTarget ?? item.interaction_target),
       notes: item.notes ? String(item.notes) : undefined,
       visualMoment,
       mainAction,
@@ -338,8 +407,8 @@ export function normalizeScreenContinuity(raw: unknown): ScreenContinuityItem[] 
   }));
 }
 
-export function normalizeBeatMomentDetails(raw: unknown): any[] {
-  return getItems(raw, ["beatDetails", "beats", "details"]).map((item, index) => {
+export function normalizeBeatMomentDetails(raw: unknown): BeatMomentDetail[] {
+  return getItems(raw, ["beatDetails", "beatMomentDetails", "beats", "details"]).map((item, index) => {
     const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
     const characterMomentDetails = asArray(item.characterMomentDetails ?? item.character_moment_details ?? []).map((cmd: any) => ({
       characterName: cmd.characterName ?? cmd.character_name ?? cmd.name ?? "",
@@ -355,13 +424,19 @@ export function normalizeBeatMomentDetails(raw: unknown): any[] {
     return {
       beatId,
       screenId: asString(item.screenId ?? item.screen_id),
+      visualMoment: asString(item.visualMoment ?? item.visual_moment),
+      mainAction: asString(item.mainAction ?? item.main_action),
+      characterVisualStates: normalizeCharacterVisualStates(item.characterVisualStates ?? item.character_visual_states),
+      interactionTarget: normalizeInteractionTargets(item.interactionTarget ?? item.interaction_target),
+      environmentDetails: asString(item.environmentDetails ?? item.environment_details),
+      continuityNotes: asString(item.continuityNotes ?? item.continuity_notes),
       locationState: asString(item.locationState ?? item.location_state),
       posture: asString(item.posture),
       interaction: asString(item.interaction),
       props: asStringArray(item.props),
       characterMomentDetails
     };
-  });
+  }).filter((item) => item.beatId > 0);
 }
 
 export function mergeScreenContinuityIntoScreens(
@@ -430,13 +505,66 @@ export function mergeBeatMomentDetailsIntoBeats(
 
     return {
       ...beat,
+      visualMoment: matched.visualMoment || beat.visualMoment,
+      mainAction: matched.mainAction || beat.mainAction,
+      characterVisualStates: matched.characterVisualStates?.length
+        ? matched.characterVisualStates
+        : beat.characterVisualStates,
+      interactionTarget: matched.interactionTarget?.length
+        ? matched.interactionTarget
+        : beat.interactionTarget,
+      environmentDetails: matched.environmentDetails || beat.environmentDetails,
+      continuityNotes: matched.continuityNotes || beat.continuityNotes,
       locationState: matched.locationState || beat.locationState,
       posture: matched.posture || beat.posture,
       interaction: matched.interaction || beat.interaction,
       props: matched.props?.length ? matched.props : beat.props,
-      characterMomentDetails
+      characterMomentDetails,
+      beatId: beat.beatId,
+      screenId: beat.screenId,
+      sourceSegmentIds: beat.sourceSegmentIds,
+      originalText: beat.originalText
     };
   });
+}
+
+export function extractBeatMomentDetailsFromLegacyBeats(raw: unknown): BeatMomentDetail[] {
+  return getItems(raw, ["beats"])
+    .filter((beat) =>
+      Boolean(
+        beat.visualMoment ||
+        beat.visual_moment ||
+        beat.mainAction ||
+        beat.main_action ||
+        (Array.isArray(beat.characterVisualStates ?? beat.character_visual_states) && (beat.characterVisualStates ?? beat.character_visual_states).length) ||
+        (Array.isArray(beat.interactionTarget ?? beat.interaction_target) && (beat.interactionTarget ?? beat.interaction_target).length) ||
+        beat.environmentDetails ||
+        beat.environment_details ||
+        beat.continuityNotes ||
+        beat.continuity_notes ||
+        beat.locationState ||
+        beat.location_state ||
+        beat.posture ||
+        beat.interaction ||
+        (Array.isArray(beat.props) && beat.props.length) ||
+        (Array.isArray(beat.characterMomentDetails ?? beat.character_moment_details) && (beat.characterMomentDetails ?? beat.character_moment_details).length)
+      )
+    )
+    .map((beat, index) => ({
+      beatId: asNumber(beat.beatId ?? beat.beat_id, index + 1),
+      visualMoment: asString(beat.visualMoment ?? beat.visual_moment),
+      mainAction: asString(beat.mainAction ?? beat.main_action),
+      characterVisualStates: normalizeCharacterVisualStates(beat.characterVisualStates ?? beat.character_visual_states),
+      interactionTarget: normalizeInteractionTargets(beat.interactionTarget ?? beat.interaction_target),
+      environmentDetails: asString(beat.environmentDetails ?? beat.environment_details),
+      continuityNotes: asString(beat.continuityNotes ?? beat.continuity_notes),
+      locationState: asString(beat.locationState ?? beat.location_state),
+      posture: asString(beat.posture),
+      interaction: asString(beat.interaction),
+      props: asStringArray(beat.props),
+      characterMomentDetails: normalizeCharacterMomentDetails(beat)
+    }))
+    .filter((detail) => detail.beatId > 0);
 }
 
 export function createFallbackScreensFromBeats(beats: StoryBeat[]): StoryScreen[] {
@@ -606,8 +734,14 @@ export function buildFinalResultPanel(params: {
       offscreenPresentCharacters: source.offscreenPresentCharacters,
       props: source.props,
       action: source.action,
+      visualMoment: source.visualMoment,
+      mainAction: source.mainAction,
       interaction: source.interaction,
+      interactionTarget: source.interactionTarget,
       posture: source.posture,
+      characterVisualStates: source.characterVisualStates,
+      environmentDetails: source.environmentDetails,
+      continuityNotes: source.continuityNotes,
       atmosphere: source.atmosphere,
       visualFocus: source.visualFocus,
       characterMomentDetails: bundle.beat?.characterMomentDetails
@@ -644,7 +778,7 @@ export function buildFinalResultPanel(params: {
     cameraAngle: panel.cameraAngle || "",
     framing: panel.composition || panel.framing || "",
     subject,
-    action: source.action,
+    action: source.mainAction || source.action,
     location_cues: source.locationName,
     lighting: panel.lightingDirection || panel.lighting || bundle.location?.lighting || "",
     visualPrompt: finalVisualPrompt,

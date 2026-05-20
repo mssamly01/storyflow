@@ -78,7 +78,7 @@ function formatSourceSegmentsForPrompt(sourceSegments: SourceSegment[]): string 
   );
 }
 
-export const getBeatAnalysisPrompt = (source: SourceSegment[] | string, artStyleDescription = "") => {
+export const getLegacySourceSegmentBeatAnalysisPrompt = (source: SourceSegment[] | string, artStyleDescription = "") => {
   const sourceSegments = Array.isArray(source) ? source : segmentSourceText(source);
   return `
 You are a professional story analyst for a vertical comic / visual storyboard generation app.
@@ -330,6 +330,117 @@ ${formatSourceSegmentsForPrompt(sourceSegments)}
 \`\`\`
 `;
 };
+
+export const getBeatSkeletonPrompt = (source: SourceSegment[] | string, artStyleDescription = "") => {
+  const sourceSegments = Array.isArray(source) ? source : segmentSourceText(source);
+
+  return `
+You are Storyflow Beat Skeleton Analyzer.
+
+Your ONLY task:
+Split the provided SOURCE SEGMENTS into accurate story beats and basic screen skeletons.
+
+CRITICAL ORIGINAL TEXT RULE:
+- Do NOT output originalText.
+- Do NOT copy, rewrite, summarize, translate, polish, or shorten source text.
+- The app will hydrate originalText deterministically from sourceSegmentIds.
+- Every body source segment must appear in exactly one beat.
+- Do not skip or duplicate body source segments.
+- Keep sourceSegmentIds in chronological order.
+
+CORE PRINCIPLE:
+- 1 beat = 1 visual story moment.
+- This step focuses on beat rhythm, source coverage, and simple scene metadata only.
+- Do NOT perform deep visual analysis in this step.
+- Do NOT output visualMoment, mainAction, characterVisualStates, facialExpression, bodyLanguage, gazeTarget, detailed position, interactionTarget, environmentDetails, detailed props, cameraHint, compositionHint, continuityNotes, or visualPrompt.
+- Beat Moment Details, Storyboard, and Prompt Engineering will handle those later.
+
+BEAT LENGTH AND RHYTHM:
+- Target length: 20-60 words of source text per beat.
+- Preferred range: 25-50 words.
+- A beat may be shorter than 20 words only for a major reveal, hard scene cut, strong standalone visual moment, decisive emotional turn, or critical dialogue.
+- Do not create many short beats in a row.
+- When uncertain, merge adjacent details instead of splitting.
+- Prefer one strong beat over several weak micro-beats.
+
+BEAT SPLITTING RULES:
+- Never cut in the middle of a sentence.
+- Split when the central visual story moment changes enough to require a different image.
+- Split when the central character focus, main visible action, meaningful interaction target, location, time, scene, major emotion, or plot reveal changes.
+- Split long dialogue only when topic, goal, or emotional direction changes.
+
+BEAT MERGING RULES:
+- Merge short dialogue with its direct action tag.
+- Merge a question and answer pair in calls/messages when they form one exchange.
+- Merge tiny gestures, gaze shifts, pauses, breaths, nods, and short continuation lines into the current beat unless they become a new visual story moment.
+
+SCREEN SKELETON RULES:
+- Group consecutive beats into screens.
+- A screen is a continuous scene with the same location, time period, and present character set.
+- Keep screen metadata simple. Detailed continuity is handled later.
+
+CHARACTER PRESENCE RULES:
+- visibleCharacters = characters physically visible in the beat.
+- offscreenPresentCharacters = characters present in the scene but not visible in the current shot.
+- characters = union of visibleCharacters and offscreenPresentCharacters.
+- A character remains present until the text says they leave, disappear, or the scene changes.
+
+SELF-CHECK BEFORE OUTPUT:
+1. Does every body source segment appear exactly once?
+2. Are all sourceSegmentIds in order?
+3. Are there any unnecessary micro-beats?
+4. Did you output any deep visual fields? If yes, remove them.
+5. Do not output this self-check. Only output JSON.
+
+Return ONLY valid JSON with this schema:
+
+{
+  "screens": [
+    {
+      "screenId": "screen_001",
+      "screenNumber": 1,
+      "screenName": "Concrete screen name",
+      "location": "Concrete location",
+      "locationId": "loc_001",
+      "timeOfDay": "Early Morning | Morning | Mid-day | Afternoon | Golden Hour | Evening | Late Night | Unknown",
+      "screenCharacters": ["Character A"],
+      "startBeatId": 1,
+      "endBeatId": 5,
+      "summary": "What happens in this screen"
+    }
+  ],
+  "beats": [
+    {
+      "beatId": 1,
+      "screenId": "screen_001",
+      "sourceSegmentIds": ["src_0001", "src_0002"],
+      "summary": "short plot summary",
+      "action": "one main drawable action",
+      "visualFocus": "main thing the image should focus on",
+      "beatType": "establishing | action | reaction | dialogue | reveal | transition",
+      "focusCharacters": ["Character A"],
+      "visibleCharacters": ["Character A"],
+      "offscreenPresentCharacters": [],
+      "characters": ["Character A"],
+      "location": "Concrete location",
+      "locationId": "loc_001",
+      "timeOfDay": "Early Morning | Morning | Mid-day | Afternoon | Golden Hour | Evening | Late Night | Unknown",
+      "atmosphere": "dominant mood"
+    }
+  ]
+}
+
+SOURCE SEGMENTS:
+\`\`\`json
+${formatSourceSegmentsForPrompt(sourceSegments)}
+\`\`\`
+
+STYLE CONTEXT:
+${artStyleDescription || "No specific style selected."}
+`;
+};
+
+export const getBeatAnalysisPrompt = getBeatSkeletonPrompt;
 
 const getLegacyBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
 You are a professional story analyst for a vertical comic / visual storyboard generation app.
@@ -816,6 +927,8 @@ function compactStoryboardBeat(beat: StoryBeat) {
   return {
     beatId: beat.beatId,
     screenId: beat.screenId,
+    sourceSegmentIds: beat.sourceSegmentIds || [],
+    originalText: beat.originalText,
     summary: beat.summary,
     focusCharacters: beat.focusCharacters || [],
     visibleCharacters: beat.visibleCharacters || [],
@@ -1108,6 +1221,12 @@ function compactStoryboardBeatMoment(item: any) {
   return {
     beatId: item.beatId,
     screenId: item.screenId,
+    visualMoment: item.visualMoment,
+    mainAction: item.mainAction,
+    characterVisualStates: item.characterVisualStates || [],
+    interactionTarget: item.interactionTarget || [],
+    environmentDetails: item.environmentDetails,
+    continuityNotes: item.continuityNotes,
     locationState: item.locationState,
     posture: item.posture,
     interaction: item.interaction,
@@ -1186,6 +1305,11 @@ function buildStoryboardPromptContext(
     .filter((item) => selectedBeatIds.has(Number(item.beatId)));
   for (const item of beatMomentItems) {
     (item.characterMomentDetails || []).forEach((detail: any) => characterKeys.add(normalize(detail.characterName)));
+    (item.characterVisualStates || []).forEach((detail: any) => characterKeys.add(normalize(detail.characterName)));
+    (item.interactionTarget || []).forEach((target: any) => {
+      characterKeys.add(normalize(target.actor));
+      characterKeys.add(normalize(target.target));
+    });
   }
 
   const selectedCharacters = (library.characters || []).filter((character) => {
@@ -1463,7 +1587,7 @@ SOURCE FIELD MAP:
 - Handheld/variable items: use Beat Moment Details first, then screen-level handheld items only if still visible in this beat.
 - Scene: use Storyboard shotType, cameraAngle, and composition.
 - Layers: use Storyboard foreground, midground, background, and visualEmphasis.
-- Beat action: use Beat Skeleton + Beat Moment Details for action, interaction, posture, expression, temporary props, and temporary locationState.
+- Beat action: use Beat Skeleton + Beat Moment Details for visualMoment, mainAction, characterVisualStates, interactionTarget, environmentDetails, props, posture, expression, and temporary locationState.
 - originalText is for UI/debug only. Do not use originalText to rewrite visualPrompt.
 
 OUTPUT TEMPLATE ORDER:
@@ -1810,44 +1934,71 @@ export const getBeatMomentDetailsPrompt = (analysis: string, charLocAnalysis: st
   const context = buildBeatMomentPromptContext(analysis, charLocAnalysis, screenContinuity);
 
   return `
-You are a master of visual sequencing and moment-to-moment action for storyboards.
+You are Storyflow Beat Moment Detail Analyzer.
 
 Your ONLY task:
-Perform Beat-Level Moment Details Analysis (Phase 3).
-You will analyze the screen skeleton and screen continuity, and output the highly detailed, momentary actions, expressions, and posture changes for each beat.
+Enrich each existing beat with detailed visual moment information.
 
-BEAT MOMENT RULES:
-1. For each beat, define the exact posture, active momentary gesture, expression, and handheld item or props.
-2. Do NOT output "screenId" or "originalText" inside the beatDetails.
-3. Required output for each beat consists ONLY of: beatId, interaction, posture, props, locationState, and characterMomentDetails.
-4. In characterMomentDetails, you must specify:
-   - characterId
-   - characterName
-   - visibleAccessories (accessories visible on the character in this exact beat, including exact body/clothing position)
-   - handheldItems (items held in hand right now, including exact hand/body position)
-   - accessoriesChange (list of any changes to their accessories at this moment, including new position, e.g. ["name badge now hanging from neck lanyard"])
-   - momentNotes (facial expressions, detailed hand gestures, or body language specific to this beat)
-5. LOCATION / OUTFIT BOUNDARY RULE - CRITICAL:
-   - Do not describe or change character outfit in this step.
-   - Do not redefine the location identity.
-   - locationState must describe only temporary beat-level changes or object interactions, such as "broken glass shards on the floor" or "red book lying on the glass table".
-   - Camera focus areas such as "floor near sofa", "glass table surface", "hallway visible", and "eye close-up" are momentary framing details, not new locations.
-6. VARIABLE ACCESSORY / PROP POSITION RULE - CRITICAL:
-   - For flexible items such as phones, notebooks, folders, cups, name badges, ID cards, bags, or medical charts, describe where they are in this beat.
-   - Good: "smartphone gripped in her right hand", "notebook tucked under her left arm", "ID card hanging from a neck lanyard", "name badge pinned to the left chest pocket".
-   - If the item is not visible in this exact beat, omit it.
-7. Return ONLY a valid JSON object. No markdown. No commentary.
-8. The compact input below intentionally excludes originalText and full library data. Use only the approved fields provided.
+CRITICAL RULES:
+- Do NOT split beats.
+- Do NOT merge beats.
+- Do NOT renumber beats.
+- Do NOT change beatId, sourceSegmentIds, originalText, screenId, location, or timeOfDay.
+- Do NOT create final visualPrompt.
+- Do NOT create camera/composition fields. Storyboard will handle camera and composition.
+- Use only approved Beat Skeleton, Screen Continuity, Character Library, and Location Library data.
+- Keep all details grounded in the source-backed beat data.
+- If a detail is uncertain, write it in continuityNotes instead of inventing a new story fact.
+
+VISUAL DETAIL RULES:
+- visualMoment describes the exact illustration moment for this beat.
+- mainAction is a specific visible action, not just a plot summary.
+- characterVisualStates must describe visible expression, body language, gaze target, emotional state, and position for visible characters.
+- If a character is present but offscreen, roleInShot must be "offscreen" and visible expression/body details should stay empty or minimal.
+- interactionTarget describes who acts or speaks toward whom.
+- environmentDetails describes visible, beat-level environment details.
+- props includes only visible objects relevant in this exact beat.
+- continuityNotes records inherited positions, uncertain details, or constraints from previous beats/screens.
+- Do not redefine outfit or stable location identity in this step.
+- Do not add major props, injuries, outfits, locations, characters, or actions not supported by approved input.
+
+LEGACY COMPATIBILITY:
+- You may also fill interaction, posture, locationState, and characterMomentDetails when useful.
+- The primary required visual fields are visualMoment, mainAction, characterVisualStates, interactionTarget, environmentDetails, props, and continuityNotes.
+- Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
 {
   "beatDetails": [
     {
       "beatId": 1,
-      "locationState": "string (momentary location changes or object interaction)",
-      "posture": "string (explicit physical pose: standing, sitting, crouching, etc.)",
-      "interaction": "string (detailed physical or verbal interaction, e.g. looking at X, pointing at Y)",
-      "props": ["string (active handheld props or objects in this exact beat)"],
+      "visualMoment": "the exact visual moment that should become an illustration",
+      "mainAction": "specific visible action",
+      "characterVisualStates": [
+        {
+          "characterName": "name",
+          "roleInShot": "main | supporting | background | offscreen",
+          "facialExpression": "specific visible expression or empty if offscreen",
+          "bodyLanguage": "specific posture/body action or empty if offscreen",
+          "gazeTarget": "who or what the character is looking at",
+          "emotionalState": "inner emotion visible through expression/body",
+          "position": "specific position in the scene",
+          "positionSource": "explicit | inherited | inferred"
+        }
+      ],
+      "interactionTarget": [
+        {
+          "actor": "Character A",
+          "target": "Character B",
+          "interaction": "what the actor does/says toward the target"
+        }
+      ],
+      "environmentDetails": "visible beat-level environment details",
+      "props": ["visible active prop in this beat"],
+      "continuityNotes": "inherited or uncertain details",
+      "locationState": "optional legacy momentary location/object state",
+      "posture": "optional legacy summarized posture",
+      "interaction": "optional legacy summarized interaction",
       "characterMomentDetails": [
         {
           "characterId": "string",
@@ -1855,7 +2006,9 @@ Required JSON Schema:
           "visibleAccessories": ["string"],
           "handheldItems": ["string"],
           "accessoriesChange": ["string"],
-          "momentNotes": "string"
+          "momentNotes": "string",
+          "poseRefinement": "string",
+          "expression": "string"
         }
       ]
     }
