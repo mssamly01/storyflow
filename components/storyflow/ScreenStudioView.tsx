@@ -192,6 +192,8 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
         </div>
       </div>
 
+      {false && (
+      <>
       {/* Visual Shot Details Panel */}
       <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50/50 p-5">
         <div className="flex items-center gap-2 mb-3">
@@ -286,6 +288,8 @@ function BeatCard({ beat, isExpanded, onToggle }: { beat: StoryBeat; isExpanded:
           </div>
         )}
       </div>
+      </>
+      )}
 
       {isExpanded && (
         <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 md:grid-cols-2">

@@ -14,6 +14,7 @@ import {
   getFinalResultMissingInputs,
   mergeBeatMomentDetailsIntoBeats,
   mergeScreenContinuityIntoScreens,
+  normalizeBeatMomentDetails,
   normalizeBeatSkeletons,
   normalizeBeats,
   normalizeCharacterLocationLibrary,
@@ -319,8 +320,6 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [isGlobalManualMode, setIsGlobalManualMode] = useState(false);
   const [showAnalysisModeModal, setShowAnalysisModeModal] = useState(false);
   const [manualInputValue, setManualInputValue] = useState('');
-  const [analysisManualInputValue, setAnalysisManualInputValue] = useState('');
-  const [beatMomentManualInputValue, setBeatMomentManualInputValue] = useState('');
   const [storyboardBatchIndex, setStoryboardBatchIndex] = useState(0);
   const [storyboardBatchInputs, setStoryboardBatchInputs] = useState<Record<number, string>>({});
   const [showStoryboardPreview, setShowStoryboardPreview] = useState(false);
@@ -921,11 +920,9 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     const focusCharacters = beat.focusCharacters ?? beat.focus_characters ?? characters;
     const visibleCharacters = beat.visibleCharacters ?? beat.visible_characters ?? focusCharacters;
     const offscreenPresentCharacters = beat.offscreenPresentCharacters ?? beat.offscreen_present_characters ?? [];
-    const props = beat.props ?? [];
     const sourceSegmentIds = beat.sourceSegmentIds ?? beat.source_segment_ids ?? [];
 
     return {
-      ...beat,
       beatId: beat.beatId ?? index + 1,
       screenId: beat.screenId || beat.screen_id || 'screen_001',
       originalText: beat.originalText ?? beat.original_text ?? '',
@@ -937,8 +934,6 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       offscreenPresentCharacters: Array.isArray(offscreenPresentCharacters) ? offscreenPresentCharacters : [offscreenPresentCharacters].filter(Boolean),
       locationName: beat.locationName || beat.location || '',
       locationId: beat.locationId || '',
-      locationState: beat.locationState || '',
-      props: Array.isArray(props) ? props : [props].filter(Boolean),
       beatType: beat.beatType || 'action',
       mentionedCharacters: Array.isArray(beat.mentionedCharacters) ? beat.mentionedCharacters : [],
       presentCharacters: Array.isArray(beat.presentCharacters) ? beat.presentCharacters : (Array.isArray(characters) ? characters : []),
@@ -946,15 +941,91 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       exitedCharacters: Array.isArray(beat.exitedCharacters) ? beat.exitedCharacters : [],
       characterPostures: Array.isArray(beat.characterPostures) ? beat.characterPostures : [],
       characterPositions: Array.isArray(beat.characterPositions) ? beat.characterPositions : [],
-      interactionTarget: Array.isArray(beat.interactionTarget) ? beat.interactionTarget : [],
       notes: beat.notes || undefined,
-      visualMoment: beat.visualMoment || beat.visual_moment || beat.analysis || beat.summary || beat.action || '',
-      mainAction: beat.mainAction || beat.main_action || beat.action || beat.actionAnalysis || '',
-      characterVisualStates: Array.isArray(beat.characterVisualStates ?? beat.character_visual_states) ? (beat.characterVisualStates ?? beat.character_visual_states) : [],
-      environmentDetails: beat.environmentDetails || beat.environment_details || beat.locationState || '',
-      cameraHint: beat.cameraHint || beat.camera_hint || 'unknown',
-      compositionHint: beat.compositionHint || beat.composition_hint || '',
-      continuityNotes: beat.continuityNotes || beat.continuity_notes || beat.notes || ''
+      summary: beat.summary || '',
+      action: beat.action || beat.actionAnalysis || beat.analysis || '',
+      visualFocus: beat.visualFocus || beat.visual_focus || '',
+      location: beat.location || beat.locationName || '',
+      timeOfDay: beat.timeOfDay || beat.time_of_day || '',
+      atmosphere: beat.atmosphere || ''
+    };
+  };
+
+  const toCleanStringArray = (value: any): string[] => {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  };
+
+  const sanitizeBeatSkeleton = (beat: any, index = 0) => {
+    if (!beat || typeof beat !== "object" || Array.isArray(beat)) {
+      return {
+        beatId: index + 1,
+        screenId: "screen_001",
+        sourceSegmentIds: [],
+        originalText: String(beat || ""),
+        summary: "",
+        action: "",
+        visualFocus: "",
+        beatType: "action",
+        focusCharacters: [],
+        visibleCharacters: [],
+        offscreenPresentCharacters: [],
+        characters: [],
+        location: "",
+        locationId: "",
+        timeOfDay: "",
+        atmosphere: ""
+      };
+    }
+
+    const focusCharacters = toCleanStringArray(beat.focusCharacters ?? beat.focus_characters);
+    const visibleCharacters = toCleanStringArray(beat.visibleCharacters ?? beat.visible_characters);
+    const offscreenPresentCharacters = toCleanStringArray(beat.offscreenPresentCharacters ?? beat.offscreen_present_characters);
+    const legacyCharacters = toCleanStringArray(
+      beat.characters ?? beat.presentCharacters ?? beat.present_characters ?? beat.charactersInvolved ?? beat.characters_involved
+    );
+    const characters = legacyCharacters.length
+      ? legacyCharacters
+      : Array.from(new Set([...visibleCharacters, ...offscreenPresentCharacters]));
+
+    return {
+      beatId: beat.beatId ?? beat.beat_id ?? index + 1,
+      screenId: beat.screenId ?? beat.screen_id ?? "screen_001",
+      sourceSegmentIds: toCleanStringArray(beat.sourceSegmentIds ?? beat.source_segment_ids),
+      originalText: beat.originalText ?? beat.original_text ?? "",
+      summary: beat.summary ?? "",
+      action: beat.action ?? beat.actionAnalysis ?? beat.action_analysis ?? beat.analysis ?? "",
+      visualFocus: beat.visualFocus ?? beat.visual_focus ?? "",
+      beatType: beat.beatType ?? beat.beat_type ?? "action",
+      focusCharacters,
+      visibleCharacters,
+      offscreenPresentCharacters,
+      characters,
+      location: beat.location ?? beat.locationName ?? beat.location_name ?? "",
+      locationId: beat.locationId ?? beat.location_id ?? "",
+      timeOfDay: beat.timeOfDay ?? beat.time_of_day ?? "",
+      atmosphere: beat.atmosphere ?? ""
+    };
+  };
+
+  const sanitizeBeatSkeletonPayload = (analysisData: any) => {
+    const nestedAnalysis = typeof analysisData?.analysis === "string"
+      ? parseJsonSafe<any>(analysisData.analysis, null)
+      : analysisData?.analysis;
+    const source = Array.isArray(analysisData) || Array.isArray(analysisData?.beats)
+      ? analysisData
+      : nestedAnalysis;
+    const rawBeats = Array.isArray(source) ? source : (Array.isArray(source?.beats) ? source.beats : null);
+
+    if (!rawBeats) return analysisData;
+
+    const payload = Array.isArray(source)
+      ? { beats: rawBeats }
+      : { ...source };
+
+    return {
+      ...payload,
+      beats: rawBeats.map((beat: any, index: number) => sanitizeBeatSkeleton(beat, index))
     };
   };
 
@@ -970,14 +1041,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const hydratePastedAnalysisIfNeeded = (analysisData: any) => {
-    const beats = getAnalysisBeatsFromParsed(analysisData);
+    const sanitizedAnalysisData = sanitizeBeatSkeletonPayload(analysisData);
+    const beats = getAnalysisBeatsFromParsed(sanitizedAnalysisData);
     if (!beats || beats.length === 0) {
-      return analysisData;
+      return sanitizedAnalysisData;
     }
 
-    const payload = Array.isArray(analysisData)
-      ? { beats: analysisData }
-      : analysisData;
+    const payload = Array.isArray(sanitizedAnalysisData)
+      ? { beats: sanitizedAnalysisData }
+      : sanitizedAnalysisData;
 
     if (!inputData.script.trim()) {
       const warningPayload = {
@@ -994,7 +1066,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       { segmentMode: "auto", repairMissingSegments: true, splitLongBeats: false }
     );
 
-    return hydrated;
+    return sanitizeBeatSkeletonPayload(hydrated);
   };
 
   const storyboardBatchInfo = useMemo(() => {
@@ -2418,7 +2490,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     );
   };
 
-  const saveManualBeatSkeletonResult = (rawValue: string) => {
+  const saveManualAnalysisResult = (rawValue: string) => {
     if (!rawValue.trim()) return;
     setError(null);
 
@@ -2437,15 +2509,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
 
     const rawAnalysisPayload = Array.isArray(parsedJson)
-      ? { beats: parsedJson }
-      : { ...parsedJson, beats: pastedBeatAnalysis };
+      ? { beats: parsedJson.map((beat: any, index: number) => sanitizeBeatSkeleton(beat, index)) }
+      : { ...parsedJson, beats: pastedBeatAnalysis.map((beat: any, index: number) => sanitizeBeatSkeleton(beat, index)) };
     const analysisPayload = hydratePastedAnalysisIfNeeded(rawAnalysisPayload);
     const analysisValue = JSON.stringify(analysisPayload, null, 2);
 
     updateProductionDataByStage(analysisValue, ProductionStage.ANALYSIS);
-    setAnalysisManualInputValue('');
     setManualInputValue('');
-    showToast("Da luu Chia Beats. Prompt Buoc 2 da san sang.");
+    setStage(ProductionStage.CHARACTER_LOCATION);
+    showToast("Da luu Chia Beats.");
   };
 
   const saveManualBeatMomentResult = (rawValue: string) => {
@@ -2466,188 +2538,55 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       return;
     }
 
-    const beatMomentValue = JSON.stringify(parsedJson, null, 2);
+    const beatDetails = normalizeBeatMomentDetails(parsedJson);
+    if (!beatDetails.length) {
+      setError("JSON Chi tiet Beat khong co beatDetails hop le.");
+      return;
+    }
+
+    const beatMomentValue = JSON.stringify({ beatDetails }, null, 2);
     updateProductionDataByStage(beatMomentValue, ProductionStage.BEAT_MOMENT);
-    setBeatMomentManualInputValue('');
     setManualInputValue('');
-    showToast("Da luu Chi tiet Beat.");
-  };
-
-  const renderAnalysisManualSplitView = () => {
-    const stylePrompt = getSelectedStylePrompt();
-    const beatSkeletonPrompt = gemini.getBeatAnalysisPrompt(inputData.script, stylePrompt);
-    const canUseBeatMomentPrompt = !!production.analysis?.trim();
-    const beatMomentPrompt = canUseBeatMomentPrompt
-      ? gemini.getBeatMomentDetailsPrompt(
-          production.analysis || '',
-          production.characterLocationAnalysis || '',
-          production.screenContinuity || '',
-          stylePrompt
-        )
-      : "Luu ket qua Chia Beats truoc de tao Prompt Buoc 2 - Chi tiet Beat.";
-    const hasBeatSkeleton = !!production.analysis?.trim();
-    const hasBeatMomentDetails = !!production.beatMomentDetails?.trim();
-    const hasCharacterLocation = !!production.characterLocationAnalysis?.trim();
-    const hasScreenContinuity = !!production.screenContinuity?.trim();
-    const completionTargetStage = hasCharacterLocation && hasScreenContinuity
-      ? ProductionStage.STORYBOARD
-      : ProductionStage.CHARACTER_LOCATION;
-    const completionTargetLabel = completionTargetStage === ProductionStage.STORYBOARD
-      ? "Qua Phac thao minh hoa"
-      : "Qua Nhan vat & Boi canh";
-
-    const promptPanels = [
-      {
-        key: "beat-skeleton",
-        step: "Buoc 1",
-        title: "Chia Beats",
-        prompt: beatSkeletonPrompt,
-        complete: hasBeatSkeleton,
-        locked: false,
-        value: analysisManualInputValue,
-        setValue: setAnalysisManualInputValue,
-        pasteTitle: "Dan ket qua Chia Beats vao day",
-        placeholder: "Dan JSON Beat Skeleton tu AI vao day. Dinh dang can co { \"screens\": [...], \"beats\": [...] }.",
-        saveLabel: "Luu Chia Beats",
-        onSave: () => saveManualBeatSkeletonResult(analysisManualInputValue)
-      },
-      {
-        key: "beat-moment",
-        step: "Buoc 2",
-        title: "Chi tiet Beat",
-        prompt: beatMomentPrompt,
-        complete: hasBeatMomentDetails,
-        locked: !canUseBeatMomentPrompt,
-        value: beatMomentManualInputValue,
-        setValue: setBeatMomentManualInputValue,
-        pasteTitle: "Dan ket qua Chi tiet Beat vao day",
-        placeholder: "Dan JSON Beat Moment Details tu AI vao day. Dinh dang can co { \"beatDetails\": [...] } hoac { \"beatMomentDetails\": [...] }.",
-        saveLabel: "Luu Chi tiet Beat",
-        onSave: () => saveManualBeatMomentResult(beatMomentManualInputValue)
-      }
-    ];
-
-    return (
-      <div className="max-w-6xl mx-auto space-y-6">
-        {renderAnalysisSplitOverview()}
-
-        <div className="grid grid-cols-1 gap-6">
-          {promptPanels.map((panel) => (
-            <section key={panel.key} className={`rounded-3xl border bg-white shadow-sm overflow-hidden ${panel.locked ? "border-slate-200 opacity-75" : panel.complete ? "border-emerald-100" : "border-indigo-100"}`}>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${panel.complete ? "bg-emerald-600 text-white" : panel.locked ? "bg-slate-200 text-slate-400" : "bg-indigo-600 text-white"}`}>
-                    {panel.complete ? <CheckCircle2 className="h-5 w-5" /> : <Terminal className="h-5 w-5" />}
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500">{panel.step}</p>
-                    <h3 className="text-sm font-black text-slate-900">Prompt {panel.title}</h3>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest ${panel.complete ? "bg-emerald-100 text-emerald-700" : panel.locked ? "bg-slate-200 text-slate-500" : "bg-amber-100 text-amber-700"}`}>
-                    {panel.complete ? "Da luu" : panel.locked ? "Cho buoc 1" : "Cho ket qua"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => !panel.locked && copyToClipboard(panel.prompt)}
-                    disabled={panel.locked}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:text-slate-400"
-                  >
-                    <Copy className="h-3.5 w-3.5" /> Copy Prompt
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2">
-                <div className="border-b border-slate-100 bg-slate-950 p-5 lg:border-b-0 lg:border-r">
-                  <pre className="h-80 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-300">
-                    {panel.prompt}
-                  </pre>
-                </div>
-
-                <div className="p-5">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-900">
-                    <Save className="h-4 w-4 text-indigo-600" />
-                    <span>{panel.pasteTitle}</span>
-                  </div>
-                  <textarea
-                    value={panel.value}
-                    onChange={(event) => panel.setValue(event.target.value)}
-                    disabled={panel.locked}
-                    placeholder={panel.placeholder}
-                    className="h-64 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed outline-none transition focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={panel.onSave}
-                    disabled={panel.locked || !panel.value.trim()}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-4 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="h-5 w-5" /> {panel.saveLabel}
-                  </button>
-                </div>
-              </div>
-            </section>
-          ))}
-        </div>
-
-        {hasBeatSkeleton && hasBeatMomentDetails && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-            <div>
-              <h3 className="text-sm font-black uppercase tracking-widest text-emerald-900">Da du 2 phan Phan tich noi dung</h3>
-              <p className="mt-1 text-xs font-semibold text-emerald-700">
-                Chia Beats va Chi tiet Beat da duoc luu. Ban co the tiep tuc qua Nhan vat & Boi canh.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setIsManualMode(false);
-                setStage(completionTargetStage);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-100 transition-colors hover:bg-emerald-700"
-            >
-              {completionTargetLabel} <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    );
+    setStage(ProductionStage.STORYBOARD);
+    showToast("Da luu Chi tiet hanh dong.");
   };
 
   const renderManualView = () => {
-    if (stage === ProductionStage.ANALYSIS || stage === ProductionStage.BEAT_MOMENT) {
-      return renderAnalysisManualSplitView();
-    }
-
-    const isBeatSkeletonManual = stage === ProductionStage.ANALYSIS;
     const isBeatMomentManual = stage === ProductionStage.BEAT_MOMENT;
-    const manualPromptTitle = isBeatSkeletonManual
-      ? "Prompt Buoc 1 - Chia Beats"
+    const manualPromptTitle = stage === ProductionStage.ANALYSIS
+      ? "Prompt Chia Beats"
       : isBeatMomentManual
-        ? "Prompt Buoc 2 - Chi tiet Beat"
+        ? "Prompt Chi tiet hanh dong"
         : "Prompt cho AI ben ngoai";
-    const manualPasteTitle = isBeatSkeletonManual
+    const manualPasteTitle = stage === ProductionStage.ANALYSIS
       ? "Dan ket qua Chia Beats vao day"
       : isBeatMomentManual
-        ? "Dan ket qua Chi tiet Beat vao day"
+        ? "Dan ket qua Beat Moment Details vao day"
         : "Dan ket qua AI tra ve vao day";
-    const manualPlaceholder = isBeatSkeletonManual
-      ? "Dan JSON Beat Skeleton tu AI vao day. Dinh dang can co { \"screens\": [...], \"beats\": [...] }."
+    const manualPlaceholder = stage === ProductionStage.ANALYSIS
+      ? "Dan JSON Beat Skeleton co { \"screens\": [...], \"beats\": [...] }."
       : isBeatMomentManual
-        ? "Dan JSON Beat Moment Details tu AI vao day. Dinh dang can co { \"beatDetails\": [...] } hoac { \"beatMomentDetails\": [...] }."
+        ? "Dan JSON co { \"beatDetails\": [...] }."
         : "Dan noi dung AI da phan tich duoc tu ben ngoai vao day...";
-    const manualSaveLabel = isBeatSkeletonManual
-      ? "Luu Chia Beats va tiep tuc"
+    const manualSaveLabel = stage === ProductionStage.ANALYSIS
+      ? "Luu Chia Beats"
       : isBeatMomentManual
-        ? "Luu Chi tiet Beat va tiep tuc"
+        ? "Luu Chi tiet hanh dong"
         : "Luu va Tiep tuc";
+    const saveCurrentManualStage = () => {
+      if (stage === ProductionStage.ANALYSIS) {
+        saveManualAnalysisResult(manualInputValue);
+        return;
+      }
+      if (stage === ProductionStage.BEAT_MOMENT) {
+        saveManualBeatMomentResult(manualInputValue);
+        return;
+      }
+      handleManualSave();
+    };
 
     return (
     <div className="max-w-5xl mx-auto space-y-6">
-      {(isBeatSkeletonManual || isBeatMomentManual) && renderAnalysisSplitOverview()}
       <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
         <div className="bg-slate-800 px-6 py-3 flex flex-wrap justify-between items-center gap-3 border-b border-slate-700">
           <div className="flex items-center gap-2">
@@ -2729,7 +2668,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
             className="w-full h-80 p-5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50 text-sm leading-relaxed outline-none"
           />
           <button
-            onClick={handleManualSave}
+            onClick={saveCurrentManualStage}
             disabled={!manualInputValue.trim()}
             className="mt-6 w-full py-4 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
           >
@@ -3883,7 +3822,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
 
       case ProductionStage.BEAT_MOMENT: {
-        const beatDetails = parsed.beatDetails || parsed.beatMomentDetails || [];
+        const beatDetails = normalizeBeatMomentDetails(parsed);
         return (
           <div className="space-y-6">
             <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -4852,7 +4791,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Buoc 2</p>
                 <h3 className="text-sm font-black text-slate-900">Chi tiet Beat</h3>
                 <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
-                  Them visualMoment, mainAction, characterVisualStates, props va continuityNotes cho tung beat.
+                  Them visualMoment, mainAction, interaction, posture, props va characterMomentDetails cho tung beat.
                 </p>
                 <button
                   type="button"

@@ -533,6 +533,8 @@ function itemMentionedInContext(
   const haystack = normalize(compact([
     beat.action,
     beat.actionAnalysis,
+    beat.mainAction,
+    beat.visualMoment,
     beat.interaction,
     beat.visualFocus,
     ...(beat.props || []),
@@ -629,9 +631,12 @@ function buildScreenContinuityLine(
 }
 
 function buildSceneLine(panel: StoryboardPanel, beat: StoryBeat): string {
-  const shotType = panel.shotType || (beat.cameraHint && beat.cameraHint !== "unknown" ? beat.cameraHint : "");
+  // Legacy fallback only. New Beat Analysis must not output cameraHint/compositionHint.
+  const legacyShotType = beat.cameraHint && beat.cameraHint !== "unknown" ? beat.cameraHint : "";
+  const legacyComposition = beat.compositionHint || "";
+  const shotType = panel.shotType || legacyShotType;
   const cameraAngle = panel.cameraAngle;
-  const composition = panel.composition || beat.compositionHint;
+  const composition = panel.composition || legacyComposition;
 
   const scene = compact([
     shotType,
@@ -679,6 +684,9 @@ function buildActionLine(
     beat.visualMoment,
     beat.mainAction || beat.action || beat.actionAnalysis,
     beat.interaction,
+    beat.posture ? `posture: ${beat.posture}` : "",
+    beat.props?.length ? `props: ${beat.props.join(", ")}` : "",
+    beat.locationState ? `location state: ${beat.locationState}` : "",
     interactionDetails.join(" | "),
     characterActions.join(" | ")
   ], "; ") || "the approved beat action remains the focus"}`;

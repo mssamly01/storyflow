@@ -78,6 +78,11 @@ function formatSourceSegmentsForPrompt(sourceSegments: SourceSegment[]): string 
   );
 }
 
+/**
+ * @deprecated Legacy fallback only.
+ * Do not use in the active StoryFlow workflow.
+ * Current workflow must use getBeatAnalysisPrompt with sourceSegmentIds.
+ */
 export const getLegacySourceSegmentBeatAnalysisPrompt = (source: SourceSegment[] | string, artStyleDescription = "") => {
   const sourceSegments = Array.isArray(source) ? source : segmentSourceText(source);
   return `
@@ -355,6 +360,13 @@ CORE PRINCIPLE:
 - Do NOT output visualMoment, mainAction, characterVisualStates, facialExpression, bodyLanguage, gazeTarget, detailed position, interactionTarget, environmentDetails, detailed props, cameraHint, compositionHint, continuityNotes, or visualPrompt.
 - Beat Moment Details, Storyboard, and Prompt Engineering will handle those later.
 
+FIELD OWNERSHIP RULE:
+- Phan tich noi dung owns: screens, sourceSegmentIds, summary, action, visualFocus, beatType, focusCharacters, visibleCharacters, offscreenPresentCharacters, characters, location, locationId, timeOfDay, atmosphere.
+- Chi tiet hanh dong owns: visualMoment, mainAction, interaction, posture, props, locationState, environmentDetails, characterMomentDetails, continuityNotes.
+- Storyboard owns: shot, camera, composition, framing, blocking, foreground, midground, background, lightingDirection, depthAndPerspective, visualEmphasis.
+- Prompt Engineering owns: visualPrompt only.
+- Therefore, do NOT output fields owned by later steps.
+
 BEAT LENGTH AND RHYTHM:
 - Target length: 20-60 words of source text per beat.
 - Preferred range: 25-50 words.
@@ -442,6 +454,11 @@ ${artStyleDescription || "No specific style selected."}
 
 export const getBeatAnalysisPrompt = getBeatSkeletonPrompt;
 
+/**
+ * @deprecated Legacy fallback only.
+ * Do not use in the active StoryFlow workflow.
+ * Current workflow must use getBeatAnalysisPrompt with sourceSegmentIds.
+ */
 const getLegacyBeatAnalysisPrompt = (text: string, artStyleDescription = "") => `
 You are a professional story analyst for a vertical comic / visual storyboard generation app.
 
@@ -936,12 +953,9 @@ function compactStoryboardBeat(beat: StoryBeat) {
     characters: beat.characters || beat.charactersInvolved || [],
     location: beat.location || beat.locationName,
     locationId: beat.locationId,
-    locationState: beat.locationState,
     action: beat.action || beat.actionAnalysis,
-    interaction: beat.interaction,
-    posture: beat.posture,
-    props: beat.props || [],
     visualFocus: beat.visualFocus,
+    beatType: beat.beatType,
     atmosphere: beat.atmosphere,
     timeOfDay: beat.timeOfDay
   };
@@ -1220,17 +1234,13 @@ function compactStoryboardScreenContinuity(item: ReturnType<typeof normalizeScre
 function compactStoryboardBeatMoment(item: any) {
   return {
     beatId: item.beatId,
-    screenId: item.screenId,
     visualMoment: item.visualMoment,
     mainAction: item.mainAction,
-    characterVisualStates: item.characterVisualStates || [],
-    interactionTarget: item.interactionTarget || [],
-    environmentDetails: item.environmentDetails,
-    continuityNotes: item.continuityNotes,
-    locationState: item.locationState,
-    posture: item.posture,
     interaction: item.interaction,
+    posture: item.posture,
     props: item.props || [],
+    locationState: item.locationState,
+    environmentDetails: item.environmentDetails,
     characterMomentDetails: (item.characterMomentDetails || []).map((detail: any) => ({
       characterId: detail.characterId,
       characterName: detail.characterName,
@@ -1240,7 +1250,8 @@ function compactStoryboardBeatMoment(item: any) {
       handheldItems: detail.handheldItems || [],
       visibleAccessories: detail.visibleAccessories || [],
       accessoriesChange: detail.accessoriesChange || []
-    }))
+    })),
+    continuityNotes: item.continuityNotes
   };
 }
 
@@ -1587,7 +1598,7 @@ SOURCE FIELD MAP:
 - Handheld/variable items: use Beat Moment Details first, then screen-level handheld items only if still visible in this beat.
 - Scene: use Storyboard shotType, cameraAngle, and composition.
 - Layers: use Storyboard foreground, midground, background, and visualEmphasis.
-- Beat action: use Beat Skeleton + Beat Moment Details for visualMoment, mainAction, characterVisualStates, interactionTarget, environmentDetails, props, posture, expression, and temporary locationState.
+- Beat action: use Beat Skeleton + Beat Moment Details for visualMoment, mainAction, interaction, posture, props, locationState, environmentDetails, characterMomentDetails, expression, and temporary character/accessory state.
 - originalText is for UI/debug only. Do not use originalText to rewrite visualPrompt.
 
 OUTPUT TEMPLATE ORDER:
@@ -1937,7 +1948,7 @@ export const getBeatMomentDetailsPrompt = (analysis: string, charLocAnalysis: st
 You are Storyflow Beat Moment Detail Analyzer.
 
 Your ONLY task:
-Enrich each existing beat with detailed visual moment information.
+Create Beat Moment Details Direction B for each approved beat.
 
 CRITICAL RULES:
 - Do NOT split beats.
@@ -1950,21 +1961,25 @@ CRITICAL RULES:
 - Keep all details grounded in the source-backed beat data.
 - If a detail is uncertain, write it in continuityNotes instead of inventing a new story fact.
 
-VISUAL DETAIL RULES:
-- visualMoment describes the exact illustration moment for this beat.
-- mainAction is a specific visible action, not just a plot summary.
-- characterVisualStates must describe visible expression, body language, gaze target, emotional state, and position for visible characters.
-- If a character is present but offscreen, roleInShot must be "offscreen" and visible expression/body details should stay empty or minimal.
-- interactionTarget describes who acts or speaks toward whom.
-- environmentDetails describes visible, beat-level environment details.
-- props includes only visible objects relevant in this exact beat.
-- continuityNotes records inherited positions, uncertain details, or constraints from previous beats/screens.
+FIELD OWNERSHIP:
+- Chi tiet hanh dong owns: visualMoment, mainAction, interaction, posture, props, locationState, environmentDetails, characterMomentDetails, continuityNotes.
+- Storyboard owns camera, shot, framing, blocking, foreground, midground, background, lightingDirection, depthAndPerspective, and composition.
+- Prompt Engineering owns visualPrompt only.
+- Therefore, do NOT output characterVisualStates, interactionTarget, cameraHint, compositionHint, shotType, cameraAngle, composition, framing, or visualPrompt.
+
+DIRECTION B DETAIL RULES:
+- visualMoment = exact visual moment of the beat, without camera or composition.
+- mainAction = visible main action, not just emotion or plot summary.
+- interaction = who acts/speaks toward whom or what.
+- posture = beat-level posture and gesture summary.
+- props = temporary visible props used in this beat only.
+- locationState = temporary visible state/change of the location in this beat.
+- environmentDetails = visible beat-specific environment details, not the whole location profile.
+- characterMomentDetails = visible expression, pose refinement, handheld items, and accessories per relevant character.
+- continuityNotes = inherited or uncertain details.
+- If a character is offscreen, do not invent facial expression.
 - Do not redefine outfit or stable location identity in this step.
 - Do not add major props, injuries, outfits, locations, characters, or actions not supported by approved input.
-
-LEGACY COMPATIBILITY:
-- You may also fill interaction, posture, locationState, and characterMomentDetails when useful.
-- The primary required visual fields are visualMoment, mainAction, characterVisualStates, interactionTarget, environmentDetails, props, and continuityNotes.
 - Return ONLY a valid JSON object. No markdown. No commentary.
 
 Required JSON Schema:
@@ -1974,31 +1989,11 @@ Required JSON Schema:
       "beatId": 1,
       "visualMoment": "the exact visual moment that should become an illustration",
       "mainAction": "specific visible action",
-      "characterVisualStates": [
-        {
-          "characterName": "name",
-          "roleInShot": "main | supporting | background | offscreen",
-          "facialExpression": "specific visible expression or empty if offscreen",
-          "bodyLanguage": "specific posture/body action or empty if offscreen",
-          "gazeTarget": "who or what the character is looking at",
-          "emotionalState": "inner emotion visible through expression/body",
-          "position": "specific position in the scene",
-          "positionSource": "explicit | inherited | inferred"
-        }
-      ],
-      "interactionTarget": [
-        {
-          "actor": "Character A",
-          "target": "Character B",
-          "interaction": "what the actor does/says toward the target"
-        }
-      ],
+      "interaction": "specific interaction: who acts toward whom or what",
+      "posture": "beat-level posture and gesture summary",
+      "props": ["temporary visible prop used in this beat"],
+      "locationState": "temporary state/change of the location in this beat",
       "environmentDetails": "visible beat-level environment details",
-      "props": ["visible active prop in this beat"],
-      "continuityNotes": "inherited or uncertain details",
-      "locationState": "optional legacy momentary location/object state",
-      "posture": "optional legacy summarized posture",
-      "interaction": "optional legacy summarized interaction",
       "characterMomentDetails": [
         {
           "characterId": "string",
@@ -2006,11 +2001,12 @@ Required JSON Schema:
           "visibleAccessories": ["string"],
           "handheldItems": ["string"],
           "accessoriesChange": ["string"],
-          "momentNotes": "string",
           "poseRefinement": "string",
-          "expression": "string"
+          "expression": "string",
+          "momentNotes": "string"
         }
-      ]
+      ],
+      "continuityNotes": "inherited or uncertain details"
     }
   ]
 }

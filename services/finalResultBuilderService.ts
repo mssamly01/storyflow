@@ -300,34 +300,13 @@ export function normalizeBeats(raw: unknown): StoryBeat[] {
     const visibleCharacters = asStringArray(item.visibleCharacters ?? item.visible_characters);
     const offscreenPresentCharacters = asStringArray(item.offscreenPresentCharacters ?? item.offscreen_present_characters);
 
-    // fallbacks for visual fields (enrichBeatVisualFallback)
-    const visualMoment = asString(item.visualMoment ?? item.visual_moment ?? item.analysis ?? item.summary ?? item.action ?? "");
-    const mainAction = asString(item.mainAction ?? item.main_action ?? item.action ?? item.actionAnalysis ?? "");
+    const visualMoment = asString(item.visualMoment ?? item.visual_moment);
+    const mainAction = asString(item.mainAction ?? item.main_action);
 
     const rawVisualStates = item.characterVisualStates ?? item.character_visual_states;
-    let characterVisualStates = normalizeCharacterVisualStates(rawVisualStates);
-    if (!characterVisualStates.length) {
-      // Build fallback from presentCharacters + legacy postures/positions
-      presentCharacters.forEach((charName) => {
-        const rawPostures = item.characterPostures ?? item.character_postures ?? [];
-        const postureObj = rawPostures.find((p: any) => p && p.characterName === charName);
-        const rawPositions = item.characterPositions ?? item.character_positions ?? [];
-        const positionObj = rawPositions.find((p: any) => p && p.characterName === charName);
+    const characterVisualStates = normalizeCharacterVisualStates(rawVisualStates);
 
-        characterVisualStates.push({
-          characterName: charName,
-          roleInShot: (focusCharacters.includes(charName) ? "main" : "supporting") as RoleInShot,
-          facialExpression: postureObj?.actionState || "neutral",
-          bodyLanguage: postureObj?.posture || "standing",
-          gazeTarget: "focus of the scene",
-          emotionalState: item.atmosphere || "neutral",
-          position: positionObj?.position || "in the frame",
-          positionSource: positionObj?.source || ("inferred" as PositionSource)
-        });
-      });
-    }
-
-    const environmentDetails = asString(item.environmentDetails ?? item.environment_details ?? item.locationState ?? "");
+    const environmentDetails = asString(item.environmentDetails ?? item.environment_details);
     const cameraHint = asString(item.cameraHint ?? item.camera_hint ?? "unknown") as CameraHint;
     const compositionHint = asString(item.compositionHint ?? item.composition_hint ?? "");
     const continuityNotes = asString(item.continuityNotes ?? item.continuity_notes ?? item.notes ?? "");
@@ -410,6 +389,26 @@ export function normalizeScreenContinuity(raw: unknown): ScreenContinuityItem[] 
 export function normalizeBeatMomentDetails(raw: unknown): BeatMomentDetail[] {
   return getItems(raw, ["beatDetails", "beatMomentDetails", "beats", "details"]).map((item, index) => {
     const beatId = asNumber(item.beatId ?? item.beat_id, index + 1);
+    const legacyVisualStates = normalizeCharacterVisualStates(item.characterVisualStates ?? item.character_visual_states);
+    const legacyInteractionTargets = normalizeInteractionTargets(item.interactionTarget ?? item.interaction_target);
+    const legacyInteraction = legacyInteractionTargets
+      .map((target) => [target.actor, target.target, target.interaction].filter(Boolean).join(" -> "))
+      .filter(Boolean)
+      .join("; ");
+    const legacyCharacterMoments = legacyVisualStates.map((state) => ({
+      characterName: state.characterName,
+      characterId: undefined,
+      visibleAccessories: [],
+      poseRefinement: [state.bodyLanguage, state.position].filter(Boolean).join("; "),
+      expression: state.facialExpression || state.emotionalState || "",
+      handheldItems: [],
+      accessoriesChange: [],
+      momentNotes: [
+        state.gazeTarget ? `gazeTarget: ${state.gazeTarget}` : "",
+        state.emotionalState ? `emotion: ${state.emotionalState}` : "",
+        state.roleInShot ? `roleInShot: ${state.roleInShot}` : ""
+      ].filter(Boolean).join("; ")
+    }));
     const characterMomentDetails = asArray(item.characterMomentDetails ?? item.character_moment_details ?? []).map((cmd: any) => ({
       characterName: cmd.characterName ?? cmd.character_name ?? cmd.name ?? "",
       characterId: cmd.characterId ?? cmd.character_id,
@@ -426,15 +425,15 @@ export function normalizeBeatMomentDetails(raw: unknown): BeatMomentDetail[] {
       screenId: asString(item.screenId ?? item.screen_id),
       visualMoment: asString(item.visualMoment ?? item.visual_moment),
       mainAction: asString(item.mainAction ?? item.main_action),
-      characterVisualStates: normalizeCharacterVisualStates(item.characterVisualStates ?? item.character_visual_states),
-      interactionTarget: normalizeInteractionTargets(item.interactionTarget ?? item.interaction_target),
       environmentDetails: asString(item.environmentDetails ?? item.environment_details),
       continuityNotes: asString(item.continuityNotes ?? item.continuity_notes),
       locationState: asString(item.locationState ?? item.location_state),
       posture: asString(item.posture),
-      interaction: asString(item.interaction),
+      interaction: asString(item.interaction) || legacyInteraction,
       props: asStringArray(item.props),
-      characterMomentDetails
+      characterMomentDetails: characterMomentDetails.length ? characterMomentDetails : legacyCharacterMoments,
+      characterVisualStates: legacyVisualStates,
+      interactionTarget: legacyInteractionTargets
     };
   }).filter((item) => item.beatId > 0);
 }
@@ -540,6 +539,10 @@ export function extractBeatMomentDetailsFromLegacyBeats(raw: unknown): BeatMomen
         (Array.isArray(beat.interactionTarget ?? beat.interaction_target) && (beat.interactionTarget ?? beat.interaction_target).length) ||
         beat.environmentDetails ||
         beat.environment_details ||
+        beat.cameraHint ||
+        beat.camera_hint ||
+        beat.compositionHint ||
+        beat.composition_hint ||
         beat.continuityNotes ||
         beat.continuity_notes ||
         beat.locationState ||
@@ -550,20 +553,27 @@ export function extractBeatMomentDetailsFromLegacyBeats(raw: unknown): BeatMomen
         (Array.isArray(beat.characterMomentDetails ?? beat.character_moment_details) && (beat.characterMomentDetails ?? beat.character_moment_details).length)
       )
     )
-    .map((beat, index) => ({
-      beatId: asNumber(beat.beatId ?? beat.beat_id, index + 1),
-      visualMoment: asString(beat.visualMoment ?? beat.visual_moment),
-      mainAction: asString(beat.mainAction ?? beat.main_action),
-      characterVisualStates: normalizeCharacterVisualStates(beat.characterVisualStates ?? beat.character_visual_states),
-      interactionTarget: normalizeInteractionTargets(beat.interactionTarget ?? beat.interaction_target),
-      environmentDetails: asString(beat.environmentDetails ?? beat.environment_details),
-      continuityNotes: asString(beat.continuityNotes ?? beat.continuity_notes),
-      locationState: asString(beat.locationState ?? beat.location_state),
-      posture: asString(beat.posture),
-      interaction: asString(beat.interaction),
-      props: asStringArray(beat.props),
-      characterMomentDetails: normalizeCharacterMomentDetails(beat)
-    }))
+    .map((beat, index) => {
+      const legacyCameraNotes = [
+        beat.cameraHint || beat.camera_hint ? `Legacy cameraHint: ${asString(beat.cameraHint ?? beat.camera_hint)}` : "",
+        beat.compositionHint || beat.composition_hint ? `Legacy compositionHint: ${asString(beat.compositionHint ?? beat.composition_hint)}` : ""
+      ].filter(Boolean).join("; ");
+
+      return {
+        beatId: asNumber(beat.beatId ?? beat.beat_id, index + 1),
+        visualMoment: asString(beat.visualMoment ?? beat.visual_moment),
+        mainAction: asString(beat.mainAction ?? beat.main_action),
+        characterVisualStates: normalizeCharacterVisualStates(beat.characterVisualStates ?? beat.character_visual_states),
+        interactionTarget: normalizeInteractionTargets(beat.interactionTarget ?? beat.interaction_target),
+        environmentDetails: asString(beat.environmentDetails ?? beat.environment_details),
+        continuityNotes: [asString(beat.continuityNotes ?? beat.continuity_notes), legacyCameraNotes].filter(Boolean).join("; "),
+        locationState: asString(beat.locationState ?? beat.location_state),
+        posture: asString(beat.posture),
+        interaction: asString(beat.interaction),
+        props: asStringArray(beat.props),
+        characterMomentDetails: normalizeCharacterMomentDetails(beat)
+      };
+    })
     .filter((detail) => detail.beatId > 0);
 }
 

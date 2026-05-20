@@ -95,10 +95,19 @@ export interface BeatAnalysis {
   sourceSegmentIds?: string[];
   sourceStartOffset?: number;
   sourceEndOffset?: number;
+  screenId?: string;
   actionAnalysis?: string;
   analysis?: string;
   charactersInvolved?: string[];
   locationName?: string;
+  location?: string;
+  locationId?: string;
+  action?: string;
+  visualFocus?: string;
+  focusCharacters?: string[];
+  visibleCharacters?: string[];
+  offscreenPresentCharacters?: string[];
+  characters?: string[];
   interaction?: string;
   posture?: string;
   props?: string[];
@@ -112,14 +121,22 @@ export interface BeatAnalysis {
   exitedCharacters?: string[];
   characterPostures?: CharacterPosture[];
   characterPositions?: CharacterPosition[];
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.interaction. */
   interactionTarget?: InteractionTarget[];
   notes?: string;
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.visualMoment. */
   visualMoment?: string;
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.mainAction. */
   mainAction?: string;
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.characterMomentDetails. */
   characterVisualStates?: CharacterVisualState[];
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.environmentDetails. */
   environmentDetails?: string;
+  /** @deprecated Legacy Analysis camera field. New data must use StoryboardPanel. */
   cameraHint?: CameraHint;
+  /** @deprecated Legacy Analysis composition field. New data must use StoryboardPanel. */
   compositionHint?: string;
+  /** @deprecated Legacy Analysis visual field. New data must use BeatMomentDetail.continuityNotes. */
   continuityNotes?: string;
 }
 
@@ -236,15 +253,17 @@ export interface BeatMomentDetail {
   beatId: number;
   visualMoment?: string;
   mainAction?: string;
-  characterVisualStates?: CharacterVisualState[];
-  interactionTarget?: InteractionTarget[];
-  environmentDetails?: string;
-  continuityNotes?: string;
   interaction?: string;
   posture?: string;
   props?: string[];
   locationState?: string;
+  environmentDetails?: string;
   characterMomentDetails?: BeatCharacterMomentDetail[];
+  continuityNotes?: string;
+  /** @deprecated Legacy only. New data should use characterMomentDetails. */
+  characterVisualStates?: CharacterVisualState[];
+  /** @deprecated Legacy only. New data should use interaction. */
+  interactionTarget?: InteractionTarget[];
 }
 
 export interface BeatMomentDetailResult {
