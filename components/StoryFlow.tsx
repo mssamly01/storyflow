@@ -56,11 +56,16 @@ import {
 } from '../services/subtitleExportService';
 import { FinalResultStudioView } from './storyflow/FinalResultStudioView';
 import {
-  deleteProjectById,
   loadLiteraryProjects,
-  loadStoryFlowProjects,
-  saveStoryFlowProject
 } from '../services/projectStorageService';
+import {
+  saveStoryFlowProject,
+  loadStoryFlowProjects,
+  openStoryFlowProject,
+  deleteStoryFlowProject,
+  deleteStoryFlowNovel,
+  type StoryFlowProjectLibrary
+} from '../services/projectFileStorageService';
 import {
   BEAT_SOURCE_FIELDS,
   CHARACTER_APPEARANCE_FIELDS,
@@ -404,7 +409,9 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
   const [production, setProduction] = useState<ProductionData>({});
   const [project, setProject] = useState<StoryFlowProject>(() => createInitialProject());
   const [unlockedStages, setUnlockedStages] = useState<ProductionStage[]>([ProductionStage.INPUT]);
-  const [savedProjects, setSavedProjects] = useState<any[]>([]);
+  const [savedProjectLibrary, setSavedProjectLibrary] = useState<StoryFlowProjectLibrary>({ novels: [] });
+  const [isProjectLibraryLoading, setIsProjectLibraryLoading] = useState(false);
+  const [previousProject, setPreviousProject] = useState<any>(null);
   const [litProjects, setLitProjects] = useState<any[]>([]);
   const [showLitLibraryModal, setShowLitLibraryModal] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
@@ -439,24 +446,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     return Array.from(set);
   }
 
-  // Group projects by title for library view
-  const groupedProjects = useMemo<Record<string, any[]>>(() => {
-    const groups: { [key: string]: any[] } = {};
-    savedProjects.forEach(project => {
-      const title = project.inputData?.title || 'Chưa đặt tên';
-      if (!groups[title]) groups[title] = [];
-      groups[title].push(project);
-    });
-    // Sort chapters within each group
-    Object.keys(groups).forEach(title => {
-      groups[title].sort((a, b) => {
-        const aNum = parseInt(a.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-        const bNum = parseInt(b.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-        return aNum - bNum;
-      });
-    });
-    return groups;
-  }, [savedProjects]);
+
 
   // States for editing beats in Analysis stage
   const [editingBeatIndex, setEditingBeatIndex] = useState<number | null>(null);
@@ -566,10 +556,82 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     }
   }, [stage, production.analysis]);
 
-  useEffect(() => {
-    setSavedProjects(loadStoryFlowProjects());
-    setLitProjects(loadLiteraryProjects());
+  const safeSlug = useCallback((value: string) => {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase()
+      .slice(0, 100) || "untitled";
   }, []);
+
+  const refreshProjectLibrary = useCallback(async () => {
+    setIsProjectLibraryLoading(true);
+    try {
+      const library = await loadStoryFlowProjects();
+      setSavedProjectLibrary(library);
+    } catch (error) {
+      console.warn("Failed to load StoryFlow project library from disk. Project local server might not be running.", error);
+    } finally {
+      setIsProjectLibraryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshProjectLibrary();
+    setLitProjects(loadLiteraryProjects());
+  }, [refreshProjectLibrary]);
+
+  useEffect(() => {
+    const fetchPreviousProject = async () => {
+      if (!inputData.title || !inputData.chapter || !savedProjectLibrary.novels.length) {
+        setPreviousProject(null);
+        return;
+      }
+
+      const novel = savedProjectLibrary.novels.find(
+        n => n.title.toLowerCase().trim() === inputData.title.toLowerCase().trim() ||
+             n.folderName === safeSlug(inputData.title)
+      );
+
+      if (!novel || !novel.chapters.length) {
+        setPreviousProject(null);
+        return;
+      }
+
+      const currentChapterNum = parseInt(inputData.chapter.replace(/\D/g, '')) || 0;
+
+      const prevChapters = novel.chapters.filter(ch => {
+        const chNum = parseInt(ch.chapter.toString().replace(/\D/g, '')) || 0;
+        return chNum < currentChapterNum;
+      });
+
+      if (prevChapters.length === 0) {
+        setPreviousProject(null);
+        return;
+      }
+
+      prevChapters.sort((a, b) => {
+        const aNum = parseInt(a.chapter.toString().replace(/\D/g, '')) || 0;
+        const bNum = parseInt(b.chapter.toString().replace(/\D/g, '')) || 0;
+        return bNum - aNum;
+      });
+
+      const closestPrev = prevChapters[0];
+      try {
+        const fullProj = await openStoryFlowProject(novel.folderName, closestPrev.fileName);
+        setPreviousProject(fullProj);
+      } catch (err) {
+        console.warn("Could not load previous chapter project for library context:", err);
+        setPreviousProject(null);
+      }
+    };
+
+    void fetchPreviousProject();
+  }, [inputData.title, inputData.chapter, savedProjectLibrary, safeSlug]);
 
   const steps = [
     { id: ProductionStage.INPUT, label: "Nhập tiểu thuyết", icon: FileText },
@@ -591,27 +653,7 @@ const StoryFlow: React.FC<StoryFlowProps> = ({ onBack }) => {
     const characterMap = new Map<string, any>();
     const locationMap = new Map<string, any>();
 
-    // Chỉ lấy các dự án thuộc cùng bộ truyện hiện tại
-    const sameBookProjects = savedProjects.filter(p => 
-      p.inputData?.title === inputData.title && 
-      p.inputData?.title !== ''
-    );
-
-    // Sắp xếp theo số chương để đảm bảo tính kế thừa đúng trình tự
-    const sortedProjects = [...sameBookProjects].sort((a, b) => {
-      const aNum = parseInt(a.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-      const bNum = parseInt(b.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-      return aNum - bNum;
-    });
-
-    // Lấy project của chương ngay trước chương hiện tại
-    const currentChapterNum = parseInt(inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-    const previousProjects = sortedProjects.filter(p => {
-      const pNum = parseInt(p.inputData.chapter?.toString().replace(/\D/g, '')) || 0;
-      return pNum < currentChapterNum;
-    });
-    
-    const lastProject = previousProjects.length > 0 ? previousProjects[previousProjects.length - 1] : null;
+    const lastProject = previousProject;
     let lastChapterContext = "";
 
     if (lastProject) {
@@ -735,28 +777,26 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
       }
     }
 
-    sortedProjects.forEach(project => {
-      if (project.production?.characterLocationAnalysis) {
-        try {
-          const data = typeof project.production.characterLocationAnalysis === 'string' 
-            ? JSON.parse(project.production.characterLocationAnalysis) 
-            : project.production.characterLocationAnalysis;
-          
-          if (data.characters) {
-            data.characters.forEach((char: any) => {
-              characterMap.set(char.name, char);
-            });
-          }
-          if (data.locations) {
-            data.locations.forEach((loc: any) => {
-              locationMap.set(loc.name, loc);
-            });
-          }
-        } catch (e) {
-          console.error("Error parsing characterLocationAnalysis from saved project", e);
+    if (lastProject && lastProject.production?.characterLocationAnalysis) {
+      try {
+        const data = typeof lastProject.production.characterLocationAnalysis === 'string' 
+          ? JSON.parse(lastProject.production.characterLocationAnalysis) 
+          : lastProject.production.characterLocationAnalysis;
+        
+        if (data.characters) {
+          data.characters.forEach((char: any) => {
+            characterMap.set(char.name, char);
+          });
         }
+        if (data.locations) {
+          data.locations.forEach((loc: any) => {
+            locationMap.set(loc.name, loc);
+          });
+        }
+      } catch (e) {
+        console.error("Error parsing characterLocationAnalysis from saved project", e);
       }
-    });
+    }
 
     const characters = Array.from(characterMap.values());
     const locations = Array.from(locationMap.values());
@@ -1078,7 +1118,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         return 'Final Result được build local bằng finalResultBuilderService. Không cần gửi prompt cho AI và không cần dán kết quả. Bấm Build Final Result để tạo JSON cuối cùng.';
       default: return '';
     }
-  }, [stage, inputData, production, savedProjects, storyboardBatchInfo.batchIndex]);
+  }, [stage, inputData, production, previousProject, storyboardBatchInfo.batchIndex]);
 
   const finalJsonData = useMemo(() => {
     if (stage === ProductionStage.FINAL && production.finalResult) {
@@ -1756,68 +1796,110 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
   };
 
   const saveProject = async () => {
-    if (!inputData.title || !inputData.chapter) {
+    if (!inputData.title.trim() || !inputData.chapter.trim()) {
       setToast({ message: "Vui lòng nhập Tên tiểu thuyết và Chương để lưu!", visible: true });
       setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
       return;
     }
 
-    const projectForStorage = serializeProjectForStorage(project);
-    const compactStoryFlowProject = {
-      id: projectForStorage.id,
-      title: projectForStorage.title,
-      selectedStyleId: projectForStorage.selectedStyleId,
-      screenContinuity: projectForStorage.screenContinuity,
-      beatMomentDetails: projectForStorage.beatMomentDetails,
-      workflow: projectForStorage.workflow,
-      createdAt: projectForStorage.createdAt,
-      updatedAt: projectForStorage.updatedAt
-    };
     const projectData = {
-      id: Date.now(),
-      type: 'storyflow' as const,
+      type: "storyflow.chapter" as const,
+      version: 1,
       inputData,
       production: {
         ...production,
-        finalResult: undefined
+        finalResult: production.finalResult
       },
-      storyFlowProject: compactStoryFlowProject,
-      timestamp: new Date().toISOString()
+      storyFlowProject: project,
+      stage,
+      unlockedStages,
+      storyboardBatchIndex,
+      isManualMode,
+      isGlobalManualMode,
+      createdAt: undefined,
+      updatedAt: new Date().toISOString()
     };
 
     try {
-      setSavedProjects(saveStoryFlowProject(projectData));
-
-      setToast({ message: "Đã lưu kết quả phân tích vào thư viện!", visible: true });
-    } catch (err) {
+      await saveStoryFlowProject(projectData);
+      await refreshProjectLibrary();
+      setToast({ message: "Đã lưu kết quả phân tích vào thư mục projects!", visible: true });
+    } catch (err: any) {
       console.error(err);
-      setToast({ message: "Lỗi khi lưu dự án", visible: true });
+      setToast({ message: "Lỗi khi lưu dự án: " + (err.message || err), visible: true });
     }
     
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
-  const deleteProject = (id: number) => {
-    setConfirmModal({
-      show: true,
-      title: 'Xóa dự án',
-      message: 'Bạn có chắc chắn muốn xóa dự án này không? Tất cả dữ liệu sản xuất sẽ bị mất.',
-      type: 'danger',
-      onConfirm: async () => {
-        try {
-          deleteProjectById(id);
-          setSavedProjects(loadStoryFlowProjects());
-          setToast({ message: "Đã xóa dự án khỏi thư viện", visible: true });
-        } catch (err) {
-          console.error(err);
-          setToast({ message: "Lỗi khi xóa dự án", visible: true });
-        } finally {
-          setConfirmModal(prev => ({ ...prev, show: false }));
-          setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
-        }
+  const handleOpenSavedChapter = useCallback(
+    async (novelFolder: string, chapterFile: string) => {
+      try {
+        const savedProject = await openStoryFlowProject(novelFolder, chapterFile);
+
+        const restoredInputData = savedProject.inputData || {
+          title: '',
+          selectedStyle: 'manhua',
+          chapter: '',
+          chapterTitle: '',
+          script: ''
+        };
+        const restoredProduction = savedProject.production || {};
+
+        setInputData(restoredInputData);
+        setProduction(restoredProduction);
+
+        setProject(
+          savedProject.storyFlowProject ||
+            hydrateStoryFlowProject(
+              restoredInputData,
+              restoredProduction,
+              savedProject.storyFlowProject
+            )
+        );
+
+        setStage(savedProject.stage || ProductionStage.INPUT);
+        setUnlockedStages(savedProject.unlockedStages || [ProductionStage.INPUT]);
+
+        setStoryboardBatchIndex(savedProject.storyboardBatchIndex || 0);
+        setIsManualMode(Boolean(savedProject.isManualMode));
+        setIsGlobalManualMode(Boolean(savedProject.isGlobalManualMode));
+
+        setShowLibraryModal(false);
+        setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
+      } catch (error) {
+        console.error(error);
+        setToast({ message: "Không thể mở chương. Hãy kiểm tra server.", visible: true });
       }
-    });
-  };
+      setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    },
+    []
+  );
+
+  const handleDeleteSavedChapter = useCallback(
+    async (novelFolder: string, chapterFile: string) => {
+      setConfirmModal({
+        show: true,
+        title: 'Xóa chương',
+        message: `Bạn có chắc chắn muốn xóa chương này khỏi thư mục projects? Dữ liệu file trên đĩa sẽ bị xóa hoàn toàn.`,
+        type: 'danger',
+        onConfirm: async () => {
+          try {
+            await deleteStoryFlowProject(novelFolder, chapterFile);
+            await refreshProjectLibrary();
+            setToast({ message: "Đã xóa chương thành công!", visible: true });
+          } catch (error) {
+            console.error(error);
+            setToast({ message: "Không thể xóa chương khỏi thư mục.", visible: true });
+          } finally {
+            setConfirmModal(prev => ({ ...prev, show: false }));
+            setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+          }
+        }
+      });
+    },
+    [refreshProjectLibrary]
+  );
 
   const handleNextChapter = () => {
     const currentChapter = parseInt(inputData.chapter);
@@ -3922,6 +4004,38 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     }
   };
 
+  const handleImportSavedChapter = useCallback(async (novelFolder: string, chapterFile: string) => {
+    const isNextChapterFlow = !!(inputData.title.trim() && inputData.chapter.trim());
+    try {
+      const savedProject = await openStoryFlowProject(novelFolder, chapterFile);
+      if (isNextChapterFlow) {
+        const scriptToImport = savedProject.inputData?.script || '';
+        setInputData(prev => ({
+          ...prev,
+          script: scriptToImport
+        }));
+        setToast({ message: "Đã nhập nội dung chương mới từ thư viện!", visible: true });
+      } else {
+        const restoredInputData = savedProject.inputData || { title: '', selectedStyle: 'manhua', chapter: '', chapterTitle: '', script: '' };
+        const restoredProduction = savedProject.production || {};
+        setInputData(restoredInputData);
+        setProduction(restoredProduction);
+        setProject(savedProject.storyFlowProject || hydrateStoryFlowProject(restoredInputData, restoredProduction, savedProject.storyFlowProject));
+        setStage(savedProject.stage || ProductionStage.INPUT);
+        setUnlockedStages(savedProject.unlockedStages || [ProductionStage.INPUT]);
+        setStoryboardBatchIndex(savedProject.storyboardBatchIndex || 0);
+        setIsManualMode(Boolean(savedProject.isManualMode));
+        setIsGlobalManualMode(Boolean(savedProject.isGlobalManualMode));
+        setToast({ message: "Đã tải dự án StoryFlow!", visible: true });
+      }
+      setShowLibraryModal(false);
+    } catch (error) {
+      console.error(error);
+      setToast({ message: "Không thể nhập chương. Hãy kiểm tra server.", visible: true });
+    }
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  }, [inputData, stage]);
+
   const renderLibraryModal = () => {
     if (!showLibraryModal) return null;
     return (
@@ -3935,27 +4049,32 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <p className="text-xs text-slate-500 font-medium">Chọn một dự án để nhập vào StoryFlow</p>
               </div>
             </div>
-            <button onClick={() => setShowLibraryModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400"><RefreshCw className="w-5 h-5" /></button>
+            <button onClick={() => { void refreshProjectLibrary(); }} className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400" title="Làm mới thư viện"><RefreshCw className="w-5 h-5" /></button>
           </div>
           
           <div className="flex-1 overflow-y-auto p-8">
-            {Object.keys(groupedProjects).length === 0 ? (
+            {isProjectLibraryLoading ? (
+              <div className="h-full flex flex-col items-center justify-center text-center">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+                <p className="text-slate-500 text-sm">Đang tải thư viện từ thư mục projects...</p>
+              </div>
+            ) : savedProjectLibrary.novels.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mb-6"><Library className="w-10 h-10 text-slate-200" /></div>
                 <h4 className="text-lg font-bold text-slate-900 mb-2">Thư viện trống</h4>
-                <p className="text-slate-400 text-sm max-w-xs">Bạn chưa có dự án nào được lưu.</p>
+                <p className="text-slate-400 text-sm max-w-xs">Bạn chưa có dự án nào được lưu trong thư mục projects/.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {(Object.entries(groupedProjects) as [string, any[]][]).map(([title, chapters]) => {
-                  const lastUpdated = chapters.reduce((latest, current) => {
-                    const currentTimestamp = new Date(current.timestamp).getTime();
+                {savedProjectLibrary.novels.map((novel) => {
+                  const lastUpdated = novel.chapters.reduce((latest, current) => {
+                    const currentTimestamp = new Date(current.updatedAt).getTime();
                     return currentTimestamp > latest ? currentTimestamp : latest;
                   }, 0);
 
                   return (
                     <div 
-                      key={title} 
+                      key={novel.folderName} 
                       className="group flex flex-col p-5 rounded-2xl border border-slate-100 hover:shadow-xl hover:shadow-indigo-50 transition-all text-left bg-white relative overflow-hidden"
                     >
                       <div className="absolute top-0 right-0 px-3 py-1 text-[8px] font-black uppercase tracking-widest rounded-bl-xl bg-indigo-100 text-indigo-600">
@@ -3966,24 +4085,24 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                           <Book className="w-5 h-5" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-slate-900 line-clamp-1">{title}</h4>
+                          <h4 className="font-bold text-slate-900 line-clamp-1">{novel.title}</h4>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                            {chapters.length} chương đã lưu
+                            {novel.chapters.length} chương đã lưu
                           </p>
                         </div>
                       </div>
 
                       <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar mb-4">
-                        {chapters.map((project) => (
+                        {novel.chapters.map((ch) => (
                           <button
-                            key={project.id}
-                            onClick={() => handleImportProject(project)}
+                            key={ch.fileName}
+                            onClick={() => handleImportSavedChapter(novel.folderName, ch.fileName)}
                             className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition-all border border-transparent hover:border-indigo-100 group/chapter"
                           >
                             <div className="flex flex-col items-start">
-                              <span className="font-bold text-[11px]">Chương {project.inputData.chapter}</span>
-                              {project.inputData.chapterTitle && (
-                                <span className="text-[9px] opacity-70 line-clamp-1">{project.inputData.chapterTitle}</span>
+                              <span className="font-bold text-[11px]">Chương {ch.chapter}</span>
+                              {ch.chapterTitle && (
+                                <span className="text-[9px] opacity-70 line-clamp-1">{ch.chapterTitle}</span>
                               )}
                             </div>
                             <ChevronRight className="w-3 h-3 opacity-0 group-hover/chapter:opacity-100 transition-all" />
@@ -3994,7 +4113,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                       <div className="mt-auto flex items-center justify-between pt-3 border-t border-slate-50">
                         <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400 uppercase">
                           <Clock className="w-3 h-3" />
-                          {new Date(lastUpdated).toLocaleDateString('vi-VN')}
+                          {lastUpdated ? new Date(lastUpdated).toLocaleDateString('vi-VN') : 'Không rõ'}
                         </div>
                       </div>
                     </div>
@@ -4239,24 +4358,23 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     );
   };
 
-  const deleteBook = (title: string) => {
-    const chaptersToDelete = groupedProjects[title];
-    if (!chaptersToDelete) return;
+  const deleteBook = (novelFolder: string, novelTitle: string) => {
+    const novel = savedProjectLibrary.novels.find(n => n.folderName === novelFolder);
+    if (!novel) return;
 
     setConfirmModal({
       show: true,
       title: 'Xóa toàn bộ bộ truyện',
-      message: `Bạn có chắc chắn muốn xóa tất cả ${chaptersToDelete.length} chương của bộ truyện "${title}" không?`,
+      message: `Bạn có chắc chắn muốn xóa tất cả ${novel.chapters.length} chương và thư mục của bộ truyện "${novelTitle}" không?`,
       type: 'danger',
       onConfirm: async () => {
         try {
-          chaptersToDelete.forEach(project => deleteProjectById(project.id));
-          const deletedIds = chaptersToDelete.map(p => p.id);
-          setSavedProjects(prev => prev.filter(p => !deletedIds.includes(p.id)));
-          setToast({ message: `Đã xóa bộ truyện "${title}" khỏi thư viện`, visible: true });
+          await deleteStoryFlowNovel(novelFolder);
+          await refreshProjectLibrary();
+          setToast({ message: `Đã xóa bộ truyện "${novelTitle}" thành công!`, visible: true });
         } catch (err) {
           console.error(err);
-          setToast({ message: "Lỗi khi xóa bộ truyện", visible: true });
+          setToast({ message: "Lỗi khi xóa bộ truyện khỏi thư mục", visible: true });
         } finally {
           setConfirmModal(prev => ({ ...prev, show: false }));
           setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
@@ -4273,11 +4391,11 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
           Thư viện dự án
         </h2>
         <div className="text-sm font-bold text-slate-400 bg-slate-100 px-4 py-2 rounded-xl">
-          {Object.keys(groupedProjects).length} bộ truyện đã lưu
+          {savedProjectLibrary.novels.length} bộ truyện đã lưu
         </div>
       </div>
 
-      {Object.keys(groupedProjects).length === 0 ? (
+      {savedProjectLibrary.novels.length === 0 ? (
         <div className="bg-white rounded-[40px] border-2 border-dashed border-slate-200 p-20 text-center">
           <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"><Library className="w-10 h-10 text-slate-300" /></div>
           <h4 className="text-lg font-bold text-slate-900 mb-2">Thư viện trống</h4>
@@ -4286,15 +4404,15 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto max-h-[calc(100vh-250px)] pr-2 custom-scrollbar">
-          {(Object.entries(groupedProjects) as [string, any[]][]).map(([title, chapters]) => {
-            const lastUpdated = chapters.reduce((latest, current) => {
-              const currentTimestamp = new Date(current.timestamp).getTime();
+          {savedProjectLibrary.novels.map((novel) => {
+            const lastUpdated = novel.chapters.reduce((latest, current) => {
+              const currentTimestamp = new Date(current.updatedAt).getTime();
               return currentTimestamp > latest ? currentTimestamp : latest;
             }, 0);
 
             return (
               <div 
-                key={title} 
+                key={novel.folderName} 
                 className="group bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col"
               >
                 <div className="p-6 flex-1">
@@ -4305,7 +4423,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteBook(title);
+                        deleteBook(novel.folderName, novel.title);
                       }}
                       className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                     >
@@ -4313,27 +4431,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                     </button>
                   </div>
                   
-                  <h3 className="font-black text-slate-800 text-lg mb-1 line-clamp-1">{title}</h3>
+                  <h3 className="font-black text-slate-800 text-lg mb-1 line-clamp-1">{novel.title}</h3>
                   <div className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest">
-                    {chapters.length} chương đã phân tích
+                    {novel.chapters.length} chương đã phân tích
                   </div>
                   
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                    {chapters.map((project) => (
-                      <div key={project.id} className="group/chapter flex items-center gap-2">
+                    {novel.chapters.map((ch) => (
+                      <div key={ch.fileName} className="group/chapter flex items-center gap-2">
                         <button
-                          onClick={() => {
-                            setInputData(project.inputData); 
-                            setProduction(project.production); 
-                            setUnlockedStages(computeUnlockedStages(project.inputData, project.production || {}, ProductionStage.INPUT));
-                            setStage(ProductionStage.INPUT);
-                          }}
+                          onClick={() => handleOpenSavedChapter(novel.folderName, ch.fileName)}
                           className="flex-1 flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition-all border border-transparent hover:border-indigo-100"
                         >
                           <div className="flex flex-col items-start text-left">
-                            <span className="font-bold text-xs">Chương {project.inputData.chapter}</span>
-                            {project.inputData.chapterTitle && (
-                              <span className="text-[10px] opacity-70 line-clamp-1">{project.inputData.chapterTitle}</span>
+                            <span className="font-bold text-xs">Chương {ch.chapter}</span>
+                            {ch.chapterTitle && (
+                              <span className="text-[10px] opacity-70 line-clamp-1">{ch.chapterTitle}</span>
                             )}
                           </div>
                           <ChevronRight className="w-4 h-4 opacity-0 group-hover/chapter:opacity-100 transition-all" />
@@ -4341,7 +4454,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            deleteProject(project.id);
+                            handleDeleteSavedChapter(novel.folderName, ch.fileName);
                           }}
                           className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover/chapter:opacity-100"
                           title="Xóa chương này"
@@ -4356,7 +4469,7 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
                 <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                     <Clock className="w-3.5 h-3.5" />
-                    Cập nhật: {new Date(lastUpdated).toLocaleDateString('vi-VN')}
+                    Cập nhật: {lastUpdated ? new Date(lastUpdated).toLocaleDateString('vi-VN') : 'Không rõ'}
                   </div>
                 </div>
               </div>
