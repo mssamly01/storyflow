@@ -65,6 +65,7 @@ import {
   extractSubtitleItemsFromBeats,
   extractSubtitleItemsFromFinalResult,
 } from '../services/subtitleExportService';
+import { buildScreenplayStoryTxtFromFinalResult } from '../services/storyExportService';
 import { FinalResultStudioView } from './storyflow/FinalResultStudioView';
 import {
   loadLiteraryProjects,
@@ -2171,6 +2172,22 @@ ${Array.from(charOutfits.entries()).map(([name, outfit]) => `  + ${name}: ${outf
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
+  const handleExportStory = () => {
+    const finalResult = parseJsonSafe<FinalResult | null>(production.finalResult, null);
+    const storyContent = buildScreenplayStoryTxtFromFinalResult(finalResult, inputData);
+
+    if (!storyContent.trim()) {
+      setError("Không có dữ liệu story để export. Hãy build Final Result trước.");
+      return;
+    }
+
+    const fileName = `${inputData.title || 'storyflow'}_Ch${inputData.chapter || ''}_story.txt`;
+    downloadTextFile(fileName, storyContent, "text/plain;charset=utf-8");
+
+    setToast({ message: "Đã xuất Story TXT thành công!", visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
+
   const handleExportImagePrompts = () => {
     const finalResult = parseJsonSafe<FinalResult | null>(production.finalResult, null);
     const content = buildImagePromptTxtFromFinalResult(finalResult);
@@ -3069,6 +3086,13 @@ Hay sua lai JSON theo rule:
                 className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-emerald-500 hover:text-emerald-600 disabled:opacity-50"
               >
                 <Download className="w-4 h-4" /> Export TXT
+              </button>
+              <button
+                onClick={handleExportStory}
+                disabled={!production.finalResult}
+                className="w-full inline-flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-600 transition-all hover:border-violet-500 hover:text-violet-600 disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" /> Export Story
               </button>
               <button
                 onClick={handleExportImagePrompts}
